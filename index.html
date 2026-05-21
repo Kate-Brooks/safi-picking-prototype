@@ -1,0 +1,2517 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Safi — Production Management prototype</title>
+  <style>
+    /* Circular XX TT — Safi brand typeface */
+    @font-face { font-family: 'Circular XX TT'; font-style: normal; font-weight: 400; src: url('CircularXXTT-Book.ttf') format('truetype'); font-display: swap; }
+    @font-face { font-family: 'Circular XX TT'; font-style: italic; font-weight: 400; src: url('CircularXXTT-BookItalic.ttf') format('truetype'); font-display: swap; }
+    @font-face { font-family: 'Circular XX TT'; font-style: normal; font-weight: 450; src: url('CircularXXTT-Regular.ttf') format('truetype'); font-display: swap; }
+    @font-face { font-family: 'Circular XX TT'; font-style: italic; font-weight: 450; src: url('CircularXXTT-Italic.ttf') format('truetype'); font-display: swap; }
+    @font-face { font-family: 'Circular XX TT'; font-style: normal; font-weight: 500; src: url('CircularXXTT-Medium.ttf') format('truetype'); font-display: swap; }
+    @font-face { font-family: 'Circular XX TT'; font-style: italic; font-weight: 500; src: url('CircularXXTT-MediumItalic.ttf') format('truetype'); font-display: swap; }
+    @font-face { font-family: 'Circular XX TT'; font-style: normal; font-weight: 700; src: url('CircularXXTT-Bold.ttf') format('truetype'); font-display: swap; }
+    @font-face { font-family: 'Circular XX TT'; font-style: italic; font-weight: 700; src: url('CircularXXTT-BoldItalic.ttf') format('truetype'); font-display: swap; }
+  </style>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            safi: {
+              50:  '#F4F2FF',
+              100: '#E8E3FF', // Figma Primary/200 (light tint)
+              200: '#D2CAFF',
+              300: '#B0A1FE',
+              400: '#8A77F8',
+              500: '#7458FF',
+              600: '#6347FF', // Figma Primary/400 (primary)
+              700: '#4A33CC',
+              800: '#3A2899',
+              900: '#241B66'
+            },
+            success: {
+              100: '#EAF7ED', // toast bg
+              200: '#2FB554',
+              300: '#1B5E20'
+            },
+            neutral: {
+              5:   '#F3F3F4',
+              10:  '#E7E7E8',
+              40:  '#9E9EA5',
+              60:  '#6E6D77',
+              80:  '#3D3D4A',
+              100: '#0D0C1D'
+            }
+          },
+          fontFamily: { sans: ['"Circular XX TT"', 'system-ui', 'sans-serif'] }
+        }
+      }
+    };
+  </script>
+  <style>
+    html, body { font-family: 'Circular XX TT', system-ui, sans-serif; background: #fafafa; }
+    .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 4px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+    /* Focus ring matches Safi purple */
+    *:focus-visible { outline: 2px solid #6347FF; outline-offset: 2px; border-radius: 4px; }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+    /* Flash highlight used when jumping to a load row via the picking-list card link */
+    @keyframes flashHighlight { 0% { background-color: #E8E3FF; } 100% { background-color: transparent; } }
+    .flash-highlight { animation: flashHighlight 1.6s ease-out; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="env,react">
+  /* eslint-disable */
+  const { useState, useMemo, useEffect, useRef, Fragment } = React;
+
+  // ----------------------------------------------------------------------------
+  // MOCK DATA — anonymised warehouse layout for the prototype.
+  // Zones, Bays, Loads with supplier + lot ref + weight + bales.
+  // Materials: BLANCA, AMERICANA, AZUL, 50/50.
+  // Some bays are "blocked" — physically inaccessible because other bays sit in
+  // front of them. The SL cannot put a blocked bay on the picking list.
+  // ----------------------------------------------------------------------------
+
+  // Clear PET Bottles spec — three result components per analysed load.
+  //   transparentPET >= 92    (higher is in-spec, green)
+  //   colouredPET   <= 6      (lower is in-spec, green)
+  //   contaminants  <= 2      (lower is in-spec, green)
+  const SPEC = {
+    transparentPET: { label: 'Transparent PET', op: '>=', target: 92 },
+    colouredPET:    { label: 'Coloured PET',    op: '<=', target: 6  },
+    contaminants:   { label: 'Contaminants',    op: '<=', target: 2  }
+  };
+
+  // Helper: build a load object.
+  // results === null → load has not been AI-analysed yet, no chips shown.
+  // results: { transparentPET, colouredPET, contaminants } each as percentages summing to ~100.
+  const L = (supplier, lot, weight, bales, results = null) => ({
+    id: lot,
+    supplier,
+    lot,
+    weight,
+    bales,
+    results,
+    processedAt: null
+  });
+
+  const inSpec = (spec, v) => spec.op === '>=' ? v >= spec.target : v <= spec.target;
+
+  // Average bay quality → 4-bucket heat colour (red → amber → green) + grey for un-analysed.
+  // Score = average count of in-spec components (0–3) across analysed loads in the bay.
+  const bayQuality = (bay) => {
+    const analysed = bay.loads.filter(l => l.results);
+    if (analysed.length === 0) {
+      return { score: null, color: '#D4D4D8', label: 'Not analysed' };
+    }
+    const totalScore = analysed.reduce((acc, l) => {
+      let s = 0;
+      Object.keys(SPEC).forEach(k => { if (inSpec(SPEC[k], l.results[k])) s++; });
+      return acc + s;
+    }, 0);
+    const avg = totalScore / analysed.length;
+    if (avg >= 2.75) return { score: avg, color: '#16A34A', label: 'All specs met' };
+    if (avg >= 2.0)  return { score: avg, color: '#84CC16', label: 'Mostly in spec' };
+    if (avg >= 1.0)  return { score: avg, color: '#F59E0B', label: 'Mixed' };
+    return { score: avg, color: '#EF4444', label: 'Below spec' };
+  };
+
+  // Yard structure. `accessible: false` means this bay is blocked by another bay
+  // in front of it — the FO physically cannot reach it for picking right now.
+  // r = { transparentPET, colouredPET, contaminants } shorthand
+  const r = (t, c, x) => ({ transparentPET: t, colouredPET: c, contaminants: x });
+
+  // Auto-generated extra bays so Zone A grows to ~40 bays for the realistic-scale test.
+  // States rotate through: dense (8 loads), partial, empty, blocked.
+  const extraSuppliers = [
+    'Supplier A', 'Supplier B', 'Supplier C', 'Supplier D', 'Supplier E',
+    'Supplier F', 'Supplier G', 'Supplier H', 'Supplier I', 'Supplier J',
+    'Supplier K', 'Supplier L', 'Supplier M', 'Supplier N', 'Supplier O',
+    'Supplier P'
+  ];
+  const buildZoneABays = () => {
+    const out = [];
+    for (let i = 6; i <= 40; i++) {
+      const mod = i % 7;
+      const idLabel = i.toString().padStart(2, '0');
+      const mkLoad = (j, q) => {
+        const supplier = extraSuppliers[(i + j) % extraSuppliers.length];
+        const lot = `LOT-A${idLabel}${j.toString().padStart(2, '0')}`;
+        const analysed = (i + j) % 4 !== 0;
+        const tp = q ?? (93 + ((i + j) % 6) - 2);
+        const cp = Math.max(2, Math.round((100 - tp) * 0.7 * 10) / 10);
+        const ct = Math.max(0.2, Math.round((100 - tp - cp) * 10) / 10);
+        return L(supplier, lot, 11000 + ((i * 137 + j * 41) % 9000), 18 + ((i + j) % 25), analysed ? r(tp, cp, ct) : null);
+      };
+      if (mod === 0) {
+        // Empty
+        out.push({ id: `A${i}`, esName: `Bay A${i}`, accessible: true, loads: [] });
+      } else if (mod === 1) {
+        // Dense — 8 loads
+        out.push({
+          id: `A${i}`, esName: `Bay A${i}`, accessible: true,
+          loads: Array.from({ length: 8 }, (_, j) => mkLoad(j))
+        });
+      } else if (mod === 6 && i > 10) {
+        // Blocked (only after A10 so the first few stay accessible)
+        out.push({
+          id: `A${i}`, esName: `Bay A${i}`, accessible: false, blockedBy: `A${i - 2}`,
+          loads: Array.from({ length: 2 + (i % 4) }, (_, j) => mkLoad(j))
+        });
+      } else {
+        // Partial fill
+        const cap = 3 + (i % 5);
+        const fill = Math.max(1, Math.floor(cap / 2) + (i % 2));
+        out.push({
+          id: `A${i}`, esName: `Bay A${i}`, accessible: true,
+          loads: Array.from({ length: fill }, (_, j) => mkLoad(j))
+        });
+      }
+    }
+    return out;
+  };
+
+  // Each bay carries a `capacity` (max loads it can physically hold).
+  // current loads vs capacity → "Empty" | "Capacity for N load" | "Full" chip.
+  const YARD = [
+    {
+      id: 'A',
+      name: 'Zone A',
+      esName: 'Zone A',
+      bays: [
+        {
+          id: 'A1', name: 'Bay A1', esName: 'Bay A1', accessible: true,
+          loads: [
+            L('Supplier A',  'LOT-A001', 14870, 25, r(95.2, 4.5, 0.3)),
+            L('Supplier B',  'LOT-A002', 14829, 20, r(96.4, 3.4, 0.2))
+          ]
+        },
+        {
+          id: 'A2', name: 'Bay A2', esName: 'Bay A2', accessible: true,
+          loads: [
+            L('Supplier C',  'LOT-A003', 12964, 22, r(89.0, 8.3, 2.7)),
+            L('Supplier D',  'LOT-A004', 12747, 32, r(96.1, 3.5, 0.4))
+          ]
+        },
+        {
+          id: 'A3', name: 'Bay A3', esName: 'Bay A3', accessible: true,
+          loads: [
+            L('Supplier E',  'LOT-A005', 17812, 33) // un-analysed
+          ]
+        },
+        {
+          id: 'A4', name: 'Bay A4', esName: 'Bay A4', accessible: false, blockedBy: 'A2',
+          loads: [
+            L('Supplier F',  'LOT-A006', 16100, 30, r(94.2, 5.0, 0.8)),
+            L('Supplier G',  'LOT-A007', 18560, 38, r(87.5, 7.6, 4.9))
+          ]
+        },
+        {
+          id: 'A5', name: 'Bay A5', esName: 'Bay A5', accessible: true,
+          loads: []
+        },
+        ...buildZoneABays()
+      ]
+    },
+    {
+      id: 'B',
+      name: 'Zone B',
+      esName: 'Zone B',
+      bays: [
+        {
+          // Bay with 5 loads — demonstrates the "Show all loads (N more)" expander in sticky tab
+          id: 'B5', name: 'Bay B5', esName: 'Bay B5', accessible: true,
+          loads: [
+            L('Supplier H',  'LOT-B001', 13779, 28, r(93.1, 5.4, 1.5)),
+            L('Supplier I',  'LOT-B002',  8845, 20, r(88.3, 9.0, 2.7)),
+            L('Supplier J',  'LOT-B003', 14260, 30, r(95.0, 4.6, 0.4)),
+            L('Supplier K',  'LOT-B004', 12880, 24, r(91.8, 6.2, 2.0)),
+            L('Supplier L',  'LOT-B005', 10250, 22)
+          ]
+        },
+        {
+          id: 'B9', name: 'Bay B9', esName: 'Bay B9', accessible: true,
+          loads: [
+            L('Supplier M',  'LOT-B006', 17986, 52, r(94.7, 4.1, 1.2))
+          ]
+        },
+        {
+          id: 'B10', name: 'Bay B10', esName: 'Bay B10', accessible: true,
+          loads: [
+            L('Supplier N',  'LOT-B007', 20330, 25, r(96.0, 3.6, 0.4)),
+            L('Supplier O',  'LOT-B008', 11337, 20, r(82.4, 11.8, 5.8))
+          ]
+        }
+      ]
+    },
+    {
+      id: 'C',
+      name: 'Zone C',
+      esName: 'Zone C',
+      bays: [
+        {
+          id: 'C2', name: 'Bay C2', esName: 'Bay C2', accessible: true,
+          loads: [
+            L('Supplier P',  'LOT-C001',  6276, 38, r(94.1, 4.7, 1.2)),
+            L('Supplier A',  'LOT-C002', 15540, 45, r(95.8, 3.5, 0.7))
+          ]
+        },
+        {
+          id: 'C5', name: 'Bay C5', esName: 'Bay C5', accessible: true,
+          loads: [
+            L('Supplier B',  'LOT-C003', 15858, 28, r(93.4, 5.2, 1.4)),
+            L('Supplier C',  'LOT-C004', 13420, 30, r(86.3, 9.1, 4.6))
+          ]
+        },
+        {
+          id: 'C17', name: 'Bay C17', esName: 'Bay C17', accessible: false, blockedBy: 'C5',
+          loads: [
+            L('Supplier D',  'LOT-C005', 14100, 26, r(95.0, 4.5, 0.5))
+          ]
+        },
+        {
+          id: 'C18', name: 'Bay C18', esName: 'Bay C18', accessible: true,
+          loads: []
+        }
+      ]
+    }
+  ];
+
+  // Active production target (top-of-page card)
+  const ACTIVE_WINDOW = {
+    material: 'BLANCA',
+    targetInput: 90.0,
+    elapsed: '02:14:08',
+    balesProcessed: 64,
+    weightProcessed: 32480,
+    actualInput: 89.4
+  };
+
+  // ----------------------------------------------------------------------------
+  // UTILITIES
+  // ----------------------------------------------------------------------------
+
+  const fmtKg = (n) => (n ?? 0).toLocaleString('en-US') + ' kg';
+  const fmtNum = (n) => (n ?? 0).toLocaleString('en-US');
+  const sum = (arr, fn) => arr.reduce((a, b) => a + fn(b), 0);
+
+  // Aggregate stats for a bay or zone given its loads array
+  const bayStats  = (bay)  => ({
+    loads: bay.loads.length,
+    bales: sum(bay.loads, l => l.bales),
+    weight: sum(bay.loads, l => l.weight)
+  });
+  const zoneStats = (zone) => zone.bays.reduce((acc, b) => {
+    const s = bayStats(b);
+    return {
+      loads: acc.loads + s.loads,
+      bales: acc.bales + s.bales,
+      weight: acc.weight + s.weight,
+      bays: acc.bays + 1
+    };
+  }, { loads: 0, bales: 0, weight: 0, bays: 0 });
+
+  // Load-status chip: shows bale count, or "Empty" for a bay/zone with no loads.
+  // Square-ish corners distinguish status chips from AI chips.
+  const CapacityChip = ({ bales, variant }) => {
+    if (bales === 0) {
+      const prefix = variant === 'zone' ? 'Zone' : 'Bay';
+      return (
+        <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-md text-[12px] font-bold whitespace-nowrap bg-neutral-5 text-neutral-60">
+          {prefix} empty
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-md text-[12px] font-bold whitespace-nowrap bg-sky-100 text-sky-900">
+        Bales: {fmtNum(bales)}
+      </span>
+    );
+  };
+
+  // AIResultChips — three chips per analysed load (Transparent PET / Coloured PET / Contaminants).
+  // Each chip is green/red against its spec. Returns null if the load hasn't been analysed.
+  const AIResultChips = ({ load, onPickingList }) => {
+    if (!load.results) {
+      return <span className="text-xs text-neutral-60">Not analysed yet</span>;
+    }
+    const order = ['transparentPET', 'colouredPET', 'contaminants'];
+    return (
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {order.map(key => {
+          const spec = SPEC[key];
+          const value = load.results[key];
+          const good = inSpec(spec, value);
+          const cls = good
+            ? 'bg-success-100 text-success-300'
+            : 'bg-rose-100 text-rose-900';
+          const icon = good ? I.checkCircle : I.errorCircle;
+          return (
+            <span
+              key={key}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium ${cls}`}
+            >
+              <Icon d={icon} className="w-3.5 h-3.5" />
+              {spec.label} {value.toFixed(1)}%
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // ZoneBayFilter — multi-select dropdown of every bay grouped by zone.
+  // When selections are made, the parent filters the warehouse to show only those bays
+  // (and force-expands their zones).
+  function ZoneBayFilter({ value, onChange, yard }) {
+    const [open, setOpen] = useState(false);
+    const wrapRef = useRef(null);
+    useEffect(() => {
+      if (!open) return;
+      const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+      document.addEventListener('mousedown', onDoc);
+      return () => document.removeEventListener('mousedown', onDoc);
+    }, [open]);
+    const count = value.size;
+    const toggle = (k) => {
+      const next = new Set(value);
+      next.has(k) ? next.delete(k) : next.add(k);
+      onChange(next);
+    };
+    const clear = () => onChange(new Set());
+    return (
+      <div className="relative w-[180px]" ref={wrapRef}>
+        <button
+          type="button"
+          onClick={() => setOpen(v => !v)}
+          className={
+            'w-full text-left pl-3 pr-9 py-2 text-sm rounded-md bg-white border truncate ' +
+            (open ? 'border-safi-600' : 'border-neutral-10')
+          }
+          aria-haspopup="listbox"
+          aria-expanded={open}
+        >
+          <span className={'block truncate whitespace-nowrap ' + (count > 0 ? 'text-neutral-100' : 'text-neutral-40')}>
+            {count > 0 ? `${count} bay${count === 1 ? '' : 's'} selected` : 'Select zone or bay'}
+          </span>
+        </button>
+        <label className={
+          'absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium ' +
+          (open ? 'text-safi-600' : 'text-neutral-60')
+        }>Zone & bay</label>
+        <Icon d={open ? I.chevron : I.chevron} className={
+          'w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ' +
+          (open ? 'text-safi-600 rotate-180' : 'text-neutral-60')
+        } />
+        {open && (
+          <div className="absolute z-30 mt-1 w-[280px] left-0 bg-white border border-neutral-10 rounded-md shadow-lg max-h-[320px] overflow-y-auto scrollbar-thin py-1">
+            {count > 0 && (
+              <div className="px-3 py-2 border-b border-neutral-10 flex justify-between items-center">
+                <span className="text-xs text-neutral-60">{count} selected</span>
+                <button onClick={clear} className="text-xs font-medium text-safi-700 hover:underline">Clear</button>
+              </div>
+            )}
+            {yard.map(zone => (
+              <Fragment key={zone.id}>
+                <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-neutral-60 font-semibold">{zone.esName}</div>
+                {zone.bays.map(bay => {
+                  const k = `${zone.id}|${bay.id}`;
+                  const checked = value.has(k);
+                  return (
+                    <label key={k} className="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-neutral-5">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggle(k)}
+                        className="rounded text-safi-600 focus:ring-safi-500"
+                      />
+                      <span className="text-neutral-100">{zone.esName}: {bay.esName}</span>
+                    </label>
+                  );
+                })}
+              </Fragment>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // CapacityFilter — multi-select with Capacity / Full / Empty options.
+  function CapacityFilter({ value, onChange }) {
+    const options = ['Capacity', 'Full', 'Empty'];
+    const [open, setOpen] = useState(false);
+    const wrapRef = useRef(null);
+    useEffect(() => {
+      if (!open) return;
+      const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+      document.addEventListener('mousedown', onDoc);
+      return () => document.removeEventListener('mousedown', onDoc);
+    }, [open]);
+    const count = value.size;
+    const toggle = (v) => {
+      const next = new Set(value);
+      next.has(v) ? next.delete(v) : next.add(v);
+      onChange(next);
+    };
+    return (
+      <div className="relative w-[150px]" ref={wrapRef}>
+        <button
+          type="button"
+          onClick={() => setOpen(v => !v)}
+          className={
+            'w-full text-left pl-3 pr-9 py-2 text-sm rounded-md bg-white border truncate ' +
+            (open ? 'border-safi-600' : 'border-neutral-10')
+          }
+          aria-haspopup="listbox"
+          aria-expanded={open}
+        >
+          <span className={count > 0 ? 'text-neutral-100' : 'text-neutral-40'}>
+            {count === 0 ? 'All capacities' : Array.from(value).join(', ')}
+          </span>
+        </button>
+        <label className={
+          'absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium ' +
+          (open ? 'text-safi-600' : 'text-neutral-60')
+        }>Capacity</label>
+        <Icon d={I.chevron} className={
+          'w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ' +
+          (open ? 'text-safi-600 rotate-180' : 'text-neutral-60')
+        } />
+        {open && (
+          <div className="absolute z-30 mt-1 w-[220px] left-0 bg-white border border-neutral-10 rounded-md shadow-lg py-1">
+            {options.map(opt => (
+              <label key={opt} className="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-neutral-5">
+                <input
+                  type="checkbox"
+                  checked={value.has(opt)}
+                  onChange={() => toggle(opt)}
+                  className="rounded text-safi-600 focus:ring-safi-500"
+                />
+                <span className="text-neutral-100">{opt}</span>
+              </label>
+            ))}
+            {count > 0 && (
+              <div className="px-3 py-2 border-t border-neutral-10">
+                <button onClick={() => onChange(new Set())} className="text-xs font-medium text-safi-700 hover:underline">
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // SPATIAL LAYOUT VIEW — top-down map of the yard.
+  //
+  // Overview: Production area on the left + zones stacked on the right
+  //           (Unloading bay sits between Zone B and Zone C, same width).
+  //           Each zone shows high-emphasis metrics + a fill bar.
+  // Zone view: clickable breadcrumb, zone metrics, zoom controls,
+  //           horizontal scrolling row of bay tiles (matching real warehouse
+  //           layout), minimap above for jumping in large zones.
+  // Bay view:  full load list (LoadRow re-used).
+  // ============================================================================
+  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList }) {
+    const [view, setView] = useState({ level: 'overview' });
+    const [zoom, setZoom] = useState(1); // 0 compact, 1 medium, 2 detail
+    const bayRowRef = useRef(null);
+
+    const goOverview = () => setView({ level: 'overview' });
+    const goZone = (zoneId) => setView({ level: 'zone', zoneId });
+    const goBay = (zoneId, bayId) => setView({ level: 'bay', zoneId, bayId });
+
+    // Reusable clickable breadcrumb
+    const Breadcrumbs = ({ zone, bay }) => (
+      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[13px] flex-wrap">
+        <button
+          onClick={goOverview}
+          disabled={!zone}
+          className={zone ? 'text-safi-600 hover:underline' : 'text-neutral-100 font-medium'}
+        >
+          Yard overview
+        </button>
+        {zone && (
+          <>
+            <span className="text-neutral-40">/</span>
+            <button
+              onClick={() => goZone(zone.id)}
+              disabled={!bay}
+              className={bay ? 'text-safi-600 hover:underline' : 'text-neutral-100 font-medium'}
+            >
+              {zone.esName}
+            </button>
+          </>
+        )}
+        {bay && (
+          <>
+            <span className="text-neutral-40">/</span>
+            <span className="text-neutral-100 font-medium">{bay.esName}</span>
+          </>
+        )}
+      </nav>
+    );
+
+    // Horizontal fill bar — accessible (numeric label always visible). Uses sky
+    // tones so it's clearly distinct from the primary purple CTA.
+    const FillBar = ({ value, max, suffix }) => {
+      const pct = max > 0 ? Math.min(100, Math.max(2, (value / max) * 100)) : 0;
+      return (
+        <div className="w-full">
+          <div className="h-2 bg-neutral-5 rounded-full overflow-hidden" aria-hidden="true">
+            <div className="h-full bg-sky-500 rounded-full transition-all" style={{ width: value === 0 ? '0%' : `${pct}%` }} />
+          </div>
+          <div className="mt-1.5 text-[13px] text-neutral-60">
+            <span className="font-bold text-neutral-100">{fmtNum(value)}</span>{suffix ? ` ${suffix}` : ''}
+          </div>
+        </div>
+      );
+    };
+
+    // ---- OVERVIEW: production + zones (B & C separated by Unloading bay) ----
+    const renderOverview = () => {
+      const maxBales = Math.max(1, ...yard.map(z => zoneStats(z).bales));
+      // Insert the Unloading bay between the 2nd and 3rd zones if possible
+      const items = [];
+      yard.forEach((z, i) => {
+        items.push({ kind: 'zone', zone: z });
+        if (i === 1) items.push({ kind: 'unloading' });
+      });
+      return (
+        <div className="bg-white border border-neutral-10 rounded-xl p-6">
+          <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">Yard overview · top-down view</div>
+          <div className="flex gap-3" style={{ minHeight: 420 }}>
+            {/* Production area on the left */}
+            <div className="w-[180px] shrink-0 flex flex-col">
+              <div className="flex-1 bg-neutral-5 border-2 border-dashed border-neutral-10 rounded-lg flex flex-col items-center justify-center text-center px-4 relative">
+                <div className="absolute top-3 right-3 text-neutral-40" title="Forklift access">
+                  <Icon d={I.truck} className="w-5 h-5" />
+                </div>
+                <div className="font-bold text-neutral-100 text-base">Production</div>
+                <div className="text-[13px] text-neutral-60 mt-1">Line / by-products</div>
+              </div>
+            </div>
+
+            {/* Zones stacked + unloading bay slotted between them */}
+            <div className="flex-1 flex flex-col gap-3">
+              {items.map((item, i) => {
+                if (item.kind === 'unloading') {
+                  return (
+                    <div key={'unloading-' + i} className="rounded-lg border-2 border-dashed border-neutral-10 bg-neutral-5 px-5 py-3 flex items-center gap-3 text-[13px] text-neutral-60">
+                      <Icon d={I.truck} className="w-5 h-5 text-neutral-60" />
+                      <span className="font-semibold uppercase tracking-wide text-neutral-80">Unloading bay</span>
+                      <span className="text-neutral-60">Lorries park here</span>
+                    </div>
+                  );
+                }
+                const zone = item.zone;
+                const z = zoneStats(zone);
+                return (
+                  <button
+                    key={zone.id}
+                    onClick={() => goZone(zone.id)}
+                    className="flex-1 rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
+                  >
+                    <div className="flex items-start justify-between gap-6">
+                      {/* Left: name + headline metrics */}
+                      <div>
+                        <div className="font-bold text-neutral-100 text-xl">{zone.esName}</div>
+                        <div className="flex items-center gap-6 mt-2">
+                          <Metric2 label="Bays"   value={fmtNum(z.bays)} />
+                          <Metric2 label="Loads"  value={fmtNum(z.loads)} />
+                          <Metric2 label="Bales"  value={fmtNum(z.bales)} />
+                          <Metric2 label="Weight" value={fmtKg(z.weight)} />
+                        </div>
+                      </div>
+                      {/* Right: fill bar */}
+                      <div className="w-[180px] shrink-0">
+                        <div className="text-[13px] uppercase tracking-wide text-neutral-60 mb-2">Bales stored</div>
+                        <FillBar value={z.bales} max={maxBales} suffix="bales" />
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ---- ZONE VIEW: minimap, zoom, horizontal scrolling bay row ------------
+    const renderZone = () => {
+      const zone = yard.find(z => z.id === view.zoneId);
+      if (!zone) {
+        return (
+          <div className="bg-white border border-neutral-10 rounded-xl p-8 text-center text-[13px] text-neutral-60">
+            Zone not found.
+            <button onClick={goOverview} className="ml-2 text-safi-600 underline">Back to overview</button>
+          </div>
+        );
+      }
+      const maxBalesInZone = Math.max(1, ...zone.bays.map(b => bayStats(b).bales));
+      const z = zoneStats(zone);
+      const tileWidth = zoom === 0 ? 48 : zoom === 1 ? 120 : 200;
+      const tileHeight = zoom === 0 ? 64 : zoom === 1 ? 120 : 170;
+
+      // Scroll to a bay in the main row when clicked in the minimap
+      const scrollToBay = (idx) => {
+        const wrap = bayRowRef.current;
+        if (!wrap) return;
+        const child = wrap.children[idx];
+        if (child) child.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      };
+
+      return (
+        <div className="bg-white border border-neutral-10 rounded-xl p-6">
+          <Breadcrumbs zone={zone} />
+
+          <div className="mt-3 mb-4 flex items-end justify-between gap-6 flex-wrap">
+            <div>
+              <h3 className="text-2xl font-bold text-neutral-100">{zone.esName}</h3>
+              <div className="flex items-center gap-6 mt-2">
+                <Metric2 label="Bays"   value={fmtNum(z.bays)} />
+                <Metric2 label="Loads"  value={fmtNum(z.loads)} />
+                <Metric2 label="Bales"  value={fmtNum(z.bales)} />
+                <Metric2 label="Weight" value={fmtKg(z.weight)} />
+              </div>
+            </div>
+            {/* Zoom controls */}
+            <div className="flex items-center gap-2 text-[13px]" role="group" aria-label="Zoom level">
+              <span className="text-neutral-60">Zoom</span>
+              <button
+                onClick={() => setZoom(z => Math.max(0, z - 1))}
+                disabled={zoom === 0}
+                aria-label="Zoom out"
+                className="w-8 h-8 rounded border border-neutral-10 text-neutral-80 hover:bg-neutral-5 disabled:opacity-40 flex items-center justify-center"
+              >−</button>
+              <span className="font-medium text-neutral-100 min-w-[70px] text-center">
+                {zoom === 0 ? 'Overview' : zoom === 1 ? 'Medium' : 'Detail'}
+              </span>
+              <button
+                onClick={() => setZoom(z => Math.min(2, z + 1))}
+                disabled={zoom === 2}
+                aria-label="Zoom in"
+                className="w-8 h-8 rounded border border-neutral-10 text-neutral-80 hover:bg-neutral-5 disabled:opacity-40 flex items-center justify-center"
+              >+</button>
+            </div>
+          </div>
+
+          {/* Directional flow indicator above the bay row */}
+          <div className="flex items-center gap-2 text-[13px] text-neutral-60 mb-2">
+            <Icon d={I.truck} className="w-4 h-4 text-neutral-40" />
+            <span>Pick from left to right — bays are numbered in pick order →</span>
+          </div>
+
+          {/* Minimap — all bays as tiny bars. Height = bales. Colour = average quality. */}
+          {zone.bays.length > 8 && (
+            <div className="mb-3 px-3 py-2 rounded-md bg-neutral-5 border border-neutral-10">
+              <div className="flex items-end gap-0.5 h-8" role="navigation" aria-label="Bay minimap — heat-mapped by average load quality">
+                {zone.bays.map((b, idx) => {
+                  const s = bayStats(b);
+                  const pct = maxBalesInZone > 0 ? Math.max(8, (s.bales / maxBalesInZone) * 100) : 8;
+                  const q = bayQuality(b);
+                  return (
+                    <button
+                      key={b.id}
+                      onClick={() => scrollToBay(idx)}
+                      title={`${b.esName} · ${fmtNum(s.bales)} bales · ${q.label}`}
+                      aria-label={`Jump to ${b.esName} — ${q.label}`}
+                      className="flex-1 min-w-[6px] rounded-t transition-opacity hover:opacity-80"
+                      style={{ height: `${pct}%`, backgroundColor: q.color }}
+                    />
+                  );
+                })}
+              </div>
+              <div className="mt-1 flex justify-between text-[13px] text-neutral-60">
+                <span>{zone.bays[0]?.esName}</span>
+                <span className="text-neutral-40">{zone.bays.length} bays · height = bales · colour = avg quality · click to jump</span>
+                <span>{zone.bays[zone.bays.length - 1]?.esName}</span>
+              </div>
+              {/* Legend */}
+              <div className="mt-2 pt-2 border-t border-neutral-10 flex items-center gap-3 flex-wrap text-[13px] text-neutral-60">
+                <span className="font-medium text-neutral-80">Quality:</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16A34A' }} />All specs met</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#84CC16' }} />Mostly in spec</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#F59E0B' }} />Mixed</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#EF4444' }} />Below spec</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#D4D4D8' }} />Not analysed</span>
+              </div>
+            </div>
+          )}
+
+          {/* Horizontal scrollable bay row */}
+          <div
+            ref={bayRowRef}
+            className="flex gap-2 overflow-x-auto pb-3 pt-1 scrollbar-thin"
+            role="list"
+          >
+            {zone.bays.map((bay, idx) => {
+              const s = bayStats(bay);
+              const blocked = isCreating && !bay.accessible;
+              const empty = s.bales === 0;
+              const bayLoadKeys = bay.loads.map(l => `${zone.id}|${bay.id}|${l.id}`);
+              const allSelected = isCreating && bay.accessible && bayLoadKeys.length > 0 && bayLoadKeys.every(k => selectionBales[k] != null);
+              const someSelected = isCreating && bayLoadKeys.some(k => selectionBales[k] != null);
+              const toggleAllInBay = (e) => {
+                e.stopPropagation();
+                if (!isCreating || !bay.accessible || bayLoadKeys.length === 0) return;
+                setSelectionBales(prev => {
+                  const next = { ...prev };
+                  if (allSelected) {
+                    bayLoadKeys.forEach(k => { delete next[k]; });
+                  } else {
+                    bay.loads.forEach(l => {
+                      const k = `${zone.id}|${bay.id}|${l.id}`;
+                      if (next[k] == null) next[k] = l.bales;
+                    });
+                  }
+                  return next;
+                });
+              };
+              return (
+                <button
+                  key={bay.id}
+                  onClick={() => goBay(zone.id, bay.id)}
+                  className={
+                    'shrink-0 rounded-lg border text-left transition focus:outline-none focus:ring-2 focus:ring-safi-600 bg-white ' +
+                    (blocked ? 'border-neutral-10 bg-neutral-5 opacity-70'
+                      : (someSelected ? 'border-safi-300 ring-1 ring-safi-200 bg-safi-50/40'
+                        : 'border-neutral-10 hover:border-safi-300 hover:shadow-sm'))
+                  }
+                  style={{ width: tileWidth, height: tileHeight }}
+                  role="listitem"
+                >
+                  <div className="h-full flex flex-col p-2">
+                    <div className="flex items-start justify-between gap-1">
+                      <span className="font-bold text-[13px] text-neutral-100 truncate">
+                        {bay.esName.replace('Bay ', '')}
+                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {blocked && <Icon d={I.lock} className="w-3 h-3 text-neutral-60" />}
+                        {isCreating && bay.accessible && bayLoadKeys.length > 0 && (
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                            onChange={toggleAllInBay}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select all loads in ${bay.esName}`}
+                            title={allSelected ? 'Remove this bay from picking list' : 'Add this whole bay to picking list'}
+                            className="rounded text-safi-600 focus:ring-safi-500 cursor-pointer"
+                          />
+                        )}
+                      </div>
+                    </div>
+                    {zoom === 0 ? (
+                      // Compact: just a fill bar + bale count
+                      <div className="mt-auto">
+                        <div className="h-1.5 bg-neutral-5 rounded-full overflow-hidden">
+                          <div className="h-full bg-sky-500" style={{ width: empty ? '0%' : `${Math.max(8, Math.min(100, (s.bales / maxBalesInZone) * 100))}%` }} />
+                        </div>
+                        <div className="text-[13px] text-neutral-60 mt-1 truncate">{empty ? '—' : fmtNum(s.bales)}</div>
+                      </div>
+                    ) : zoom === 1 ? (
+                      // Medium: name + loads + bales + fill bar
+                      <>
+                        <div className="text-[13px] text-neutral-60 mt-1">
+                          Loads <span className="font-bold text-neutral-100">{s.loads}</span>
+                        </div>
+                        <div className="text-[13px] text-neutral-60">
+                          Bales <span className="font-bold text-neutral-100">{empty ? '—' : fmtNum(s.bales)}</span>
+                        </div>
+                        <div className="mt-auto">
+                          <div className="h-1.5 bg-neutral-5 rounded-full overflow-hidden">
+                            <div className="h-full bg-sky-500" style={{ width: empty ? '0%' : `${Math.max(8, Math.min(100, (s.bales / maxBalesInZone) * 100))}%` }} />
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      // Detail: name + all metrics + fill bar
+                      <>
+                        <div className="grid grid-cols-2 gap-1 mt-2 text-[13px]">
+                          <div><div className="text-neutral-60">Loads</div><div className="font-bold text-neutral-100">{s.loads}</div></div>
+                          <div><div className="text-neutral-60">Bales</div><div className="font-bold text-neutral-100">{empty ? '—' : fmtNum(s.bales)}</div></div>
+                        </div>
+                        <div className="text-[13px] text-neutral-60 mt-1">Weight</div>
+                        <div className="text-[13px] font-bold text-neutral-100 truncate">{empty ? '—' : fmtKg(s.weight)}</div>
+                        <div className="mt-auto">
+                          <div className="h-2 bg-neutral-5 rounded-full overflow-hidden">
+                            <div className="h-full bg-sky-500" style={{ width: empty ? '0%' : `${Math.max(8, Math.min(100, (s.bales / maxBalesInZone) * 100))}%` }} />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    };
+
+    // ---- BAY VIEW: load list ------------------------------------------------
+    const renderBay = () => {
+      const zone = yard.find(z => z.id === view.zoneId);
+      const bay = zone?.bays.find(b => b.id === view.bayId);
+      if (!zone || !bay) {
+        return (
+          <div className="bg-white border border-neutral-10 rounded-xl p-8 text-center text-[13px] text-neutral-60">
+            Bay not found.
+            <button onClick={goOverview} className="ml-2 text-safi-600 underline">Back to overview</button>
+          </div>
+        );
+      }
+      const s = bayStats(bay);
+      const toggleLoad = (key) => {
+        if (!isCreating) return;
+        setSelectionBales(prev => {
+          if (prev[key] != null) { const n = { ...prev }; delete n[key]; return n; }
+          const [zid, bid, lid] = key.split('|');
+          const zz = YARD.find(z => z.id === zid);
+          const bb = zz?.bays.find(b => b.id === bid);
+          const ld = bb?.loads.find(l => l.id === lid);
+          return { ...prev, [key]: ld?.bales || 0 };
+        });
+      };
+      return (
+        <div className="bg-white border border-neutral-10 rounded-xl">
+          <div className="p-6 border-b border-neutral-10">
+            <Breadcrumbs zone={zone} bay={bay} />
+            <div className="mt-3 flex items-center justify-between gap-6 flex-wrap">
+              <div>
+                <h3 className="text-2xl font-bold text-neutral-100">{bay.esName}</h3>
+                <div className="flex items-center gap-6 mt-2">
+                  <Metric2 label="Loads"  value={fmtNum(s.loads)} />
+                  <Metric2 label="Bales"  value={fmtNum(s.bales)} />
+                  <Metric2 label="Weight" value={fmtKg(s.weight)} />
+                </div>
+              </div>
+              <CapacityChip bales={s.bales} />
+            </div>
+            {isCreating && !bay.accessible && (
+              <div className="mt-3 inline-flex items-center gap-2 px-3 py-2 rounded bg-amber-50 text-amber-900 text-[13px]">
+                <Icon d={I.lock} className="w-4 h-4" />
+                This bay is blocked by {bay.blockedBy}. Loads here can’t be added to the picking list until the bays in front are cleared.
+              </div>
+            )}
+          </div>
+          {bay.loads.length === 0 ? (
+            <div className="px-6 py-10 text-center text-neutral-60 text-[13px]">
+              No loads have been stored in this bay yet
+            </div>
+          ) : (
+            <>
+              {/* Select all loads — visible during Create picking list when the bay has > 1 load */}
+              {isCreating && bay.loads.length > 1 && (() => {
+                const bayKeys = bay.loads.map(l => `${zone.id}|${bay.id}|${l.id}`);
+                const allSel = bay.accessible && bayKeys.every(k => selectionBales[k] != null);
+                const someSel = bayKeys.some(k => selectionBales[k] != null);
+                const toggleAll = () => {
+                  if (!bay.accessible) return;
+                  setSelectionBales(prev => {
+                    const next = { ...prev };
+                    if (allSel) {
+                      bayKeys.forEach(k => { delete next[k]; });
+                    } else {
+                      bay.loads.forEach(l => {
+                        const k = `${zone.id}|${bay.id}|${l.id}`;
+                        if (next[k] == null) next[k] = l.bales;
+                      });
+                    }
+                    return next;
+                  });
+                };
+                return (
+                  <label className={
+                    'flex items-center gap-3 px-4 py-3 border-b border-neutral-10 cursor-pointer text-[13px] font-medium ' +
+                    (bay.accessible ? 'text-neutral-80 hover:bg-neutral-5' : 'text-neutral-40 cursor-not-allowed')
+                  }>
+                    <input
+                      type="checkbox"
+                      className="rounded text-safi-600 focus:ring-safi-500 disabled:opacity-40"
+                      checked={allSel}
+                      ref={el => { if (el) el.indeterminate = someSel && !allSel; }}
+                      onChange={toggleAll}
+                      disabled={!bay.accessible}
+                      aria-label={`Select all loads in ${bay.esName}`}
+                    />
+                    <span>
+                      {allSel ? `All ${bay.loads.length} loads selected` : `Select all ${bay.loads.length} loads`}
+                    </span>
+                  </label>
+                );
+              })()}
+              <div className="divide-y divide-neutral-10">
+                {bay.loads.map(load => {
+                  const key = `${zone.id}|${bay.id}|${load.id}`;
+                  const accessible = !isCreating || bay.accessible;
+                  let onPickingList = false;
+                  if (!isCreating && pickingList) {
+                    const entry = pickingList.loads.find(l => l.loadId === load.id);
+                    if (entry) onPickingList = entry.bales != null && entry.bales < load.bales
+                      ? { partial: true, bales: entry.bales }
+                      : true;
+                  }
+                  return (
+                    <LoadRow
+                      key={load.id}
+                      load={load}
+                      isCreating={isCreating}
+                      accessible={accessible}
+                      isSelected={selectionBales[key] != null}
+                      onToggle={() => toggleLoad(key)}
+                      onPickingList={onPickingList}
+                    />
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      );
+    };
+
+    if (view.level === 'zone') return renderZone();
+    if (view.level === 'bay') return renderBay();
+    return renderOverview();
+  }
+
+  // High-emphasis metric pair (label small, value large/bold) for the spatial view
+  const Metric2 = ({ label, value }) => (
+    <div className="leading-tight">
+      <div className="text-[13px] text-neutral-60">{label}</div>
+      <div className="text-base font-bold text-neutral-100">{value}</div>
+    </div>
+  );
+
+  // LoadRow — single tappable row.
+  //   - Default mode: clicking the row "opens" load details. External icon visible on hover.
+  //   - Create mode: clicking toggles selection.
+  //   - Three AI result chips inline next to the order ref. Shown only if analysed.
+  //   - "On picking list" indicator when this load is on the active picking list (default mode only).
+  const LoadRow = ({ load, isCreating, accessible, isSelected, onToggle, onPickingList }) => {
+    const openDetails = (e) => {
+      e.stopPropagation();
+      window.open('about:blank', '_blank');
+    };
+    const handleRowClick = () => {
+      if (!accessible) return;
+      if (isCreating) onToggle();
+      else window.open('about:blank', '_blank');
+    };
+    return (
+      <div
+        id={'load-' + load.id}
+        onClick={handleRowClick}
+        role="button"
+        tabIndex={accessible ? 0 : -1}
+        aria-pressed={isCreating ? isSelected : undefined}
+        onKeyDown={(e) => {
+          if (!accessible) return;
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowClick(); }
+        }}
+        className={
+          'group flex items-start gap-3 pl-11 pr-4 py-3 transition-colors ' + // nest under bay title
+          (accessible
+            ? 'cursor-pointer hover:bg-safi-100 ' + (isCreating && isSelected ? 'bg-safi-50' : '')
+            : 'opacity-60 cursor-not-allowed')
+        }
+      >
+        {isCreating && (
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={onToggle}
+            disabled={!accessible}
+            className="mt-1 rounded text-safi-600 focus:ring-safi-500 disabled:opacity-40"
+            aria-label={`Select load ${load.lot}`}
+            onClick={e => e.stopPropagation()}
+          />
+        )}
+        <div className="flex-1 min-w-0">
+          {/* Top line: supplier name (default text, turns purple on row hover), lot, and the three AI chips inline */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-neutral-100 group-hover:text-safi-600 transition-colors">{load.supplier}</span>
+            <span className="text-neutral-40 text-sm">#{load.lot}</span>
+            <AIResultChips load={load} />
+          </div>
+          <div className="text-xs text-neutral-60 mt-1 flex items-center gap-2 flex-wrap">
+            <span>{fmtNum(load.bales)} bales · {fmtKg(load.weight)}</span>
+            {onPickingList && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-safi-100 text-safi-700">
+                <Icon d={I.list} className="w-3 h-3" />
+                {typeof onPickingList === 'object' && onPickingList.partial
+                  ? `On picking list (${onPickingList.bales}/${load.bales} bales)`
+                  : 'On picking list'}
+              </span>
+            )}
+          </div>
+        </div>
+        {/* External-link icon — Primary/400, visible on hover */}
+        <button
+          onClick={openDetails}
+          aria-label={`View details for load ${load.lot}`}
+          className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-1.5 rounded text-safi-600 hover:bg-white shrink-0 mt-0.5"
+        >
+          <Icon d={I.external} className="w-4 h-4" />
+        </button>
+      </div>
+    );
+  };
+
+  // ----------------------------------------------------------------------------
+  // ICONS (inline SVG so the prototype works fully offline of the CDN if needed)
+  // ----------------------------------------------------------------------------
+  const Icon = ({ d, className = 'w-5 h-5', stroke = 'currentColor' }) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      {Array.isArray(d) ? d.map((p, i) => <path key={i} d={p} />) : <path d={d} />}
+    </svg>
+  );
+  const I = {
+    menu:     'M3 6h18 M3 12h18 M3 18h18',
+    search:   ['M11 19a8 8 0 100-16 8 8 0 000 16z', 'M21 21l-4.3-4.3'],
+    user:     ['M20 21a8 8 0 10-16 0', 'M12 11a4 4 0 100-8 4 4 0 000 8z'],
+    chevron:  'M6 9l6 6 6-6',
+    chevronR: 'M9 6l6 6-6 6',
+    plus:     ['M12 5v14', 'M5 12h14'],
+    check:    'M5 12l5 5L20 7',
+    lock:     ['M5 11h14v10H5z', 'M8 11V7a4 4 0 118 0v4'],
+    truck:    ['M3 7h11v10H3z', 'M14 10h4l3 3v4h-7', 'M7.5 21a1.5 1.5 0 100-3 1.5 1.5 0 000 3z', 'M17.5 21a1.5 1.5 0 100-3 1.5 1.5 0 000 3z'],
+    box:      ['M3 7l9-4 9 4', 'M3 7v10l9 4 9-4V7', 'M12 11v10'],
+    list:     ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
+    bell:     ['M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9', 'M10 21a2 2 0 004 0'],
+    arrowR:   ['M5 12h14', 'M13 5l7 7-7 7'],
+    arrowL:   ['M19 12H5', 'M11 19l-7-7 7-7'],
+    checkCircle: ['M22 12a10 10 0 11-20 0 10 10 0 0120 0z', 'M8 12l3 3 5-6'],
+    errorCircle: ['M22 12a10 10 0 11-20 0 10 10 0 0120 0z', 'M12 8v4', 'M12 16h.01'],
+    external: ['M14 3h7v7', 'M10 14L21 3', 'M21 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h5'],
+    print:    ['M6 9V2h12v7', 'M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2', 'M6 14h12v8H6z'],
+    calendar: ['M3 8h18', 'M19 4H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2z', 'M16 2v4', 'M8 2v4'],
+    edit:     ['M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7', 'M18.5 2.5a2.121 2.121 0 113 3L12 15l-4 1 1-4 9.5-9.5z'],
+    trash:    ['M3 6h18', 'M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2', 'M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6'],
+    close:    ['M18 6L6 18', 'M6 6l12 12'],
+    eye:      ['M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z', 'M12 15a3 3 0 100-6 3 3 0 000 6z'],
+    factory:  ['M2 20h20', 'M4 20V8l5 3V8l5 3V8l5 3v9'],
+    qa:       ['M21 12c.6-2.6.6-4.4 0-7M3 12c-.6 2.6-.6 4.4 0 7', 'M5 4l4 4M19 20l-4-4', 'M19 4l-4 4M5 20l4-4'],
+    chart:    ['M3 3v18h18', 'M7 14l4-4 3 3 5-6'],
+    claim:    ['M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z', 'M14 2v6h6'],
+    deals:    ['M3 7l9 6 9-6', 'M3 7v10l9 6 9-6V7'],
+    settings: ['M12 15a3 3 0 100-6 3 3 0 000 6z', 'M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8L4.2 7a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z'],
+    info:     ['M12 8h.01', 'M11 12h1v4h1', 'M12 22a10 10 0 100-20 10 10 0 000 20z'],
+    help:     ['M12 22a10 10 0 100-20 10 10 0 000 20z', 'M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3', 'M12 17h.01'],
+    ground:   ['M12 22s8-7 8-13a8 8 0 10-16 0c0 6 8 13 8 13z', 'M12 11a3 3 0 100-6 3 3 0 000 6z']
+  };
+
+  // ----------------------------------------------------------------------------
+  // APP SHELL — top nav + sidebar
+  // ----------------------------------------------------------------------------
+  function AppShell({ role, setRole, children }) {
+    const NavItem = ({ icon, label, active }) => (
+      <button
+        className={
+          'w-full text-left flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ' +
+          (active ? 'bg-safi-600 text-white' : 'text-slate-700 hover:bg-slate-100')
+        }
+      >
+        <Icon d={icon} className="w-5 h-5" />
+        {label}
+      </button>
+    );
+    return (
+      <div className="min-h-screen flex flex-col bg-[#fafafa]">
+        {/* Top bar */}
+        <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 sticky top-0 z-30">
+          <button aria-label="Menu" className="p-2 rounded-lg hover:bg-slate-100"><Icon d={I.menu} /></button>
+          <div className="flex items-center gap-2"></div>
+          <div className="flex items-center gap-3">
+            {/* Demo role switcher */}
+            <div className="hidden md:flex items-center gap-1 bg-slate-100 rounded-full p-1 text-xs">
+              <button
+                onClick={() => setRole('SL')}
+                className={
+                  'px-3 py-1.5 rounded-full font-medium transition ' +
+                  (role === 'SL' ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
+                }
+                aria-pressed={role === 'SL'}
+              >
+                View as Shift Leader
+              </button>
+              <button
+                onClick={() => setRole('FO')}
+                className={
+                  'px-3 py-1.5 rounded-full font-medium transition ' +
+                  (role === 'FO' ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
+                }
+                aria-pressed={role === 'FO'}
+              >
+                View as Forklift Operator
+              </button>
+            </div>
+            <div className="relative">
+              <Icon d={I.search} className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                placeholder="Ctrl/Cmd + K to search"
+                className="pl-8 pr-3 py-1.5 w-56 text-sm border border-slate-200 rounded-lg bg-white"
+                aria-label="Search"
+              />
+            </div>
+            <button aria-label="Account" className="p-2 rounded-lg hover:bg-slate-100"><Icon d={I.user} /></button>
+          </div>
+        </div>
+
+        <div className="flex flex-1 min-h-0">
+          {/* Sidebar */}
+          <aside className="w-[230px] shrink-0 bg-white border-r border-slate-200 px-3 py-4 flex flex-col gap-1 sticky top-14 self-start h-[calc(100vh-3.5rem)]">
+            <NavItem icon={I.qa}       label="Quality Control" />
+            <NavItem icon={I.list}     label="Partner Invites" />
+            <NavItem icon={I.chart}    label="Quality Analytics" />
+            <NavItem icon={I.claim}    label="Claim Reports" />
+            <NavItem icon={I.factory}  label="Production Management" active />
+            <NavItem icon={I.deals}    label="Deals" />
+            <NavItem icon={I.truck}    label="Collections" />
+            <NavItem icon={I.ground}   label="Ground Control" />
+            <NavItem icon={I.settings} label="Settings" />
+            <div className="mt-auto">
+              <NavItem icon={I.help}   label="Help & Learn" />
+            </div>
+          </aside>
+
+          {/* Page — no overflow on this element so descendants can use the body
+              as the scrolling ancestor and `position: sticky` works correctly. */}
+          <main className="flex-1 min-w-0">{children}</main>
+        </div>
+      </div>
+    );
+  }
+
+  // ----------------------------------------------------------------------------
+  // PAGE: PRODUCTION MANAGEMENT (root of the prototype)
+  // ----------------------------------------------------------------------------
+
+  function ProductionManagementPage() {
+    // Demo role: Shift Leader vs Forklift Operator
+    const [role, setRole] = useState('SL');
+
+    // Tabs (Production & warehouse, Picker, History, Rejected bales)
+    const [tab, setTab] = useState(role === 'SL' ? 'pw' : 'picker');
+    // Keep the tab in sync with role change for the demo
+    useEffect(() => { setTab(role === 'SL' ? 'pw' : 'picker'); }, [role]);
+
+    // Picking list state (lifted to the page so both tabs share it)
+    // Shape: { id, name, createdAt, loads: [{zoneId, bayId, loadId}], note }
+    const [pickingList, setPickingList] = useState(null);
+
+    // Processed load IDs (FO marks these as processed in the Picker tab)
+    const [processed, setProcessed] = useState({}); // { loadId: { bales, weight, at } }
+
+    // Active production window flag (so SL can start one from the confirm step)
+    const [windowActive, setWindowActive] = useState(true);
+
+    // SL workflow mode: 'default' (overview only) | 'create' (selecting loads) | 'confirm' (review modal)
+    const [slMode, setSlMode] = useState('default');
+
+    // Toast — { message, kind: 'success' } | null
+    const [toast, setToast] = useState(null);
+    useEffect(() => {
+      if (!toast) return;
+      const t = setTimeout(() => setToast(null), 6000);
+      return () => clearTimeout(t);
+    }, [toast]);
+
+    // Loads remaining to pick (for Picker tab badge)
+    const loadsRemaining = pickingList
+      ? pickingList.loads.filter(({ loadId }) => !processed[loadId]).length
+      : 0;
+
+    return (
+      <AppShell role={role} setRole={setRole}>
+        <div className="px-8 py-6 max-w-[1400px]">
+          {/* Page heading swaps when SL enters Create picking list mode */}
+          {slMode === 'create' && role === 'SL' && (tab === 'pw' || tab === 'pw-v2') ? (
+            <div className="mb-0 pb-2">
+              <button
+                onClick={() => setSlMode('default')}
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-neutral-60 hover:text-neutral-100 mb-2"
+              >
+                <Icon d={I.arrowL} className="w-4 h-4" />
+                Back to Production Management
+              </button>
+              <div className="flex items-start justify-between gap-6">
+                <div>
+                  <h1 className="text-3xl font-bold tracking-tight text-neutral-100">Create picking list</h1>
+                  <p className="text-sm text-neutral-60 mt-1">
+                    Select loads below to send to pickers. Only <span className="font-medium text-neutral-100">Clear PET Bottles</span> loads are displayed.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mb-4">
+              <h1 className="text-3xl font-bold tracking-tight text-neutral-100">Production Management</h1>
+            </div>
+          )}
+
+          {/* Tabs — hidden during Create picking list to keep focus on the workflow */}
+          {!(slMode === 'create' && role === 'SL' && (tab === 'pw' || tab === 'pw-v2' || tab === 'pw-layout')) && (
+            <div className="border-b border-neutral-10 mb-6 flex gap-6 text-sm overflow-x-auto">
+              <Tab id="pw"        label="Production & warehouse"               tab={tab} setTab={setTab} />
+              <Tab id="pw-v2"     label="Production & warehouse (sticky)"      tab={tab} setTab={setTab} />
+              <Tab id="pw-layout" label="Production & warehouse (layout view)" tab={tab} setTab={setTab} />
+              <Tab id="picker"    label="Picker"                               tab={tab} setTab={setTab}
+                   badge={pickingList ? loadsRemaining : null} />
+              <Tab id="history"   label="History"                              tab={tab} setTab={setTab} />
+              <Tab id="rejected"  label="Rejected bales"                       tab={tab} setTab={setTab} />
+            </div>
+          )}
+
+          {tab === 'pw'        && <ShiftLeaderView
+                                    layout="accordion"
+                                    pickingList={pickingList} setPickingList={setPickingList}
+                                    setTab={setTab} setRole={setRole}
+                                    slMode={slMode} setSlMode={setSlMode}
+                                    windowActive={windowActive} setWindowActive={setWindowActive}
+                                    setToast={setToast} processed={processed} />}
+          {tab === 'pw-v2'     && <ShiftLeaderView
+                                    layout="sticky"
+                                    pickingList={pickingList} setPickingList={setPickingList}
+                                    setTab={setTab} setRole={setRole}
+                                    slMode={slMode} setSlMode={setSlMode}
+                                    windowActive={windowActive} setWindowActive={setWindowActive}
+                                    setToast={setToast} processed={processed} />}
+          {tab === 'pw-layout' && <ShiftLeaderView
+                                    layout="spatial"
+                                    pickingList={pickingList} setPickingList={setPickingList}
+                                    setTab={setTab} setRole={setRole}
+                                    slMode={slMode} setSlMode={setSlMode}
+                                    windowActive={windowActive} setWindowActive={setWindowActive}
+                                    setToast={setToast} processed={processed} />}
+          {tab === 'picker'  && <ForkliftPickerView pickingList={pickingList} processed={processed}
+                                  setProcessed={setProcessed} setPickingList={setPickingList} setRole={setRole} />}
+          {tab === 'history' && <HistoryView processed={processed} />}
+          {tab === 'rejected' && <Placeholder title="Rejected bales" />}
+        </div>
+
+        {/* Success toast — bottom-centre, auto-dismiss, with optional Undo */}
+        {toast && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="fixed top-20 right-6 z-50 flex items-center gap-3 bg-success-100 text-success-300 rounded shadow-[0_3px_3px_-2px_rgba(0,0,0,0.2),0_3px_4px_0_rgba(0,0,0,0.14),0_1px_8px_0_rgba(0,0,0,0.12)] px-4 py-3 max-w-md"
+          >
+            <Icon d={I.checkCircle} className="w-5 h-5 text-success-200 shrink-0" />
+            <div className="text-sm leading-snug">
+              <span className="font-bold">Success!</span> {toast.message}
+            </div>
+            {toast.onUndo && (
+              <button
+                onClick={() => { toast.onUndo(); setToast(null); }}
+                className="ml-1 px-2 py-1 rounded text-sm font-bold text-success-300 underline underline-offset-2 hover:no-underline"
+              >
+                Undo
+              </button>
+            )}
+            <button
+              onClick={() => setToast(null)}
+              className="ml-1 text-success-300 hover:opacity-70"
+              aria-label="Dismiss"
+            >✕</button>
+          </div>
+        )}
+      </AppShell>
+    );
+  }
+
+  const Tab = ({ id, label, tab, setTab, badge }) => (
+    <button
+      onClick={() => setTab(id)}
+      className={
+        'pb-3 -mb-px border-b-2 font-medium transition flex items-center gap-2 ' +
+        (tab === id
+          ? 'border-safi-600 text-safi-700'
+          : 'border-transparent text-slate-600 hover:text-slate-900')
+      }
+      aria-current={tab === id ? 'page' : undefined}
+    >
+      {label}
+      {badge ? (
+        <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-safi-100 text-safi-700 text-xs font-semibold">
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
+
+  const Placeholder = ({ title }) => (
+    <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500">
+      <h3 className="text-lg font-semibold text-slate-700 mb-1">{title}</h3>
+      <p>This tab is outside the scope of the picking-list prototype.</p>
+    </div>
+  );
+
+  // HistoryView — processed loads (most recent first). Resolves load IDs back to the
+  // yard structure for context (supplier, lot, bay, zone).
+  function HistoryView({ processed }) {
+    // Build an index of loadId -> { zone, bay, load } for resolution
+    const loadIndex = useMemo(() => {
+      const idx = {};
+      YARD.forEach(zone => zone.bays.forEach(bay => bay.loads.forEach(load => {
+        idx[load.id] = { zone, bay, load };
+      })));
+      return idx;
+    }, []);
+    const rows = Object.entries(processed)
+      .map(([loadId, p]) => ({ ...p, loadId, ...(loadIndex[loadId] || {}) }))
+      .filter(r => r.load)
+      .sort((a, b) => new Date(b.at) - new Date(a.at));
+
+    if (rows.length === 0) {
+      return (
+        <div className="bg-white border border-neutral-10 rounded-xl p-10 text-center">
+          <div className="mx-auto w-12 h-12 rounded-full bg-neutral-5 flex items-center justify-center text-neutral-60 mb-3">
+            <Icon d={I.list} className="w-6 h-6" />
+          </div>
+          <h3 className="font-bold text-neutral-100 text-lg">No processed loads yet</h3>
+          <p className="text-sm text-neutral-60 mt-1 max-w-md mx-auto">
+            Loads will appear here once the forklift team marks them as processed in the Picker tab.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-white border border-neutral-10 rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-neutral-10 flex items-center justify-between">
+          <h3 className="font-bold text-neutral-100">Processed loads</h3>
+          <span className="text-sm text-neutral-60">{rows.length} processed</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-neutral-5">
+              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-neutral-60">
+                <th className="px-5 py-3">Supplier</th>
+                <th className="px-5 py-3">Order ref</th>
+                <th className="px-5 py-3">From</th>
+                <th className="px-5 py-3">Bales processed</th>
+                <th className="px-5 py-3">Weight processed</th>
+                <th className="px-5 py-3">Spec averages</th>
+                <th className="px-5 py-3">Processed at</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-10">
+              {rows.map(r => (
+                <tr key={r.loadId} className="hover:bg-neutral-5/50">
+                  <td className="px-5 py-3 font-medium text-neutral-100">{r.load.supplier}</td>
+                  <td className="px-5 py-3 font-mono text-xs text-neutral-60">#{r.load.lot}</td>
+                  <td className="px-5 py-3 text-neutral-60">{r.zone.esName} · {r.bay.esName}</td>
+                  <td className="px-5 py-3 text-neutral-100">
+                    {fmtNum(r.bales)} / {fmtNum(r.load.bales)}
+                    {r.partial && <span className="ml-1 text-amber-700 text-xs font-medium">(partial)</span>}
+                  </td>
+                  <td className="px-5 py-3 text-neutral-100">{fmtKg(r.weight)}</td>
+                  <td className="px-5 py-3">
+                    {r.load.results ? (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {Object.entries(SPEC).map(([k, spec]) => (
+                          <span key={k} className="text-[11px] px-1.5 py-0.5 rounded bg-safi-50 text-safi-700">
+                            {spec.label.split(' ')[0]} {r.load.results[k].toFixed(1)}%
+                          </span>
+                        ))}
+                      </div>
+                    ) : <span className="text-neutral-40 text-xs">—</span>}
+                  </td>
+                  <td className="px-5 py-3 text-neutral-60 text-xs">
+                    {new Date(r.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  function MaterialFilter() {
+    return (
+      <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 min-w-[220px]">
+        <div className="text-[11px] uppercase tracking-wide text-slate-500">Material filter</div>
+        <div className="flex items-center justify-between gap-2 text-sm font-medium text-slate-900">
+          Clear PET Bottles
+          <Icon d={I.chevron} className="w-4 h-4 text-slate-500" />
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // SHIFT LEADER VIEW — progressive disclosure + picking-list creation
+  // ============================================================================
+
+  function ShiftLeaderView({ layout = 'accordion', pickingList, setPickingList, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {} }) {
+    const isCreating = slMode === 'create';
+    const isSticky = layout === 'sticky';
+    const isSpatial = layout === 'spatial';
+    // Filter out fully processed loads — they live in History now.
+    const visibleYard = useMemo(() => YARD.map(zone => ({
+      ...zone,
+      bays: zone.bays.map(bay => ({
+        ...bay,
+        loads: bay.loads.filter(l => !processed[l.id] || processed[l.id].partial)
+      }))
+    })), [processed]);
+
+    // Zone & bay filter — when active, only show selected bays and force-expand their zones.
+    const [bayFilter, setBayFilter] = useState(new Set());
+
+    const filteredYard = useMemo(() => {
+      if (bayFilter.size === 0) return visibleYard;
+      return visibleYard.map(zone => ({
+        ...zone,
+        bays: zone.bays.filter(b => bayFilter.has(`${zone.id}|${b.id}`))
+      })).filter(zone => zone.bays.length > 0);
+    }, [visibleYard, bayFilter]);
+
+    // Selection state — keyed by "zoneId|bayId|loadId", value = number of bales the SL wants picked.
+    // Defaults to the full bale count when a load is ticked; can be lowered in the picking list card.
+    const [selectionBales, setSelectionBales] = useState({}); // { [key]: bales }
+    // Helper view that looks/feels like a Set membership check
+    const selected = useMemo(() => new Set(Object.keys(selectionBales)), [selectionBales]);
+    const setSelected = (updater) => {
+      setSelectionBales(prev => {
+        const prevSet = new Set(Object.keys(prev));
+        const nextSet = typeof updater === 'function' ? updater(prevSet) : updater;
+        const out = {};
+        for (const key of nextSet) {
+          out[key] = prev[key] != null ? prev[key] : findLoadByKey(key)?.bales ?? 0;
+        }
+        return out;
+      });
+    };
+    const findLoadByKey = (key) => {
+      const [zid, bid, lid] = key.split('|');
+      const z = YARD.find(z => z.id === zid);
+      const b = z?.bays.find(b => b.id === bid);
+      return b?.loads.find(l => l.id === lid);
+    };
+    // Expansion state for progressive disclosure (accordion layout only)
+    const [openZones, setOpenZones] = useState(() => ({ A: true })); // first zone open by default
+    const [openBays, setOpenBays] = useState(() => ({ A1: true }));
+    // Sticky layout: per-bay "Show all loads" expansion
+    const [bayShowAll, setBayShowAll] = useState({});
+
+    // Zones expand and collapse freely — including all closed at once.
+    const toggleZone = (id) => {
+      setOpenZones(prev => ({ ...prev, [id]: !prev[id] }));
+    };
+
+    const toggleLoad = (key, accessible) => {
+      if (!isCreating || !accessible) return;
+      setSelected(prev => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        return next;
+      });
+    };
+
+    const selectedLoads = useMemo(() => {
+      const result = [];
+      for (const zone of YARD) {
+        for (const bay of zone.bays) {
+          for (const load of bay.loads) {
+            const key = `${zone.id}|${bay.id}|${load.id}`;
+            if (selectionBales[key] != null) {
+              const bales = selectionBales[key];
+              const ratio = load.bales > 0 ? bales / load.bales : 0;
+              const weight = Math.round(load.weight * ratio);
+              const partial = bales < load.bales;
+              result.push({ key, zone, bay, load, bales, weight, partial });
+            }
+          }
+        }
+      }
+      return result;
+    }, [selectionBales]);
+
+    const summary = useMemo(() => {
+      const analysedLoads = selectedLoads.filter(x => x.load.results);
+      const totalWeight = sum(selectedLoads, x => x.weight);
+      const totalBales  = sum(selectedLoads, x => x.bales);
+      const analysedWeight = sum(analysedLoads, x => x.weight);
+      const components = { transparentPET: 0, colouredPET: 0, contaminants: 0 };
+      analysedLoads.forEach(({ load, weight }) => {
+        components.transparentPET += load.results.transparentPET * weight;
+        components.colouredPET    += load.results.colouredPET    * weight;
+        components.contaminants   += load.results.contaminants   * weight;
+      });
+      Object.keys(components).forEach(k => {
+        components[k] = analysedWeight > 0 ? components[k] / analysedWeight : 0;
+      });
+      return {
+        totalWeight, totalBales,
+        loadCount: selectedLoads.length,
+        analysedCount: analysedLoads.length,
+        components
+      };
+    }, [selectedLoads]);
+
+    const cancelCreate = () => {
+      setSelectionBales({});
+      setSlMode('default');
+    };
+
+    // Scroll the LHS to a particular load row and briefly highlight it.
+    // Used by the clickable zone:bay link in the picking-list card.
+    const scrollToLoad = (loadId) => {
+      // Find the zone for this load and make sure its bay (in accordion mode) is open
+      for (const zone of YARD) {
+        for (const bay of zone.bays) {
+          if (bay.loads.some(l => l.id === loadId)) {
+            setOpenZones(prev => ({ ...prev, [zone.id]: true }));
+            setOpenBays(prev => ({ ...prev, [bay.id]: true }));
+            break;
+          }
+        }
+      }
+      // Give React a tick to render the open accordion, then scroll
+      setTimeout(() => {
+        const el = document.getElementById('load-' + loadId);
+        if (!el) return;
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('flash-highlight');
+        setTimeout(() => el.classList.remove('flash-highlight'), 1600);
+      }, 80);
+    };
+
+    const confirmList = () => {
+      const previousSelection = { ...selectionBales };
+      const list = {
+        id: 'pl-' + Date.now(),
+        name: `Shift picking list — ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`,
+        createdAt: new Date().toISOString(),
+        loads: Object.entries(selectionBales).map(([k, bales]) => {
+          const [zoneId, bayId, loadId] = k.split('|');
+          return { zoneId, bayId, loadId, bales };
+        })
+      };
+      setPickingList(list);
+      setSelectionBales({});
+      setSlMode('default');
+      // Scroll to top so the user sees the tabs + Picker tab badge
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setToast({
+        message: `Picking list sent to the forklift team. ${list.loads.length} load${list.loads.length === 1 ? '' : 's'} ready to pick.`,
+        kind: 'success',
+        onUndo: () => {
+          setPickingList(null);
+          setSelectionBales(previousSelection);
+          setSlMode('create');
+        }
+      });
+    };
+
+    return (
+      <Fragment>
+        {/* Active production window — hidden during Create picking list */}
+        {!isCreating && <ActiveProductionWindow active={windowActive} />}
+
+        {/* Existing-list banner — blue info style with Edit / destructive Clear */}
+        {!isCreating && pickingList && (
+          <ActivePickingListAlert
+            pickingList={pickingList}
+            onEdit={() => {
+              // Pre-populate the create workflow with the active list but DO NOT
+              // clear pickingList yet — so if the SL cancels mid-edit, the existing
+              // active picking list is still in place.
+              const next = {};
+              pickingList.loads.forEach(l => {
+                next[`${l.zoneId}|${l.bayId}|${l.loadId}`] = l.bales != null ? l.bales : findLoadByKey(`${l.zoneId}|${l.bayId}|${l.loadId}`)?.bales ?? 0;
+              });
+              setSelectionBales(next);
+              setSlMode('create');
+            }}
+            onClear={() => {
+              const previous = pickingList;
+              setPickingList(null);
+              setToast({
+                message: 'Picking list cleared.',
+                kind: 'success',
+                onUndo: () => setPickingList(previous)
+              });
+            }}
+          />
+        )}
+
+        {/* Warehouse header — outside the grid so both columns align with the first zone card. */}
+        <div className="sticky top-14 z-20 bg-[#fafafa] pt-6 pb-3 -mx-8 px-8">
+          <h2 className="text-lg font-bold text-neutral-100">Warehouse</h2>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            {/* Material — the most important filter, first in order */}
+            <div className="relative w-[180px]">
+              <select
+                aria-label="Filter by material"
+                className="appearance-none w-full pl-3 pr-9 py-2 text-sm border border-neutral-10 rounded-md bg-white text-neutral-100 focus:border-safi-600"
+                defaultValue="Clear PET Bottles"
+              >
+                <option>Clear PET Bottles</option>
+                <option>Coloured PET Bottles</option>
+                <option>PET Trays</option>
+                <option>All materials</option>
+              </select>
+              <label className="absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium text-neutral-60">Material</label>
+              <Icon d={I.chevron} className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-neutral-60 pointer-events-none" />
+            </div>
+            <div className="relative w-[180px]">
+              <Icon d={I.search} className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-40" />
+              <input
+                type="search"
+                placeholder="Enter…"
+                aria-label="Search loads"
+                className="pl-9 pr-3 py-2 w-full text-sm border border-neutral-10 rounded-md bg-white placeholder:text-neutral-40 focus:border-safi-600"
+              />
+              <label className="absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium text-neutral-60">Search loads</label>
+            </div>
+            <div className="relative w-[160px]">
+              <select
+                aria-label="Filter by supplier"
+                className="appearance-none w-full pl-3 pr-9 py-2 text-sm border border-neutral-10 rounded-md bg-white text-neutral-100 focus:border-safi-600"
+                defaultValue=""
+              >
+                <option value="">All suppliers</option>
+                <option>Supplier A</option><option>Supplier B</option><option>Supplier C</option>
+                <option>Supplier D</option><option>Supplier E</option><option>Supplier F</option>
+                <option>Supplier G</option><option>Supplier H</option><option>Supplier I</option>
+                <option>Supplier J</option><option>Supplier K</option><option>Supplier L</option>
+                <option>Supplier M</option><option>Supplier N</option><option>Supplier O</option>
+                <option>Supplier P</option>
+              </select>
+              <label className="absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium text-neutral-60">Supplier</label>
+              <Icon d={I.chevron} className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-neutral-60 pointer-events-none" />
+            </div>
+            <ZoneBayFilter value={bayFilter} onChange={setBayFilter} yard={visibleYard} />
+            <div className="flex-1" />
+            {!isCreating && !pickingList && (
+              <button
+                onClick={() => setSlMode('create')}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded bg-safi-600 text-white text-sm font-medium hover:bg-safi-700 shadow-sm"
+              >
+                <Icon d={I.plus} className="w-4 h-4" />
+                Create picking list
+              </button>
+            )}
+          </div>
+        </div>{/* /sticky warehouse header */}
+
+      <div className="grid grid-cols-12 gap-6">
+        {/* Main column — zone list or spatial layout */}
+        <div className={isCreating ? 'col-span-12 lg:col-span-8' : 'col-span-12'}>
+          {isSpatial ? (
+            <SpatialLayoutView
+              yard={filteredYard}
+              isCreating={isCreating}
+              selectionBales={selectionBales}
+              setSelectionBales={setSelectionBales}
+              pickingList={pickingList}
+            />
+          ) : (
+          /* Yard — Zones / Bays / Loads */
+          <div className="space-y-3">
+            {filteredYard.map(zone => {
+              const z = zoneStats(zone);
+              // Force-expand zones when the bay filter is active so the user can immediately see their selection.
+              const zoneOpen = bayFilter.size > 0 ? true : !!openZones[zone.id];
+              return (
+                <div key={zone.id} className="bg-white border border-neutral-10 rounded-xl">
+                  <button
+                    onClick={() => toggleZone(zone.id)}
+                    style={{ top: 176 }}
+                    className={
+                      'w-full flex items-center justify-between pl-5 py-4 sticky z-10 bg-white hover:bg-neutral-5 ' +
+                      // Top corners rounded only when not the only visible part of the container;
+                      // bottom border separates header from content while sticky.
+                      'rounded-t-xl border-b border-neutral-10 ' +
+                      // When the zone is closed, also round the bottom so it doesn't look weird
+                      (zoneOpen ? '' : 'rounded-b-xl ') +
+                      (isSticky ? 'pr-5' : 'pr-9') // align zone chip with bay chips
+                    }
+                    aria-expanded={zoneOpen}
+                  >
+                    <div className="flex items-center gap-3 text-left">
+                      <Icon d={zoneOpen ? I.chevron : I.chevronR} className="w-4 h-4 text-neutral-60" />
+                      <div>
+                        <div className="font-semibold text-neutral-100">
+                          {zone.esName}
+                        </div>
+                        <div className="text-xs text-neutral-60 mt-0.5 flex items-center gap-1.5">
+                          <span>Bays: {z.bays} · Loads: {z.loads} · Bales: {fmtNum(z.bales)} · Weight: {fmtKg(z.weight)}</span>
+                          {isCreating && <ZoneSelectionBadge zoneId={zone.id} selected={selected} />}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CapacityChip bales={z.bales} variant="zone" />
+                    </div>
+                  </button>
+
+                  {zoneOpen && (
+                    <div className={isSticky ? 'border-t border-neutral-10' : 'border-t border-neutral-10 px-5 py-4 space-y-3'}>
+                      {zone.bays.map(bay => {
+                        const s = bayStats(bay);
+                        const bayOpen = !!openBays[bay.id];
+                        const bayLoadKeys = bay.loads.map(l => `${zone.id}|${bay.id}|${l.id}`);
+                        const allSelected = isCreating && bay.accessible && bayLoadKeys.length > 0 && bayLoadKeys.every(k => selected.has(k));
+                        const someSelected = isCreating && bayLoadKeys.some(k => selected.has(k));
+                        const hasLoads = bay.loads.length > 0;
+
+                        const toggleBay = (e) => {
+                          e.stopPropagation();
+                          if (!isCreating || !bay.accessible || !hasLoads) return;
+                          setSelected(prev => {
+                            const next = new Set(prev);
+                            if (allSelected) {
+                              bayLoadKeys.forEach(k => next.delete(k));
+                            } else {
+                              bayLoadKeys.forEach(k => next.add(k));
+                            }
+                            return next;
+                          });
+                        };
+
+                        // -------------------- STICKY LAYOUT --------------------
+                        if (isSticky) {
+                          const showAll = !!bayShowAll[bay.id];
+                          const visibleLoads = (hasLoads && !showAll && bay.loads.length > 3)
+                            ? bay.loads.slice(0, 3)
+                            : bay.loads;
+                          const hiddenCount = bay.loads.length - visibleLoads.length;
+                          return (
+                            <Fragment key={bay.id}>
+                              {/* Sticky bay header */}
+                              <div
+                                className={
+                                  'sticky z-[5] flex items-center justify-between px-5 py-2.5 bg-neutral-5/95 backdrop-blur border-b border-neutral-10 ' +
+                                  (someSelected ? 'ring-1 ring-inset ring-safi-200' : '')
+                                }
+                                style={{ top: 254 }}
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="font-semibold text-neutral-100 flex items-center gap-2 flex-wrap">
+                                    {bay.esName}
+                                    {isCreating && !bay.accessible && (
+                                      <span
+                                        title="Blocked bays can’t be picked until the bays in front are cleared."
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[11px] font-medium cursor-help"
+                                      >
+                                        <Icon d={I.lock} className="w-3 h-3" /> Blocked by {bay.blockedBy}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-neutral-60 truncate">
+                                    Load: {s.loads} · {fmtNum(s.bales)} bales · {fmtKg(s.weight)}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0">
+                                  <CapacityChip bales={s.bales} />
+                                  {isCreating && hasLoads && (
+                                    <label className={
+                                      'flex items-center gap-1.5 text-xs font-medium cursor-pointer select-none ' +
+                                      (bay.accessible ? 'text-neutral-80' : 'text-neutral-40 cursor-not-allowed')
+                                    }>
+                                      <input
+                                        type="checkbox"
+                                        className="rounded text-safi-600 focus:ring-safi-500 disabled:opacity-40"
+                                        checked={allSelected}
+                                        ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                                        onChange={toggleBay}
+                                        disabled={!bay.accessible}
+                                        aria-label={`Select all loads in ${bay.esName}`}
+                                      />
+                                      Select all
+                                    </label>
+                                  )}
+                                </div>
+                              </div>
+                              {/* Loads list — flows below the sticky header, subtle dividers */}
+                              {hasLoads ? (
+                                <div className="bg-white">
+                                  {visibleLoads.map(load => {
+                                    const key = `${zone.id}|${bay.id}|${load.id}`;
+                                    return (
+                                      <div key={load.id} className="border-b border-neutral-10/60 last:border-b-0">
+                                        <LoadRow
+                                          load={load}
+                                          isCreating={isCreating}
+                                          accessible={!isCreating || bay.accessible}
+                                          isSelected={selected.has(key)}
+                                          onToggle={() => toggleLoad(key, bay.accessible)}
+                                          onPickingList={(() => {
+                                            if (isCreating || !pickingList) return false;
+                                            const entry = pickingList.loads.find(l => l.loadId === load.id);
+                                            if (!entry) return false;
+                                            return entry.bales != null && entry.bales < load.bales
+                                              ? { partial: true, bales: entry.bales }
+                                              : true;
+                                          })()}
+                                        />
+                                      </div>
+                                    );
+                                  })}
+                                  {hiddenCount > 0 && (
+                                    <button
+                                      onClick={() => setBayShowAll(s => ({ ...s, [bay.id]: true }))}
+                                      className="w-full px-5 py-2.5 text-xs font-medium text-safi-700 hover:bg-neutral-5 border-t border-neutral-10/60"
+                                    >
+                                      Show all loads ({hiddenCount} more)
+                                    </button>
+                                  )}
+                                  {showAll && bay.loads.length > 3 && (
+                                    <button
+                                      onClick={() => setBayShowAll(s => ({ ...s, [bay.id]: false }))}
+                                      className="w-full px-5 py-2.5 text-xs font-medium text-neutral-60 hover:bg-neutral-5 border-t border-neutral-10/60"
+                                    >
+                                      Show fewer
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="px-5 py-6 text-sm text-neutral-60 bg-white border-b border-neutral-10/60 text-center">
+                                  No loads have been stored in this bay yet
+                                </div>
+                              )}
+                            </Fragment>
+                          );
+                        }
+
+                        // -------------------- ACCORDION LAYOUT (original) --------------------
+                        return (
+                          <div key={bay.id} className={
+                            'rounded-lg border ' +
+                            ((isCreating && !bay.accessible)
+                              ? 'border-neutral-10 bg-neutral-5'
+                              : (someSelected ? 'border-safi-300 ring-1 ring-safi-200 bg-safi-50/40' : 'border-neutral-10'))
+                          }>
+                            <div className="flex items-center justify-between px-4 py-3">
+                              <button
+                                onClick={() => hasLoads && setOpenBays(s => ({ ...s, [bay.id]: !s[bay.id] }))}
+                                className="flex items-center gap-3 text-left flex-1 min-w-0"
+                                aria-expanded={bayOpen}
+                                disabled={!hasLoads}
+                              >
+                                <Icon d={bayOpen ? I.chevron : I.chevronR} className={'w-4 h-4 shrink-0 ' + (hasLoads ? 'text-neutral-60' : 'text-neutral-10')} />
+                                <div className="min-w-0">
+                                  <div className="font-medium text-neutral-100 flex items-center gap-2 flex-wrap">
+                                    {bay.esName}
+                                    {isCreating && !bay.accessible && (
+                                      <span
+                                        title="Blocked bays can’t be picked until the bays in front are cleared."
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[11px] font-medium cursor-help"
+                                      >
+                                        <Icon d={I.lock} className="w-3 h-3" /> Blocked by {bay.blockedBy}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-neutral-60 mt-0.5 truncate">
+                                    Load: {s.loads} · Bales: {fmtNum(s.bales)} · {fmtKg(s.weight)}
+                                  </div>
+                                </div>
+                              </button>
+                              <div className="flex items-center gap-3 shrink-0">
+                                <CapacityChip bales={s.bales} />
+                                {isCreating && hasLoads && (
+                                  <label className={
+                                    'flex items-center gap-2 text-xs font-medium cursor-pointer select-none ' +
+                                    (bay.accessible ? 'text-neutral-80' : 'text-neutral-40 cursor-not-allowed')
+                                  }>
+                                    <input
+                                      type="checkbox"
+                                      className="rounded text-safi-600 focus:ring-safi-500 disabled:opacity-40"
+                                      checked={allSelected}
+                                      ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                                      onChange={toggleBay}
+                                      disabled={!bay.accessible}
+                                      aria-label={`Select all loads in ${bay.esName}`}
+                                    />
+                                    Select all
+                                  </label>
+                                )}
+                              </div>
+                            </div>
+
+                            {bayOpen && hasLoads && (
+                              <div className="border-t border-neutral-10 divide-y divide-neutral-10">
+                                {bay.loads.map(load => {
+                                  const key = `${zone.id}|${bay.id}|${load.id}`;
+                                  return (
+                                    <LoadRow
+                                      key={load.id}
+                                      load={load}
+                                      isCreating={isCreating}
+                                      accessible={!isCreating || bay.accessible}
+                                      isSelected={selected.has(key)}
+                                      onToggle={() => toggleLoad(key, bay.accessible)}
+                                      onPickingList={!isCreating && pickingList && pickingList.loads.some(l => l.loadId === load.id)}
+                                    />
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          )}{/* /isSpatial conditional */}
+        </div>
+
+        {/* Side panel — only visible in Create picking list mode. Aligns with the first zone card.
+            The card itself is bounded by viewport height so the footer buttons (Send to picker / Cancel / Schedule)
+            are always visible — only the middle section scrolls when many loads are selected. */}
+        {isCreating && (
+          <aside className="col-span-12 lg:col-span-4">
+            <div className="sticky top-[230px] bg-white border border-neutral-10 rounded-xl shadow-sm flex flex-col max-h-[calc(100vh-260px)]">
+              <div className="p-5 border-b border-neutral-10 flex items-start justify-between shrink-0">
+                <h2 className="font-bold text-neutral-100 text-lg">Picking list</h2>
+                <button
+                  aria-label="Print picking list"
+                  title="Print picking list"
+                  className="p-2 rounded-full hover:bg-neutral-5 text-neutral-60 hover:text-neutral-100"
+                >
+                  <Icon d={I.print} className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4 flex-1 overflow-y-auto scrollbar-thin min-h-0">
+                <div className="grid grid-cols-3 gap-3">
+                  <Metric label="Loads"  value={fmtNum(summary.loadCount)} />
+                  <Metric label="Bales"  value={fmtNum(summary.totalBales)} />
+                  <Metric label="Weight" value={fmtKg(summary.totalWeight)} />
+                </div>
+
+                {summary.loadCount === 0 ? (
+                  <div className="text-sm text-neutral-60 bg-neutral-5 border border-neutral-10 rounded-lg p-4">
+                    No loads selected yet. Tick loads in the yard to add them to the picking list.
+                  </div>
+                ) : (
+                  <>
+                    <div className="border border-neutral-10 rounded-lg p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-neutral-60 mb-3">
+                        Average quality <span className="font-normal normal-case">· weighted avg of {summary.analysedCount} analysed load{summary.analysedCount === 1 ? '' : 's'}</span>
+                      </div>
+                      {summary.analysedCount === 0 ? (
+                        <div className="text-sm text-neutral-60">No analysed loads selected yet.</div>
+                      ) : (
+                        <div className="flex flex-col gap-1.5">
+                          {Object.entries(SPEC).map(([key, spec]) => {
+                            const value = summary.components[key];
+                            const good = inSpec(spec, value);
+                            const cls = good ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900';
+                            const icon = good ? I.checkCircle : I.errorCircle;
+                            return (
+                              <span key={key} className={`self-start inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium ${cls}`}>
+                                <Icon d={icon} className="w-3.5 h-3.5" />
+                                {spec.label} {value.toFixed(1)}%
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="border border-neutral-10 rounded-lg divide-y divide-neutral-10">
+                      {selectedLoads.map(({ key, zone, bay, load, bales, weight, partial }) => (
+                        <div key={key} className="flex items-center gap-3 px-3 py-2.5">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm text-neutral-100 truncate flex items-center gap-2">
+                              <span>{load.supplier}</span>
+                              <span className="text-neutral-40">#{load.lot}</span>
+                              {partial && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900">
+                                  PARTIAL
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-neutral-60 flex items-center gap-2 flex-wrap mt-1">
+                              <button
+                                onClick={() => scrollToLoad(load.id)}
+                                className="text-safi-600 hover:underline focus:underline"
+                                title={`Jump to ${zone.esName}: ${bay.esName} in the yard`}
+                              >
+                                {zone.esName}: {bay.esName}
+                              </button>
+                              <span>·</span>
+                              <span className="inline-flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={load.bales}
+                                  value={bales}
+                                  onChange={(e) => {
+                                    const next = Math.max(1, Math.min(load.bales, Number(e.target.value) || 1));
+                                    setSelectionBales(prev => ({ ...prev, [key]: next }));
+                                  }}
+                                  className="w-12 px-1 py-0.5 rounded border border-neutral-10 text-center text-[11px] text-neutral-100"
+                                  aria-label="Bales to pick"
+                                />
+                                <span>/ {fmtNum(load.bales)} bales</span>
+                              </span>
+                              <span>· {fmtKg(weight)}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setSelectionBales(prev => { const n = { ...prev }; delete n[key]; return n; })}
+                            className="p-1.5 text-neutral-60 hover:text-neutral-100 hover:bg-neutral-5 rounded shrink-0"
+                            aria-label={`Remove ${load.lot} from picking list`}
+                            title="Remove from list"
+                          >
+                            <Icon d={I.close} className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                  </>
+                )}
+              </div>
+
+              <div className="p-5 border-t border-neutral-10 flex flex-col gap-2 shrink-0">
+                <button
+                  onClick={() => confirmList(false)}
+                  disabled={summary.loadCount === 0}
+                  className="w-full py-2.5 rounded bg-safi-600 text-white font-medium hover:bg-safi-700 disabled:bg-neutral-10 disabled:text-neutral-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  Send to picker
+                  <Icon d={I.arrowR} className="w-4 h-4" />
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={cancelCreate}
+                    className="flex-1 py-2 rounded border border-neutral-10 text-neutral-80 font-medium hover:bg-neutral-5"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    disabled={summary.loadCount === 0}
+                    className="flex-1 py-2 rounded border border-neutral-10 text-neutral-80 font-medium hover:bg-neutral-5 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
+                  >
+                    <Icon d={I.calendar} className="w-4 h-4" />
+                    Schedule
+                  </button>
+                </div>
+              </div>
+            </div>
+          </aside>
+        )}
+      </div>{/* /grid */}
+      </Fragment>
+    );
+  }
+
+  // Quieter "N selected" — inline subtle text, not a pill.
+  function ZoneSelectionBadge({ zoneId, selected }) {
+    const count = Array.from(selected).filter(k => k.startsWith(zoneId + '|')).length;
+    if (count === 0) return null;
+    return (
+      <span className="text-xs font-medium text-safi-700">· {count} selected</span>
+    );
+  }
+
+  const Metric = ({ label, value }) => (
+    <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="text-base font-bold text-slate-900 mt-0.5">{value}</div>
+    </div>
+  );
+
+  // Blue info alert shown when a picking list has been sent.
+  function ActivePickingListAlert({ pickingList, onEdit, onClear }) {
+    const [confirmingClear, setConfirmingClear] = useState(false);
+    return (
+      <>
+        <div className="mt-6 bg-sky-50 border border-sky-200 rounded-xl px-5 py-4 flex items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <Icon d={I.info} className="w-5 h-5 text-sky-700 mt-0.5" />
+            <div>
+              <div className="font-bold text-sky-900">Picking list is active</div>
+              <p className="text-sm text-sky-800 mt-0.5">
+                {pickingList.loads.length} loads sent to the forklift team. Edit the list to change it, or clear it to start a new one.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onEdit}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-sky-300 bg-white text-sm font-medium text-sky-900 hover:bg-sky-50"
+            >
+              <Icon d={I.edit} className="w-4 h-4" />
+              Edit list
+            </button>
+            <button
+              onClick={() => setConfirmingClear(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-rose-300 bg-white text-sm font-medium text-rose-700 hover:bg-rose-50"
+            >
+              Clear current list
+            </button>
+          </div>
+        </div>
+
+        {confirmingClear && (
+          <div
+            className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+            onClick={() => setConfirmingClear(false)}
+          >
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+              <h3 className="font-bold text-lg text-neutral-100">Clear current list</h3>
+              <p className="text-sm text-neutral-60 mt-2">
+                Are you sure? This action cannot be undone.
+              </p>
+              <div className="mt-6 flex items-center gap-2 justify-end">
+                <button
+                  onClick={() => setConfirmingClear(false)}
+                  className="px-4 py-2 rounded border border-neutral-10 text-neutral-80 font-medium hover:bg-neutral-5"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { setConfirmingClear(false); onClear(); }}
+                  className="px-4 py-2 rounded bg-rose-600 text-white font-medium hover:bg-rose-700"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  function ActiveProductionWindow({ active }) {
+    if (!active) {
+      return (
+        <div className="bg-white border border-neutral-10 rounded-xl px-5 py-4 flex items-center justify-between">
+          <div className="flex items-start gap-3">
+            <Icon d={I.factory} className="w-5 h-5 text-neutral-60 mt-0.5" />
+            <div>
+              <div className="font-semibold text-neutral-100">No active production window</div>
+              <p className="text-sm text-neutral-60 mt-0.5">Start a window to begin tracking what gets processed.</p>
+            </div>
+          </div>
+          <button className="px-3 py-2 rounded border border-neutral-10 text-sm font-medium text-neutral-80 hover:bg-neutral-5">
+            Start production window
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="bg-white border border-neutral-10 rounded-xl">
+        <div className="px-5 py-4 flex items-center justify-between border-b border-neutral-10">
+          <h3 className="font-semibold text-neutral-100">Active production window</h3>
+          <button className="text-sm font-medium text-neutral-80 hover:text-neutral-100">Finish window</button>
+        </div>
+        <div className="px-5 py-4 grid grid-cols-2 md:grid-cols-6 gap-6 text-sm">
+          <div><div className="text-xs text-neutral-60">Material</div><div className="font-semibold text-neutral-100 mt-1">Clear PET Bottles</div></div>
+          <div><div className="text-xs text-neutral-60">Target input</div><div className="font-semibold text-neutral-100 mt-1">{ACTIVE_WINDOW.targetInput.toFixed(1)}%</div></div>
+          <div><div className="text-xs text-neutral-60">Elapsed</div><div className="font-semibold text-neutral-100 mt-1">{ACTIVE_WINDOW.elapsed}</div></div>
+          <div><div className="text-xs text-neutral-60">Bales processed</div><div className="font-semibold text-neutral-100 mt-1">{ACTIVE_WINDOW.balesProcessed}</div></div>
+          <div><div className="text-xs text-neutral-60">Weight processed</div><div className="font-semibold text-neutral-100 mt-1">{fmtKg(ACTIVE_WINDOW.weightProcessed)}</div></div>
+          <div><div className="text-xs text-neutral-60">Actual input</div><div className="font-semibold text-emerald-700 mt-1">{ACTIVE_WINDOW.actualInput.toFixed(1)}%</div></div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // FORKLIFT OPERATOR VIEW — Picker tab
+  // ============================================================================
+
+  function ForkliftPickerView({ pickingList, processed, setProcessed, setPickingList, setRole }) {
+    const [openZones, setOpenZones] = useState({});
+    const [confirmLoad, setConfirmLoad] = useState(null); // { zone, bay, load, partial }
+
+    // When list arrives, default to all zones expanded so FO sees everything
+    useEffect(() => {
+      if (pickingList) {
+        const expanded = {};
+        pickingList.loads.forEach(l => { expanded[l.zoneId] = true; });
+        setOpenZones(expanded);
+      }
+    }, [pickingList]);
+
+    if (!pickingList) {
+      return (
+        <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
+          <div className="mx-auto w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 mb-3">
+            <Icon d={I.list} className="w-6 h-6" />
+          </div>
+          <h3 className="font-semibold text-slate-900 text-lg">No picking list yet</h3>
+          <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
+            The shift leader hasn't sent a picking list. When they do, the loads you need to move will appear here, grouped by zone.
+          </p>
+          <button
+            onClick={() => setRole('SL')}
+            className="mt-5 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium hover:bg-slate-50"
+          >
+            Switch to Shift Leader view to create one
+            <Icon d={I.arrowR} className="w-4 h-4" />
+          </button>
+        </div>
+      );
+    }
+
+    // Resolve picking-list entries against the yard structure
+    const resolved = pickingList.loads.map(({ zoneId, bayId, loadId }) => {
+      const zone = YARD.find(z => z.id === zoneId);
+      const bay  = zone?.bays.find(b => b.id === bayId);
+      const load = bay?.loads.find(l => l.id === loadId);
+      return { zone, bay, load };
+    }).filter(x => x.zone && x.bay && x.load);
+
+    // Group by zone -> bay
+    const grouped = {};
+    resolved.forEach(({ zone, bay, load }) => {
+      if (!grouped[zone.id]) grouped[zone.id] = { zone, bays: {} };
+      if (!grouped[zone.id].bays[bay.id]) grouped[zone.id].bays[bay.id] = { bay, loads: [] };
+      grouped[zone.id].bays[bay.id].loads.push(load);
+    });
+
+    const totalLoads = resolved.length;
+    const doneLoads = resolved.filter(({ load }) => processed[load.id]).length;
+    const allDone = doneLoads === totalLoads;
+
+    const markProcessed = (load, balesProcessed) => {
+      const baleCount = balesProcessed ?? load.bales;
+      const perBaleKg = load.weight / load.bales;
+      const weight = Math.round(baleCount * perBaleKg);
+      setProcessed(prev => ({
+        ...prev,
+        [load.id]: { bales: baleCount, weight, at: new Date().toISOString(), partial: baleCount < load.bales }
+      }));
+      setConfirmLoad(null);
+    };
+
+    return (
+      <div className="space-y-4">
+        {/* Banner */}
+        <div className={
+          'rounded-xl p-5 flex items-start gap-4 ' +
+          (allDone ? 'bg-emerald-50 border border-emerald-200' : 'bg-safi-50 border border-safi-200')
+        }>
+          <Icon d={allDone ? I.check : I.bell} className={'w-6 h-6 mt-0.5 ' + (allDone ? 'text-emerald-700' : 'text-safi-700')} />
+          <div className="flex-1">
+            <div className="font-semibold text-slate-900">{pickingList.name}</div>
+            <p className="text-sm text-slate-700 mt-0.5">
+              {allDone
+                ? 'All loads on this picking list have been processed. Confirm with the Shift Leader to close out the shift.'
+                : `${doneLoads} of ${totalLoads} loads processed. Pick from the bays below in any order — full load by default, or specify bales if the load is split.`}
+            </p>
+          </div>
+          {allDone && (
+            <button
+              onClick={() => setPickingList(null)}
+              className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
+            >
+              Close picking list
+            </button>
+          )}
+        </div>
+
+        {/* Progress bar */}
+        <div className="flex items-center gap-3 text-xs text-slate-600">
+          <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-safi-600 transition-all"
+              style={{ width: `${totalLoads ? (doneLoads/totalLoads)*100 : 0}%` }}
+            />
+          </div>
+          <span className="font-medium">{doneLoads}/{totalLoads}</span>
+        </div>
+
+        {/* Zone accordions */}
+        <div className="space-y-3">
+          {Object.values(grouped).map(({ zone, bays }) => {
+            const open = !!openZones[zone.id];
+            const zoneLoads = Object.values(bays).flatMap(b => b.loads);
+            const zoneDone = zoneLoads.filter(l => processed[l.id]).length;
+            return (
+              <div key={zone.id} className="bg-white border border-slate-200 rounded-xl">
+                <button
+                  onClick={() => setOpenZones(s => ({ ...s, [zone.id]: !s[zone.id] }))}
+                  className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 rounded-xl"
+                  aria-expanded={open}
+                >
+                  <div className="flex items-center gap-3">
+                    <Icon d={open ? I.chevron : I.chevronR} className="w-4 h-4 text-slate-500" />
+                    <div className="text-left">
+                      <div className="font-semibold text-slate-900">{zone.esName}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">{Object.keys(bays).length} bays · {zoneLoads.length} loads to pick</div>
+                    </div>
+                  </div>
+                  <span className={
+                    'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ' +
+                    (zoneDone === zoneLoads.length ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-safi-100 text-safi-700')
+                  }>
+                    {zoneDone}/{zoneLoads.length} processed
+                  </span>
+                </button>
+
+                {open && (
+                  <div className="border-t border-slate-100 px-5 py-4 space-y-3">
+                    {Object.values(bays).map(({ bay, loads }) => {
+                      const bayDone = loads.every(l => processed[l.id]);
+                      return (
+                        <div key={bay.id} className={
+                          'rounded-lg border ' + (bayDone ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-200')
+                        }>
+                          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+                            <div>
+                              <div className="font-medium text-slate-900">{bay.esName}</div>
+                              <div className="text-xs text-slate-500 mt-0.5">{loads.length} loads to pick from this bay</div>
+                            </div>
+                            <button
+                              disabled={bayDone}
+                              onClick={() => {
+                                loads.forEach(l => { if (!processed[l.id]) markProcessed(l, l.bales); });
+                              }}
+                              className={
+                                'inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ' +
+                                (bayDone
+                                  ? 'bg-emerald-100 text-emerald-700 cursor-default'
+                                  : 'bg-slate-900 text-white hover:bg-slate-800')
+                              }
+                            >
+                              {bayDone ? (<><Icon d={I.check} className="w-4 h-4" /> Bay processed</>) : 'Process all in bay'}
+                            </button>
+                          </div>
+                          <div className="divide-y divide-slate-100">
+                            {loads.map(load => {
+                              const p = processed[load.id];
+                              return (
+                                <div key={load.id} className="px-4 py-3 flex items-center gap-3">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-semibold text-slate-900">{load.supplier}</span>
+                                      <span className="text-slate-500 text-sm">Order ref <span className="font-mono">#{load.lot}</span></span>
+                                    </div>
+                                    <div className="text-xs text-slate-500 mt-0.5">
+                                      {fmtNum(load.bales)} bales · {fmtKg(load.weight)}
+                                      {p && (
+                                        <span className="ml-2 text-emerald-700 font-medium">
+                                          · Processed {fmtNum(p.bales)} bales{p.partial ? ' (partial)' : ''}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {p ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 text-xs font-semibold">
+                                      <Icon d={I.check} className="w-3.5 h-3.5" /> Done
+                                    </span>
+                                  ) : (
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <button
+                                        onClick={() => setConfirmLoad({ load, bay, zone, partial: true })}
+                                        className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm font-medium hover:bg-slate-50"
+                                      >
+                                        Partial…
+                                      </button>
+                                      <button
+                                        onClick={() => markProcessed(load, load.bales)}
+                                        className="px-3 py-1.5 rounded-lg bg-safi-600 text-white text-sm font-medium hover:bg-safi-700"
+                                      >
+                                        Process full load
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Partial-load modal */}
+        {confirmLoad && (
+          <PartialProcessModal
+            entry={confirmLoad}
+            onCancel={() => setConfirmLoad(null)}
+            onConfirm={(bales) => markProcessed(confirmLoad.load, bales)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  function PartialProcessModal({ entry, onCancel, onConfirm }) {
+    const { load, bay } = entry;
+    const [bales, setBales] = useState(Math.max(1, Math.floor(load.bales / 2)));
+    const perBale = load.weight / load.bales;
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+          <h3 className="font-semibold text-lg text-slate-900">Record partial pick</h3>
+          <p className="text-sm text-slate-600 mt-1">
+            <span className="font-medium">{load.supplier}</span> · #{load.lot} · {bay.esName}
+          </p>
+          <p className="text-xs text-slate-500 mt-3">
+            How many bales did you process? The rest of the load stays in the yard and remains trackable.
+          </p>
+          <div className="mt-4">
+            <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor="bales-input">
+              Bales processed (max {load.bales})
+            </label>
+            <input
+              id="bales-input"
+              type="number"
+              min={1}
+              max={load.bales}
+              value={bales}
+              onChange={e => setBales(Math.max(1, Math.min(load.bales, Number(e.target.value) || 1)))}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-lg font-semibold"
+            />
+            <div className="text-xs text-slate-500 mt-1">
+              ≈ {fmtKg(Math.round(bales * perBale))} processed · {fmtKg(Math.round((load.bales - bales) * perBale))} remains in bay
+            </div>
+          </div>
+          <div className="mt-6 flex gap-2 justify-end">
+            <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium hover:bg-slate-50">Cancel</button>
+            <button onClick={() => onConfirm(bales)} className="px-4 py-2 rounded-lg bg-safi-600 text-white text-sm font-medium hover:bg-safi-700">Confirm pick</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ----------------------------------------------------------------------------
+  // MOUNT
+  // ----------------------------------------------------------------------------
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(<ProductionManagementPage />);
+  </script>
+</body>
+</html>
