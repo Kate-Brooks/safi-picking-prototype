@@ -745,9 +745,10 @@
                         </button>
                       </div>
                     </div>
-                    {/* Right: fill bar — wide so it dominates the white space */}
-                    <div className="flex-[2] min-w-[280px]">
-                      <div className="text-[13px] uppercase tracking-wide text-neutral-60 mb-2">
+                    {/* Right: fill bar — wide so it dominates the white space.
+                        Push down so the label aligns with the metric labels row (Bays / Loads / Bales / Weight). */}
+                    <div className="flex-[2] min-w-[280px] pt-[38px]">
+                      <div className="text-[13px] text-neutral-60 mb-1">
                         {lang === 'es' ? 'Pacas almacenadas' : 'Bales stored'}
                       </div>
                       <FillBar value={z.bales} max={maxBales} suffix={tr('bales', lang).toLowerCase()} />
@@ -758,49 +759,126 @@
             })}
           </div>
 
-          {/* Top suppliers overlay (modal) — opens when the user clicks "View top suppliers" on a zone */}
+          {/* Top suppliers overlay (modal) — opens when the user clicks "View top suppliers" on a zone.
+              Ranks by total kg of Good material delivered (weight × Good material %).
+              Each row shows: supplier name, Good material % chip, kg of Good material, total kg, # loads,
+              and clickable bay refs that navigate the user into that bay's detail view. */}
           {topSuppliersZoneId && (() => {
             const z = yard.find(z => z.id === topSuppliersZoneId);
             if (!z) return null;
             const supplierMap = {};
             z.bays.forEach(b => b.loads.forEach(l => {
-              if (!supplierMap[l.supplier]) supplierMap[l.supplier] = { weight: 0, loads: 0 };
-              supplierMap[l.supplier].weight += l.weight;
-              supplierMap[l.supplier].loads += 1;
+              if (!supplierMap[l.supplier]) supplierMap[l.supplier] = {
+                weight: 0, goodWeight: 0, qSum: 0, qWeight: 0, loads: 0, bayIds: new Set()
+              };
+              const s = supplierMap[l.supplier];
+              s.weight += l.weight;
+              s.loads += 1;
+              s.bayIds.add(b.id);
+              if (l.results) {
+                s.qSum += l.results.transparentPET * l.weight;
+                s.qWeight += l.weight;
+                s.goodWeight += (l.results.transparentPET / 100) * l.weight;
+              }
             }));
             const top = Object.entries(supplierMap)
-              .map(([n, v]) => ({ name: n, weight: v.weight, loads: v.loads }))
-              .sort((a, b) => b.weight - a.weight)
+              .map(([n, v]) => ({
+                name: n,
+                weight: v.weight,
+                goodWeight: v.goodWeight,
+                avgGood: v.qWeight > 0 ? v.qSum / v.qWeight : null,
+                loads: v.loads,
+                bays: [...v.bayIds]
+              }))
+              .sort((a, b) => b.goodWeight - a.goodWeight)
               .slice(0, 5);
+            const navToBay = (bayId) => {
+              setTopSuppliersZoneId(null);
+              goBay(z.id, bayId);
+            };
             return (
               <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setTopSuppliersZoneId(null)}>
-                <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
-                  <div className="flex items-start justify-between">
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-5" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h3 className="font-bold text-neutral-100 text-lg">
-                        {lang === 'es' ? 'Top proveedores' : 'Top suppliers'}
-                      </h3>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-bold text-neutral-100 text-lg">
+                          {lang === 'es' ? 'Top proveedores' : 'Top suppliers'}
+                        </h3>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success-100 text-success-300 text-[13px] font-semibold">
+                          <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
+                          {tr('goodMaterial', lang)}
+                        </span>
+                      </div>
                       <p className="text-[13px] text-neutral-60 mt-1">
-                        {zoneName(z, lang)} · {lang === 'es' ? 'por peso' : 'by weight'}
+                        {zoneName(z, lang)} · {lang === 'es'
+                          ? 'clasificado por peso de Material Bueno entregado'
+                          : 'ranked by kg of Good material delivered'}
                       </p>
                     </div>
                     <button
                       onClick={() => setTopSuppliersZoneId(null)}
                       aria-label={lang === 'es' ? 'Cerrar' : 'Close'}
-                      className="p-2 rounded-full hover:bg-neutral-5 text-neutral-60 hover:text-neutral-100 min-w-[44px] min-h-[44px]"
+                      className="p-2 rounded-full hover:bg-neutral-5 text-neutral-60 hover:text-neutral-100 min-w-[44px] min-h-[44px] -mr-2 -mt-2"
                     >
                       <Icon d={I.close} className="w-5 h-5" />
                     </button>
                   </div>
-                  <ul className="mt-3 divide-y divide-neutral-10">
-                    {top.map((s, i) => (
-                      <li key={s.name} className="flex items-center justify-between py-2.5 text-[13px]">
-                        <span className="text-neutral-100">
-                          <span className="text-neutral-60 mr-2">{i + 1}.</span>{s.name}
-                        </span>
-                        <span className="text-neutral-60">{fmtKg(s.weight)} · {s.loads} {tr('loads', lang).toLowerCase()}</span>
-                      </li>
-                    ))}
+                  <ul className="mt-4 divide-y divide-neutral-10">
+                    {top.map((s, i) => {
+                      const goodOk = s.avgGood == null || s.avgGood >= 90;
+                      const chipCls = goodOk
+                        ? 'bg-success-100 text-success-300 border-success-200/40'
+                        : 'bg-rose-50 text-rose-700 border-rose-200';
+                      return (
+                        <li key={s.name} className="py-3">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex items-start gap-3 min-w-0">
+                              <span className="text-[13px] font-bold text-neutral-60 mt-0.5 w-5 text-right shrink-0">{i + 1}.</span>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-semibold text-neutral-100 text-[15px]">{s.name}</span>
+                                  <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[13px] font-semibold ' + chipCls}>
+                                    <Icon d={goodOk ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
+                                    {tr('goodMaterial', lang)}{s.avgGood != null ? ` ${s.avgGood.toFixed(1)}%` : ''}
+                                  </span>
+                                </div>
+                                <div className="mt-1.5 text-[13px] text-neutral-60 flex items-center flex-wrap gap-x-3 gap-y-1">
+                                  <span>{s.loads} {tr('loads', lang).toLowerCase()}</span>
+                                  <span className="text-neutral-40">·</span>
+                                  <span>{fmtKg(s.weight)} {lang === 'es' ? 'total' : 'total'}</span>
+                                </div>
+                                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-[13px] text-neutral-60">
+                                    {lang === 'es' ? 'En:' : 'In:'}
+                                  </span>
+                                  {s.bays.map(bid => {
+                                    const b = z.bays.find(bb => bb.id === bid);
+                                    if (!b) return null;
+                                    return (
+                                      <button
+                                        key={bid}
+                                        onClick={() => navToBay(bid)}
+                                        className="inline-flex items-center px-2 py-0.5 rounded-md border border-safi-200 bg-safi-50 text-safi-700 text-[13px] font-medium hover:bg-safi-100 transition"
+                                        aria-label={`${lang === 'es' ? 'Ir a' : 'Go to'} ${bayName(b, lang)}`}
+                                      >
+                                        {bayName(b, lang)}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className="font-bold text-neutral-100 text-base whitespace-nowrap">{fmtKg(s.goodWeight)}</div>
+                              <div className="text-[13px] text-neutral-60 mt-0.5 whitespace-nowrap">
+                                {lang === 'es' ? 'Material Bueno' : 'Good material'}
+                              </div>
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               </div>
@@ -1034,7 +1112,7 @@
                     {!empty && (
                       <div className="mt-3">
                         <div className="flex items-center justify-between text-[13px] text-neutral-60 mb-1">
-                          <span>{tr('bales', lang)}</span>
+                          <span>{lang === 'es' ? 'Pacas almacenadas' : 'Bales stored'}</span>
                           <span className="text-neutral-40">{Math.round((s.bales / maxBalesInZone) * 100)}%</span>
                         </div>
                         <div className="h-1.5 bg-neutral-5 rounded-full overflow-hidden">
@@ -1951,7 +2029,7 @@
                 <option>PET Trays</option>
                 <option>All materials</option>
               </select>
-              <label className="absolute -top-2 left-3 px-1 bg-white text-[13px] font-medium text-neutral-60">Material</label>
+              <label className="absolute -top-2 left-3 px-1 bg-[#fafafa] text-[13px] font-medium text-neutral-60">Material</label>
               <Icon d={I.chevron} className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-neutral-60 pointer-events-none" />
             </div>
             <div className="relative w-[180px]">
@@ -1962,7 +2040,7 @@
                 aria-label="Search loads"
                 className="pl-9 pr-3 py-2 w-full text-sm border border-neutral-10 rounded-md bg-white placeholder:text-neutral-40 focus:border-safi-600"
               />
-              <label className="absolute -top-2 left-3 px-1 bg-white text-[13px] font-medium text-neutral-60">Search loads</label>
+              <label className="absolute -top-2 left-3 px-1 bg-[#fafafa] text-[13px] font-medium text-neutral-60">Search loads</label>
             </div>
             <div className="relative w-[160px]">
               <select
@@ -1978,7 +2056,7 @@
                 <option>Supplier M</option><option>Supplier N</option><option>Supplier O</option>
                 <option>Supplier P</option>
               </select>
-              <label className="absolute -top-2 left-3 px-1 bg-white text-[13px] font-medium text-neutral-60">Supplier</label>
+              <label className="absolute -top-2 left-3 px-1 bg-[#fafafa] text-[13px] font-medium text-neutral-60">Supplier</label>
               <Icon d={I.chevron} className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-neutral-60 pointer-events-none" />
             </div>
             <ZoneBayFilter value={bayFilter} onChange={setBayFilter} yard={visibleYard} lang={lang} />
