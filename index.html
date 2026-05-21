@@ -131,6 +131,57 @@
   const bayName  = (bay,  lang) => `${tr('bay',  lang)} ${bay.id}`;
   const LangContext = React.createContext('en');
 
+  // ---- Tooltip ---------------------------------------------------------------
+  // Fast on-hover open (≤100ms), Safi-style dark panel, supports rich children.
+  function Tooltip({ children, content, side = 'top' }) {
+    const [open, setOpen] = useState(false);
+    const [coords, setCoords] = useState({ left: 0, top: 0 });
+    const wrapRef = useRef(null);
+    const timer = useRef(null);
+    const show = () => {
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => {
+        const r = wrapRef.current?.getBoundingClientRect();
+        if (r) setCoords({ left: r.left + r.width / 2, top: side === 'top' ? r.top : r.bottom });
+        setOpen(true);
+      }, 80);
+    };
+    const hide = () => {
+      clearTimeout(timer.current);
+      setOpen(false);
+    };
+    return (
+      <Fragment>
+        <span
+          ref={wrapRef}
+          onMouseEnter={show}
+          onMouseLeave={hide}
+          onFocus={show}
+          onBlur={hide}
+          className="inline-block"
+        >
+          {children}
+        </span>
+        {open && (
+          <div
+            role="tooltip"
+            style={{
+              position: 'fixed',
+              left: coords.left,
+              top: coords.top + (side === 'top' ? -8 : 8),
+              transform: side === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
+              zIndex: 60,
+              pointerEvents: 'none'
+            }}
+            className="bg-neutral-100 text-white text-[13px] rounded-md shadow-lg px-3 py-2 max-w-xs"
+          >
+            {content}
+          </div>
+        )}
+      </Fragment>
+    );
+  }
+
   // Average bay quality → 4-bucket heat colour (red → amber → green) + grey for un-analysed.
   // Score = average count of in-spec components (0–3) across analysed loads in the bay.
   const bayQuality = (bay) => {
@@ -351,13 +402,13 @@
     if (bales === 0) {
       const prefix = variant === 'zone' ? 'Zone' : 'Bay';
       return (
-        <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-md text-[12px] font-bold whitespace-nowrap bg-neutral-5 text-neutral-60">
+        <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-md text-[13px] font-bold whitespace-nowrap bg-neutral-5 text-neutral-60">
           {prefix} empty
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-md text-[12px] font-bold whitespace-nowrap bg-sky-100 text-sky-900">
+      <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-md text-[13px] font-bold whitespace-nowrap bg-sky-100 text-sky-900">
         Bales: {fmtNum(bales)}
       </span>
     );
@@ -367,7 +418,7 @@
   // Each chip is green/red against its spec. Returns null if the load hasn't been analysed.
   const AIResultChips = ({ load, onPickingList }) => {
     if (!load.results) {
-      return <span className="text-xs text-neutral-60">Not analysed yet</span>;
+      return <span className="text-[13px] text-neutral-60">Not analysed yet</span>;
     }
     const order = ['transparentPET', 'colouredPET', 'contaminants'];
     return (
@@ -383,7 +434,7 @@
           return (
             <span
               key={key}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium ${cls}`}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-medium ${cls}`}
             >
               <Icon d={icon} className="w-3.5 h-3.5" />
               {spec.label} {value.toFixed(1)}%
@@ -434,9 +485,9 @@
           </span>
         </button>
         <label className={
-          'absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium ' +
+          'absolute -top-2 left-3 px-1 bg-white text-[13px] font-medium ' +
           (open ? 'text-safi-600' : 'text-neutral-60')
-        }>{lang === 'es' ? 'Filtro de filas' : 'Bay filter'}</label>
+        }>{lang === 'es' ? 'Filas' : 'Bays'}</label>
         <Icon d={open ? I.chevron : I.chevron} className={
           'w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ' +
           (open ? 'text-safi-600 rotate-180' : 'text-neutral-60')
@@ -451,26 +502,52 @@
                 </button>
               </div>
             )}
-            {yard.map(zone => (
-              <Fragment key={zone.id}>
-                <div className="px-3 pt-2 pb-1 text-[13px] uppercase tracking-wide text-neutral-60 font-semibold">{zoneName(zone, lang)}</div>
-                {zone.bays.map(bay => {
-                  const k = `${zone.id}|${bay.id}`;
-                  const checked = value.has(k);
-                  return (
-                    <label key={k} className="flex items-center gap-3 px-3 py-2 text-[13px] cursor-pointer hover:bg-neutral-5 min-h-[44px]">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggle(k)}
-                        className="rounded text-safi-600 focus:ring-safi-500"
-                      />
-                      <span className="text-neutral-100">{zoneName(zone, lang)}: {bayName(bay, lang)}</span>
-                    </label>
-                  );
-                })}
-              </Fragment>
-            ))}
+            {(() => {
+              // A user can only select bays from one zone at a time
+              const selectedZoneIds = new Set(Array.from(value).map(k => k.split('|')[0]));
+              const lockedZone = selectedZoneIds.size === 1 ? Array.from(selectedZoneIds)[0] : null;
+              return yard.map(zone => {
+                const zoneDisabled = lockedZone != null && zone.id !== lockedZone;
+                return (
+                  <Fragment key={zone.id}>
+                    <div className="px-3 pt-2 pb-1 text-[13px] uppercase tracking-wide text-neutral-60 font-semibold flex items-center justify-between">
+                      <span>{zoneName(zone, lang)}</span>
+                      {zoneDisabled && (
+                        <span
+                          className="text-[13px] font-normal normal-case text-neutral-40"
+                          title={lang === 'es' ? 'Solo puedes seleccionar filas de una isla a la vez' : 'Only one zone at a time'}
+                        >
+                          {lang === 'es' ? 'Bloqueada' : 'Locked'}
+                        </span>
+                      )}
+                    </div>
+                    {zone.bays.map(bay => {
+                      const k = `${zone.id}|${bay.id}`;
+                      const checked = value.has(k);
+                      return (
+                        <label
+                          key={k}
+                          title={zoneDisabled ? (lang === 'es' ? 'Borra la selección para escoger filas de otra isla' : 'Clear the selection to choose bays from another zone') : undefined}
+                          className={
+                            'flex items-center gap-3 px-3 py-2 text-[13px] min-h-[44px] ' +
+                            (zoneDisabled ? 'cursor-not-allowed text-neutral-40 opacity-60' : 'cursor-pointer hover:bg-neutral-5')
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={zoneDisabled}
+                            onChange={() => toggle(k)}
+                            className="rounded text-safi-600 focus:ring-safi-500 disabled:opacity-40"
+                          />
+                          <span className={zoneDisabled ? 'text-neutral-40' : 'text-neutral-100'}>{zoneName(zone, lang)}: {bayName(bay, lang)}</span>
+                        </label>
+                      );
+                    })}
+                  </Fragment>
+                );
+              });
+            })()}
           </div>
         )}
       </div>
@@ -511,7 +588,7 @@
           </span>
         </button>
         <label className={
-          'absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium ' +
+          'absolute -top-2 left-3 px-1 bg-white text-[13px] font-medium ' +
           (open ? 'text-safi-600' : 'text-neutral-60')
         }>Capacity</label>
         <Icon d={I.chevron} className={
@@ -533,7 +610,7 @@
             ))}
             {count > 0 && (
               <div className="px-3 py-2 border-t border-neutral-10">
-                <button onClick={() => onChange(new Set())} className="text-xs font-medium text-safi-700 hover:underline">
+                <button onClick={() => onChange(new Set())} className="text-[13px] font-medium text-safi-700 hover:underline">
                   Clear
                 </button>
               </div>
@@ -559,6 +636,8 @@
     const [focusBayId, setFocusBayId] = useState(null);
     // Per-bay "Show N more suppliers" expander
     const [showAllSuppliers, setShowAllSuppliers] = useState({});
+    // Zone whose top-suppliers overlay is open (null = closed)
+    const [topSuppliersZoneId, setTopSuppliersZoneId] = useState(null);
     const bayRowRef = useRef(null);
 
     const goOverview = () => { setFocusBayId(null); setView({ level: 'overview' }); };
@@ -622,9 +701,10 @@
     };
 
     // ---- OVERVIEW: just zones — no Production / Unloading containers --------
-    // Each zone card shows headline metrics, top 5 suppliers by weight, and a fill bar.
+    // Each zone card shows headline metrics + a "View top suppliers" trigger that opens an overlay.
     const renderOverview = () => {
       const maxBales = Math.max(1, ...yard.map(z => zoneStats(z).bales));
+      const [supplierOverlay, _setSupplierOverlay] = [topSuppliersZoneId, setTopSuppliersZoneId];
       return (
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
           <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">
@@ -633,23 +713,19 @@
           <div className="flex flex-col gap-3">
             {yard.map(zone => {
               const z = zoneStats(zone);
-              // Aggregate supplier weights for the zone
-              const supplierMap = {};
-              zone.bays.forEach(b => b.loads.forEach(l => {
-                supplierMap[l.supplier] = (supplierMap[l.supplier] || 0) + l.weight;
-              }));
-              const topSuppliers = Object.entries(supplierMap)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 5);
               return (
-                <button
+                <div
                   key={zone.id}
-                  onClick={() => goZone(zone.id)}
-                  className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
+                  className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition hover:border-safi-300 hover:shadow-sm"
                 >
                   <div className="flex items-start justify-between gap-6 flex-wrap">
-                    {/* Left: name + headline metrics */}
-                    <div className="flex-1 min-w-[280px]">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => goZone(zone.id)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goZone(zone.id); } }}
+                      className="flex-1 min-w-[280px] cursor-pointer focus:outline-none focus:ring-2 focus:ring-safi-600 rounded"
+                    >
                       <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
                       <div className="flex items-center gap-6 mt-2 flex-wrap">
                         <Metric2 label={tr('bays',  lang)} value={fmtNum(z.bays)} />
@@ -657,26 +733,15 @@
                         <Metric2 label={tr('bales', lang)} value={fmtNum(z.bales)} />
                         <Metric2 label={tr('weight', lang)} value={fmtKg(z.weight)} />
                       </div>
-                    </div>
-                    {/* Middle: top suppliers by weight */}
-                    <div className="flex-1 min-w-[260px] max-w-[420px]">
-                      <div className="text-[13px] uppercase tracking-wide text-neutral-60 mb-2">
-                        {lang === 'es' ? 'Top proveedores por peso' : 'Top suppliers by weight'}
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setTopSuppliersZoneId(zone.id); }}
+                          className="text-[13px] font-medium text-safi-600 hover:underline min-h-[36px]"
+                        >
+                          {lang === 'es' ? 'Ver top proveedores →' : 'View top suppliers →'}
+                        </button>
                       </div>
-                      {topSuppliers.length === 0 ? (
-                        <div className="text-[13px] text-neutral-40 italic">
-                          {tr('zone', lang)} {tr('empty', lang)}
-                        </div>
-                      ) : (
-                        <ul className="space-y-1">
-                          {topSuppliers.map(([name, weight]) => (
-                            <li key={name} className="flex items-center justify-between text-[13px]">
-                              <span className="text-neutral-100 truncate pr-3">{name}</span>
-                              <span className="text-neutral-60 shrink-0">{fmtKg(weight)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
                     </div>
                     {/* Right: fill bar */}
                     <div className="w-[180px] shrink-0">
@@ -686,10 +751,59 @@
                       <FillBar value={z.bales} max={maxBales} suffix={tr('bales', lang).toLowerCase()} />
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
+
+          {/* Top suppliers overlay (modal) — opens when the user clicks "View top suppliers" on a zone */}
+          {topSuppliersZoneId && (() => {
+            const z = yard.find(z => z.id === topSuppliersZoneId);
+            if (!z) return null;
+            const supplierMap = {};
+            z.bays.forEach(b => b.loads.forEach(l => {
+              if (!supplierMap[l.supplier]) supplierMap[l.supplier] = { weight: 0, loads: 0 };
+              supplierMap[l.supplier].weight += l.weight;
+              supplierMap[l.supplier].loads += 1;
+            }));
+            const top = Object.entries(supplierMap)
+              .map(([n, v]) => ({ name: n, weight: v.weight, loads: v.loads }))
+              .sort((a, b) => b.weight - a.weight)
+              .slice(0, 5);
+            return (
+              <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setTopSuppliersZoneId(null)}>
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="font-bold text-neutral-100 text-lg">
+                        {lang === 'es' ? 'Top proveedores' : 'Top suppliers'}
+                      </h3>
+                      <p className="text-[13px] text-neutral-60 mt-1">
+                        {zoneName(z, lang)} · {lang === 'es' ? 'por peso' : 'by weight'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setTopSuppliersZoneId(null)}
+                      aria-label={lang === 'es' ? 'Cerrar' : 'Close'}
+                      className="p-2 rounded-full hover:bg-neutral-5 text-neutral-60 hover:text-neutral-100 min-w-[44px] min-h-[44px]"
+                    >
+                      <Icon d={I.close} className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <ul className="mt-3 divide-y divide-neutral-10">
+                    {top.map((s, i) => (
+                      <li key={s.name} className="flex items-center justify-between py-2.5 text-[13px]">
+                        <span className="text-neutral-100">
+                          <span className="text-neutral-60 mr-2">{i + 1}.</span>{s.name}
+                        </span>
+                        <span className="text-neutral-60">{fmtKg(s.weight)} · {s.loads} {tr('loads', lang).toLowerCase()}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       );
     };
@@ -708,48 +822,44 @@
       const maxBalesInZone = Math.max(1, ...zone.bays.map(b => bayStats(b).bales));
       const z = zoneStats(zone);
 
-      // If a bay is "focused" (selected via the BayFilter or clicked in the
-      // stepper minimap), move it to the front of the list so it leads the row.
-      const reorderedBays = (() => {
-        if (!focusBayId) return zone.bays;
-        const idx = zone.bays.findIndex(b => b.id === focusBayId);
-        if (idx < 0) return zone.bays;
-        return [zone.bays[idx], ...zone.bays.slice(0, idx), ...zone.bays.slice(idx + 1)];
-      })();
+      // Bays render in their natural pick order. Focused bays just scroll into view +
+      // get a Primary outline — they don't reorder.
+      const reorderedBays = zone.bays;
 
       const scrollToBay = (id) => {
         setFocusBayId(id);
-        const wrap = bayRowRef.current;
-        if (!wrap) return;
-        const child = wrap.querySelector(`[data-bay-id="${id}"]`);
-        if (child) child.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
+        // Defer to next tick so the focus state has rendered before we scroll
+        setTimeout(() => {
+          const wrap = bayRowRef.current;
+          if (!wrap) return;
+          const child = wrap.querySelector(`[data-bay-id="${id}"]`);
+          if (child) child.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }, 0);
       };
 
       return (
-        <div className="bg-white border border-neutral-10 rounded-xl p-6">
+        <div className="bg-white border border-neutral-10 rounded-xl p-5">
           <Breadcrumbs zone={zone} />
 
-          <div className="mt-3 mb-4 flex items-end justify-between gap-6 flex-wrap">
-            <div>
-              <h3 className="text-2xl font-bold text-neutral-100">{zoneName(zone, lang)}</h3>
-              <div className="flex items-center gap-6 mt-2 flex-wrap">
-                <Metric2 label={tr('bays',  lang)} value={fmtNum(z.bays)} />
-                <Metric2 label={tr('loads', lang)} value={fmtNum(z.loads)} />
-                <Metric2 label={tr('bales', lang)} value={fmtNum(z.bales)} />
-                <Metric2 label={tr('weight', lang)} value={fmtKg(z.weight)} />
-              </div>
+          {/* Tight yard header: title, single-line metrics, then minimap */}
+          <div className="mt-2 mb-3">
+            <h3 className="text-2xl font-bold text-neutral-100">{zoneName(zone, lang)}</h3>
+            <div className="text-[13px] text-neutral-60 mt-1">
+              {z.bays} {tr('bays', lang).toLowerCase()} · {z.loads} {tr('loads', lang).toLowerCase()} · {fmtNum(z.bales)} {tr('bales', lang).toLowerCase()} · {fmtKg(z.weight)}
             </div>
           </div>
 
-          {/* Directional flow indicator above the bay row */}
-          <div className="flex items-center gap-2 text-[13px] text-neutral-60 mb-2">
-            <Icon d={I.truck} className="w-4 h-4 text-neutral-40" />
-            <span>
-              {lang === 'es'
-                ? 'Recoge de izquierda a derecha, las filas están numeradas en orden de recolección →'
-                : 'Pick from left to right, bays are numbered in pick order →'}
-            </span>
-          </div>
+          {/* Directional flow indicator (picking list workflow only) */}
+          {isCreating && (
+            <div className="flex items-center gap-2 text-[13px] text-neutral-60 mb-2">
+              <Icon d={I.truck} className="w-4 h-4 text-neutral-40" />
+              <span>
+                {lang === 'es'
+                  ? 'Recoge de izquierda a derecha, las filas están numeradas en orden de recolección →'
+                  : 'Pick from left to right, bays are numbered in pick order →'}
+              </span>
+            </div>
+          )}
 
           {/* Minimap — heat-mapped by quality + selected step highlighting */}
           {zone.bays.length > 8 && (
@@ -760,19 +870,49 @@
                   const pct = maxBalesInZone > 0 ? Math.max(8, (s.bales / maxBalesInZone) * 100) : 8;
                   const q = bayQuality(b);
                   const isFocus = focusBayId === b.id;
+                  // Compute best + worst load Transparent PET % for the tooltip
+                  const analysed = b.loads.filter(l => l.results);
+                  const sorted = analysed.slice().sort((a, b) => b.results.transparentPET - a.results.transparentPET);
+                  const best = sorted[0];
+                  const worst = sorted[sorted.length - 1];
+                  const tipContent = (
+                    <div>
+                      <div className="font-bold text-white">{bayName(b, lang)}</div>
+                      <ul className="mt-1.5 space-y-1 text-[13px] text-neutral-10">
+                        <li>{tr('loads', lang)}: <span className="font-semibold text-white">{s.loads}</span></li>
+                        <li>{tr('bales', lang)}: <span className="font-semibold text-white">{fmtNum(s.bales)}</span></li>
+                        {best && (
+                          <li className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[13px] font-medium bg-success-100 text-success-300">
+                              <Icon d={I.checkCircle} className="w-3 h-3" />
+                              {tr('goodMaterial', lang)} {best.results.transparentPET.toFixed(1)}%
+                            </span>
+                          </li>
+                        )}
+                        {worst && best && worst !== best && (
+                          <li className="flex items-center gap-1.5">
+                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[13px] font-medium ${worst.results.transparentPET < 90 ? 'bg-rose-100 text-rose-900' : 'bg-success-100 text-success-300'}`}>
+                              <Icon d={worst.results.transparentPET < 90 ? I.errorCircle : I.checkCircle} className="w-3 h-3" />
+                              {tr('goodMaterial', lang)} {worst.results.transparentPET.toFixed(1)}%
+                            </span>
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  );
                   return (
-                    <button
-                      key={b.id}
-                      onClick={() => scrollToBay(b.id)}
-                      title={`${bayName(b, lang)} · ${fmtNum(s.bales)} ${tr('bales', lang).toLowerCase()} · ${q.label}`}
-                      aria-label={`Jump to ${bayName(b, lang)} — ${q.label}`}
-                      aria-pressed={isFocus}
-                      className={
-                        'flex-1 min-w-[6px] rounded-t transition-opacity hover:opacity-80 ' +
-                        (isFocus ? 'outline outline-2 outline-safi-600 outline-offset-1 relative z-10' : '')
-                      }
-                      style={{ height: `${pct}%`, backgroundColor: q.color }}
-                    />
+                    <Tooltip key={b.id} content={tipContent}>
+                      <button
+                        onClick={() => scrollToBay(b.id)}
+                        aria-label={`Jump to ${bayName(b, lang)} — ${q.label}`}
+                        aria-pressed={isFocus}
+                        className={
+                          'rounded-t transition-opacity hover:opacity-80 block ' +
+                          (isFocus ? 'outline outline-2 outline-safi-600 outline-offset-1 relative z-10' : '')
+                        }
+                        style={{ height: `36px`, width: '12px', display: 'inline-block', backgroundColor: q.color, transform: `scaleY(${pct / 100})`, transformOrigin: 'bottom' }}
+                      />
+                    </Tooltip>
                   );
                 })}
               </div>
@@ -811,11 +951,25 @@
               const allSelected = isCreating && bay.accessible && bayLoadKeys.length > 0 && bayLoadKeys.every(k => selectionBales[k] != null);
               const someSelected = isCreating && bayLoadKeys.some(k => selectionBales[k] != null);
               const isFocus = focusBayId === bay.id;
+              // Aggregate suppliers by weight + their weighted-avg Transparent PET %
               const supplierAgg = {};
-              bay.loads.forEach(l => { supplierAgg[l.supplier] = (supplierAgg[l.supplier] || 0) + l.weight; });
-              const suppliers = Object.entries(supplierAgg).sort((a, b) => b[1] - a[1]);
+              bay.loads.forEach(l => {
+                if (!supplierAgg[l.supplier]) supplierAgg[l.supplier] = { weight: 0, qSum: 0, qWeight: 0 };
+                supplierAgg[l.supplier].weight += l.weight;
+                if (l.results) {
+                  supplierAgg[l.supplier].qSum += l.results.transparentPET * l.weight;
+                  supplierAgg[l.supplier].qWeight += l.weight;
+                }
+              });
+              const suppliers = Object.entries(supplierAgg)
+                .map(([name, v]) => ({
+                  name,
+                  weight: v.weight,
+                  avgQuality: v.qWeight > 0 ? v.qSum / v.qWeight : null
+                }))
+                .sort((a, b) => b.weight - a.weight);
               const showAll = !!showAllSuppliers[bay.id];
-              const visibleSuppliers = showAll ? suppliers : suppliers.slice(0, 2);
+              const visibleSuppliers = showAll ? suppliers : suppliers.slice(0, 1);
               const hiddenCount = suppliers.length - visibleSuppliers.length;
 
               const toggleAllInBay = (e) => {
@@ -840,9 +994,9 @@
                   data-bay-id={bay.id}
                   role="listitem"
                   className={
-                    'shrink-0 w-[260px] rounded-lg border transition bg-white ' +
+                    'shrink-0 w-[260px] rounded-lg border transition bg-white overflow-hidden ' +
                     (blocked ? 'border-neutral-10 bg-neutral-5 opacity-70'
-                      : (isFocus ? 'border-safi-600 ring-2 ring-safi-200'
+                      : (isFocus ? 'border-2 border-safi-600 ring-2 ring-safi-200'
                         : (someSelected ? 'border-safi-300 ring-1 ring-safi-200 bg-safi-50/40'
                           : 'border-neutral-10 hover:border-safi-300 hover:shadow-sm')))
                   }
@@ -896,19 +1050,25 @@
                       </div>
                     </div>
                   </button>
-                  {/* Suppliers + Good material chip + expander */}
+                  {/* Suppliers + Good material chip (with %) + expander */}
                   {!empty && (
-                    <div className="px-3 pb-3 pt-1 border-t border-neutral-10/60 mt-1">
+                    <div className="px-3 pb-3 pt-2 border-t border-neutral-10/60">
                       <ul className="space-y-1">
-                        {visibleSuppliers.map(([name]) => (
-                          <li key={name} className="flex items-center justify-between gap-2 text-[13px]">
-                            <span className="text-neutral-100 truncate">{name}</span>
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[12px] font-medium bg-success-100 text-success-300 shrink-0">
-                              <Icon d={I.checkCircle} className="w-3 h-3" />
-                              {tr('goodMaterial', lang)}
-                            </span>
-                          </li>
-                        ))}
+                        {visibleSuppliers.map(sup => {
+                          const inSpec = sup.avgQuality == null || sup.avgQuality >= 90;
+                          const chipCls = inSpec
+                            ? 'bg-success-100 text-success-300'
+                            : 'bg-rose-100 text-rose-900';
+                          return (
+                            <li key={sup.name} className="flex items-center justify-between gap-2 text-[13px]">
+                              <span className="text-neutral-100 truncate">{sup.name}</span>
+                              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[13px] font-medium shrink-0 ${chipCls}`}>
+                                <Icon d={inSpec ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
+                                {tr('goodMaterial', lang)}{sup.avgQuality != null ? ` ${sup.avgQuality.toFixed(1)}%` : ''}
+                              </span>
+                            </li>
+                          );
+                        })}
                       </ul>
                       {hiddenCount > 0 && (
                         <button
@@ -918,7 +1078,7 @@
                           {lang === 'es' ? `Mostrar ${hiddenCount} más` : `Show ${hiddenCount} more`}
                         </button>
                       )}
-                      {showAll && suppliers.length > 2 && (
+                      {showAll && suppliers.length > 1 && (
                         <button
                           onClick={() => setShowAllSuppliers(s => ({ ...s, [bay.id]: false }))}
                           className="mt-2 text-[13px] font-medium text-neutral-60 hover:underline"
@@ -926,6 +1086,10 @@
                           {lang === 'es' ? 'Mostrar menos' : 'Show fewer'}
                         </button>
                       )}
+                      {/* Progress bar — bales relative to zone max */}
+                      <div className="mt-3 h-1.5 bg-neutral-5 rounded-full overflow-hidden">
+                        <div className="h-full bg-sky-500" style={{ width: `${Math.max(8, Math.min(100, (s.bales / maxBalesInZone) * 100))}%` }} />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -962,15 +1126,13 @@
       };
       return (
         <div className="bg-white border border-neutral-10 rounded-xl">
-          <div className="p-6 border-b border-neutral-10">
+          <div className="p-5 border-b border-neutral-10">
             <Breadcrumbs zone={zone} bay={bay} />
-            <div className="mt-3 flex items-center justify-between gap-6 flex-wrap">
+            <div className="mt-2 flex items-center justify-between gap-6 flex-wrap">
               <div>
-                <h3 className="text-2xl font-bold text-neutral-100">{bay.esName}</h3>
-                <div className="flex items-center gap-6 mt-2">
-                  <Metric2 label="Loads"  value={fmtNum(s.loads)} />
-                  <Metric2 label="Bales"  value={fmtNum(s.bales)} />
-                  <Metric2 label="Weight" value={fmtKg(s.weight)} />
+                <h3 className="text-2xl font-bold text-neutral-100">{bayName(bay, lang)}</h3>
+                <div className="text-[13px] text-neutral-60 mt-1">
+                  In {zoneName(zone, lang)} · {s.loads} {tr('loads', lang).toLowerCase()} · {fmtNum(s.bales)} {tr('bales', lang).toLowerCase()} · {fmtKg(s.weight)}
                 </div>
               </div>
               <CapacityChip bales={s.bales} />
@@ -1479,7 +1641,7 @@
     >
       {label}
       {badge ? (
-        <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-safi-100 text-safi-700 text-xs font-semibold">
+        <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-semibold">
           {badge}
         </span>
       ) : null}
@@ -1532,7 +1694,7 @@
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-neutral-5">
-              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-neutral-60">
+              <tr className="text-left text-[13px] font-semibold uppercase tracking-wide text-neutral-60">
                 <th className="px-5 py-3">Supplier</th>
                 <th className="px-5 py-3">Order ref</th>
                 <th className="px-5 py-3">From</th>
@@ -1546,25 +1708,25 @@
               {rows.map(r => (
                 <tr key={r.loadId} className="hover:bg-neutral-5/50">
                   <td className="px-5 py-3 font-medium text-neutral-100">{r.load.supplier}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-neutral-60">#{r.load.lot}</td>
+                  <td className="px-5 py-3 font-mono text-[13px] text-neutral-60">#{r.load.lot}</td>
                   <td className="px-5 py-3 text-neutral-60">{r.zone.esName} · {r.bay.esName}</td>
                   <td className="px-5 py-3 text-neutral-100">
                     {fmtNum(r.bales)} / {fmtNum(r.load.bales)}
-                    {r.partial && <span className="ml-1 text-amber-700 text-xs font-medium">(partial)</span>}
+                    {r.partial && <span className="ml-1 text-amber-700 text-[13px] font-medium">(partial)</span>}
                   </td>
                   <td className="px-5 py-3 text-neutral-100">{fmtKg(r.weight)}</td>
                   <td className="px-5 py-3">
                     {r.load.results ? (
                       <div className="flex items-center gap-1 flex-wrap">
                         {Object.entries(SPEC).map(([k, spec]) => (
-                          <span key={k} className="text-[11px] px-1.5 py-0.5 rounded bg-safi-50 text-safi-700">
+                          <span key={k} className="text-[13px] px-1.5 py-0.5 rounded bg-safi-50 text-safi-700">
                             {spec.label.split(' ')[0]} {r.load.results[k].toFixed(1)}%
                           </span>
                         ))}
                       </div>
-                    ) : <span className="text-neutral-40 text-xs">—</span>}
+                    ) : <span className="text-neutral-40 text-[13px]">—</span>}
                   </td>
-                  <td className="px-5 py-3 text-neutral-60 text-xs">
+                  <td className="px-5 py-3 text-neutral-60 text-[13px]">
                     {new Date(r.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
                   </td>
                 </tr>
@@ -1579,7 +1741,7 @@
   function MaterialFilter() {
     return (
       <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 min-w-[220px]">
-        <div className="text-[11px] uppercase tracking-wide text-slate-500">Material filter</div>
+        <div className="text-[13px] uppercase tracking-wide text-slate-500">Material filter</div>
         <div className="flex items-center justify-between gap-2 text-sm font-medium text-slate-900">
           Clear PET Bottles
           <Icon d={I.chevron} className="w-4 h-4 text-slate-500" />
@@ -1800,7 +1962,7 @@
                 <option>PET Trays</option>
                 <option>All materials</option>
               </select>
-              <label className="absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium text-neutral-60">Material</label>
+              <label className="absolute -top-2 left-3 px-1 bg-white text-[13px] font-medium text-neutral-60">Material</label>
               <Icon d={I.chevron} className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-neutral-60 pointer-events-none" />
             </div>
             <div className="relative w-[180px]">
@@ -1811,7 +1973,7 @@
                 aria-label="Search loads"
                 className="pl-9 pr-3 py-2 w-full text-sm border border-neutral-10 rounded-md bg-white placeholder:text-neutral-40 focus:border-safi-600"
               />
-              <label className="absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium text-neutral-60">Search loads</label>
+              <label className="absolute -top-2 left-3 px-1 bg-white text-[13px] font-medium text-neutral-60">Search loads</label>
             </div>
             <div className="relative w-[160px]">
               <select
@@ -1827,7 +1989,7 @@
                 <option>Supplier M</option><option>Supplier N</option><option>Supplier O</option>
                 <option>Supplier P</option>
               </select>
-              <label className="absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium text-neutral-60">Supplier</label>
+              <label className="absolute -top-2 left-3 px-1 bg-white text-[13px] font-medium text-neutral-60">Supplier</label>
               <Icon d={I.chevron} className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-neutral-60 pointer-events-none" />
             </div>
             <ZoneBayFilter value={bayFilter} onChange={setBayFilter} yard={visibleYard} lang={lang} />
@@ -1887,7 +2049,7 @@
                         <div className="font-semibold text-neutral-100">
                           {zone.esName}
                         </div>
-                        <div className="text-xs text-neutral-60 mt-0.5 flex items-center gap-1.5">
+                        <div className="text-[13px] text-neutral-60 mt-0.5 flex items-center gap-1.5">
                           <span>Bays: {z.bays} · Loads: {z.loads} · Bales: {fmtNum(z.bales)} · Weight: {fmtKg(z.weight)}</span>
                           {isCreating && <ZoneSelectionBadge zoneId={zone.id} selected={selected} />}
                         </div>
@@ -1945,13 +2107,13 @@
                                     {isCreating && !bay.accessible && (
                                       <span
                                         title="Blocked bays can’t be picked until the bays in front are cleared."
-                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[11px] font-medium cursor-help"
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[13px] font-medium cursor-help"
                                       >
                                         <Icon d={I.lock} className="w-3 h-3" /> Blocked by {bay.blockedBy}
                                       </span>
                                     )}
                                   </div>
-                                  <div className="text-xs text-neutral-60 truncate">
+                                  <div className="text-[13px] text-neutral-60 truncate">
                                     Load: {s.loads} · {fmtNum(s.bales)} bales · {fmtKg(s.weight)}
                                   </div>
                                 </div>
@@ -1959,7 +2121,7 @@
                                   <CapacityChip bales={s.bales} />
                                   {isCreating && hasLoads && (
                                     <label className={
-                                      'flex items-center gap-1.5 text-xs font-medium cursor-pointer select-none ' +
+                                      'flex items-center gap-1.5 text-[13px] font-medium cursor-pointer select-none ' +
                                       (bay.accessible ? 'text-neutral-80' : 'text-neutral-40 cursor-not-allowed')
                                     }>
                                       <input
@@ -2004,7 +2166,7 @@
                                   {hiddenCount > 0 && (
                                     <button
                                       onClick={() => setBayShowAll(s => ({ ...s, [bay.id]: true }))}
-                                      className="w-full px-5 py-2.5 text-xs font-medium text-safi-700 hover:bg-neutral-5 border-t border-neutral-10/60"
+                                      className="w-full px-5 py-2.5 text-[13px] font-medium text-safi-700 hover:bg-neutral-5 border-t border-neutral-10/60"
                                     >
                                       Show all loads ({hiddenCount} more)
                                     </button>
@@ -2012,7 +2174,7 @@
                                   {showAll && bay.loads.length > 3 && (
                                     <button
                                       onClick={() => setBayShowAll(s => ({ ...s, [bay.id]: false }))}
-                                      className="w-full px-5 py-2.5 text-xs font-medium text-neutral-60 hover:bg-neutral-5 border-t border-neutral-10/60"
+                                      className="w-full px-5 py-2.5 text-[13px] font-medium text-neutral-60 hover:bg-neutral-5 border-t border-neutral-10/60"
                                     >
                                       Show fewer
                                     </button>
@@ -2049,13 +2211,13 @@
                                     {isCreating && !bay.accessible && (
                                       <span
                                         title="Blocked bays can’t be picked until the bays in front are cleared."
-                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[11px] font-medium cursor-help"
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[13px] font-medium cursor-help"
                                       >
                                         <Icon d={I.lock} className="w-3 h-3" /> Blocked by {bay.blockedBy}
                                       </span>
                                     )}
                                   </div>
-                                  <div className="text-xs text-neutral-60 mt-0.5 truncate">
+                                  <div className="text-[13px] text-neutral-60 mt-0.5 truncate">
                                     Load: {s.loads} · Bales: {fmtNum(s.bales)} · {fmtKg(s.weight)}
                                   </div>
                                 </div>
@@ -2064,7 +2226,7 @@
                                 <CapacityChip bales={s.bales} />
                                 {isCreating && hasLoads && (
                                   <label className={
-                                    'flex items-center gap-2 text-xs font-medium cursor-pointer select-none ' +
+                                    'flex items-center gap-2 text-[13px] font-medium cursor-pointer select-none ' +
                                     (bay.accessible ? 'text-neutral-80' : 'text-neutral-40 cursor-not-allowed')
                                   }>
                                     <input
@@ -2164,7 +2326,7 @@
                 ) : (
                   <>
                     <div className="border border-neutral-10 rounded-lg p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-neutral-60 mb-3">
+                      <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">
                         Average quality <span className="font-normal normal-case">· weighted avg of {summary.analysedCount} analysed load{summary.analysedCount === 1 ? '' : 's'}</span>
                       </div>
                       {summary.analysedCount === 0 ? (
@@ -2177,7 +2339,7 @@
                             const cls = good ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900';
                             const icon = good ? I.checkCircle : I.errorCircle;
                             return (
-                              <span key={key} className={`self-start inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium ${cls}`}>
+                              <span key={key} className={`self-start inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-medium ${cls}`}>
                                 <Icon d={icon} className="w-3.5 h-3.5" />
                                 {spec.label} {value.toFixed(1)}%
                               </span>
@@ -2195,12 +2357,12 @@
                               <span>{load.supplier}</span>
                               <span className="text-neutral-40">#{load.lot}</span>
                               {partial && (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900">
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[13px] font-semibold bg-amber-100 text-amber-900">
                                   PARTIAL
                                 </span>
                               )}
                             </div>
-                            <div className="text-[11px] text-neutral-60 flex items-center gap-2 flex-wrap mt-1">
+                            <div className="text-[13px] text-neutral-60 flex items-center gap-2 flex-wrap mt-1">
                               <button
                                 onClick={() => scrollToLoad(load.id)}
                                 className="text-safi-600 hover:underline focus:underline"
@@ -2219,7 +2381,7 @@
                                     const next = Math.max(1, Math.min(load.bales, Number(e.target.value) || 1));
                                     setSelectionBales(prev => ({ ...prev, [key]: next }));
                                   }}
-                                  className="w-12 px-1 py-0.5 rounded border border-neutral-10 text-center text-[11px] text-neutral-100"
+                                  className="w-16 px-2 py-1.5 rounded border border-neutral-10 text-center text-[13px] font-medium text-neutral-100 focus:border-safi-600 focus:ring-2 focus:ring-safi-200 min-h-[36px]"
                                   aria-label="Bales to pick"
                                 />
                                 <span>/ {fmtNum(load.bales)} bales</span>
@@ -2281,13 +2443,13 @@
     const count = Array.from(selected).filter(k => k.startsWith(zoneId + '|')).length;
     if (count === 0) return null;
     return (
-      <span className="text-xs font-medium text-safi-700">· {count} selected</span>
+      <span className="text-[13px] font-medium text-safi-700">· {count} selected</span>
     );
   }
 
   const Metric = ({ label, value }) => (
     <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
-      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="text-[13px] uppercase tracking-wide text-slate-500">{label}</div>
       <div className="text-base font-bold text-slate-900 mt-0.5">{value}</div>
     </div>
   );
@@ -2379,12 +2541,12 @@
           <button className="text-sm font-medium text-neutral-80 hover:text-neutral-100">Finish window</button>
         </div>
         <div className="px-5 py-4 grid grid-cols-2 md:grid-cols-6 gap-6 text-sm">
-          <div><div className="text-xs text-neutral-60">Material</div><div className="font-semibold text-neutral-100 mt-1">Clear PET Bottles</div></div>
-          <div><div className="text-xs text-neutral-60">Target input</div><div className="font-semibold text-neutral-100 mt-1">{ACTIVE_WINDOW.targetInput.toFixed(1)}%</div></div>
-          <div><div className="text-xs text-neutral-60">Elapsed</div><div className="font-semibold text-neutral-100 mt-1">{ACTIVE_WINDOW.elapsed}</div></div>
-          <div><div className="text-xs text-neutral-60">Bales processed</div><div className="font-semibold text-neutral-100 mt-1">{ACTIVE_WINDOW.balesProcessed}</div></div>
-          <div><div className="text-xs text-neutral-60">Weight processed</div><div className="font-semibold text-neutral-100 mt-1">{fmtKg(ACTIVE_WINDOW.weightProcessed)}</div></div>
-          <div><div className="text-xs text-neutral-60">Actual input</div><div className="font-semibold text-emerald-700 mt-1">{ACTIVE_WINDOW.actualInput.toFixed(1)}%</div></div>
+          <div><div className="text-[13px] text-neutral-60">Material</div><div className="font-semibold text-neutral-100 mt-1">Clear PET Bottles</div></div>
+          <div><div className="text-[13px] text-neutral-60">Target input</div><div className="font-semibold text-neutral-100 mt-1">{ACTIVE_WINDOW.targetInput.toFixed(1)}%</div></div>
+          <div><div className="text-[13px] text-neutral-60">Elapsed</div><div className="font-semibold text-neutral-100 mt-1">{ACTIVE_WINDOW.elapsed}</div></div>
+          <div><div className="text-[13px] text-neutral-60">Bales processed</div><div className="font-semibold text-neutral-100 mt-1">{ACTIVE_WINDOW.balesProcessed}</div></div>
+          <div><div className="text-[13px] text-neutral-60">Weight processed</div><div className="font-semibold text-neutral-100 mt-1">{fmtKg(ACTIVE_WINDOW.weightProcessed)}</div></div>
+          <div><div className="text-[13px] text-neutral-60">Actual input</div><div className="font-semibold text-emerald-700 mt-1">{ACTIVE_WINDOW.actualInput.toFixed(1)}%</div></div>
         </div>
       </div>
     );
@@ -2486,7 +2648,7 @@
         </div>
 
         {/* Progress bar */}
-        <div className="flex items-center gap-3 text-xs text-slate-600">
+        <div className="flex items-center gap-3 text-[13px] text-slate-600">
           <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
             <div
               className="h-full bg-safi-600 transition-all"
@@ -2513,11 +2675,11 @@
                     <Icon d={open ? I.chevron : I.chevronR} className="w-4 h-4 text-slate-500" />
                     <div className="text-left">
                       <div className="font-semibold text-slate-900">{zone.esName}</div>
-                      <div className="text-xs text-slate-500 mt-0.5">{Object.keys(bays).length} bays · {zoneLoads.length} loads to pick</div>
+                      <div className="text-[13px] text-slate-500 mt-0.5">{Object.keys(bays).length} bays · {zoneLoads.length} loads to pick</div>
                     </div>
                   </div>
                   <span className={
-                    'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ' +
+                    'inline-flex items-center px-2.5 py-1 rounded-full text-[13px] font-semibold ' +
                     (zoneDone === zoneLoads.length ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-safi-100 text-safi-700')
                   }>
                     {zoneDone}/{zoneLoads.length} processed
@@ -2535,7 +2697,7 @@
                           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
                             <div>
                               <div className="font-medium text-slate-900">{bay.esName}</div>
-                              <div className="text-xs text-slate-500 mt-0.5">{loads.length} loads to pick from this bay</div>
+                              <div className="text-[13px] text-slate-500 mt-0.5">{loads.length} loads to pick from this bay</div>
                             </div>
                             <button
                               disabled={bayDone}
@@ -2562,7 +2724,7 @@
                                       <span className="font-semibold text-slate-900">{load.supplier}</span>
                                       <span className="text-slate-500 text-sm">Order ref <span className="font-mono">#{load.lot}</span></span>
                                     </div>
-                                    <div className="text-xs text-slate-500 mt-0.5">
+                                    <div className="text-[13px] text-slate-500 mt-0.5">
                                       {fmtNum(load.bales)} bales · {fmtKg(load.weight)}
                                       {p && (
                                         <span className="ml-2 text-emerald-700 font-medium">
@@ -2572,7 +2734,7 @@
                                     </div>
                                   </div>
                                   {p ? (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 text-xs font-semibold">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 text-[13px] font-semibold">
                                       <Icon d={I.check} className="w-3.5 h-3.5" /> Done
                                     </span>
                                   ) : (
@@ -2628,11 +2790,11 @@
           <p className="text-sm text-slate-600 mt-1">
             <span className="font-medium">{load.supplier}</span> · #{load.lot} · {bay.esName}
           </p>
-          <p className="text-xs text-slate-500 mt-3">
+          <p className="text-[13px] text-slate-500 mt-3">
             How many bales did you process? The rest of the load stays in the yard and remains trackable.
           </p>
           <div className="mt-4">
-            <label className="block text-xs font-medium text-slate-600 mb-1" htmlFor="bales-input">
+            <label className="block text-[13px] font-medium text-slate-600 mb-1" htmlFor="bales-input">
               Bales processed (max {load.bales})
             </label>
             <input
@@ -2644,7 +2806,7 @@
               onChange={e => setBales(Math.max(1, Math.min(load.bales, Number(e.target.value) || 1)))}
               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-lg font-semibold"
             />
-            <div className="text-xs text-slate-500 mt-1">
+            <div className="text-[13px] text-slate-500 mt-1">
               ≈ {fmtKg(Math.round(bales * perBale))} processed · {fmtKg(Math.round((load.bales - bales) * perBale))} remains in bay
             </div>
           </div>
