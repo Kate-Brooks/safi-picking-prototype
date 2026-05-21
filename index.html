@@ -109,6 +109,28 @@
 
   const inSpec = (spec, v) => spec.op === '>=' ? v >= spec.target : v <= spec.target;
 
+  // ---- i18n -----------------------------------------------------------------
+  const TXT = {
+    bay:           { en: 'Bay',           es: 'Fila' },
+    bays:          { en: 'Bays',          es: 'Filas' },
+    zone:          { en: 'Zone',          es: 'Isla' },
+    zones:         { en: 'Zones',         es: 'Islas' },
+    load:          { en: 'Load',          es: 'Lote' },
+    loads:         { en: 'Loads',         es: 'Lotes' },
+    bale:          { en: 'Bale',          es: 'Paca' },
+    bales:         { en: 'Bales',         es: 'Pacas' },
+    weight:        { en: 'Weight',        es: 'Peso' },
+    yardOverview:  { en: 'Yard overview', es: 'Vista del patio' },
+    goodMaterial:  { en: 'Good material', es: 'Material Bueno' },
+    selectAll:     { en: 'Select all',    es: 'Seleccionar todo' },
+    empty:         { en: 'empty',         es: 'vacío' },
+    blockedBy:     { en: 'Blocked by',    es: 'Bloqueado por' }
+  };
+  const tr = (key, lang) => (TXT[key] && TXT[key][lang]) || (TXT[key] && TXT[key].en) || key;
+  const zoneName = (zone, lang) => `${tr('zone', lang)} ${zone.id}`;
+  const bayName  = (bay,  lang) => `${tr('bay',  lang)} ${bay.id}`;
+  const LangContext = React.createContext('en');
+
   // Average bay quality → 4-bucket heat colour (red → amber → green) + grey for un-analysed.
   // Score = average count of in-spec components (0–3) across analysed loads in the bay.
   const bayQuality = (bay) => {
@@ -372,10 +394,10 @@
     );
   };
 
-  // ZoneBayFilter — multi-select dropdown of every bay grouped by zone.
+  // BayFilter — multi-select dropdown of every bay grouped by zone.
   // When selections are made, the parent filters the warehouse to show only those bays
   // (and force-expands their zones).
-  function ZoneBayFilter({ value, onChange, yard }) {
+  function ZoneBayFilter({ value, onChange, yard, lang = 'en' }) {
     const [open, setOpen] = useState(false);
     const wrapRef = useRef(null);
     useEffect(() => {
@@ -404,13 +426,17 @@
           aria-expanded={open}
         >
           <span className={'block truncate whitespace-nowrap ' + (count > 0 ? 'text-neutral-100' : 'text-neutral-40')}>
-            {count > 0 ? `${count} bay${count === 1 ? '' : 's'} selected` : 'Select zone or bay'}
+            {count > 0
+              ? (lang === 'es'
+                  ? `${count} ${count === 1 ? 'fila' : 'filas'} seleccionada${count === 1 ? '' : 's'}`
+                  : `${count} ${count === 1 ? 'bay' : 'bays'} selected`)
+              : (lang === 'es' ? 'Seleccionar fila' : 'Select a bay')}
           </span>
         </button>
         <label className={
           'absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium ' +
           (open ? 'text-safi-600' : 'text-neutral-60')
-        }>Zone & bay</label>
+        }>{lang === 'es' ? 'Filtro de filas' : 'Bay filter'}</label>
         <Icon d={open ? I.chevron : I.chevron} className={
           'w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ' +
           (open ? 'text-safi-600 rotate-180' : 'text-neutral-60')
@@ -419,25 +445,27 @@
           <div className="absolute z-30 mt-1 w-[280px] left-0 bg-white border border-neutral-10 rounded-md shadow-lg max-h-[320px] overflow-y-auto scrollbar-thin py-1">
             {count > 0 && (
               <div className="px-3 py-2 border-b border-neutral-10 flex justify-between items-center">
-                <span className="text-xs text-neutral-60">{count} selected</span>
-                <button onClick={clear} className="text-xs font-medium text-safi-700 hover:underline">Clear</button>
+                <span className="text-[13px] text-neutral-60">{count} {lang === 'es' ? 'seleccionada(s)' : 'selected'}</span>
+                <button onClick={clear} className="text-[13px] font-medium text-safi-700 hover:underline">
+                  {lang === 'es' ? 'Borrar' : 'Clear'}
+                </button>
               </div>
             )}
             {yard.map(zone => (
               <Fragment key={zone.id}>
-                <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-neutral-60 font-semibold">{zone.esName}</div>
+                <div className="px-3 pt-2 pb-1 text-[13px] uppercase tracking-wide text-neutral-60 font-semibold">{zoneName(zone, lang)}</div>
                 {zone.bays.map(bay => {
                   const k = `${zone.id}|${bay.id}`;
                   const checked = value.has(k);
                   return (
-                    <label key={k} className="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-neutral-5">
+                    <label key={k} className="flex items-center gap-3 px-3 py-2 text-[13px] cursor-pointer hover:bg-neutral-5 min-h-[44px]">
                       <input
                         type="checkbox"
                         checked={checked}
                         onChange={() => toggle(k)}
                         className="rounded text-safi-600 focus:ring-safi-500"
                       />
-                      <span className="text-neutral-100">{zone.esName}: {bay.esName}</span>
+                      <span className="text-neutral-100">{zoneName(zone, lang)}: {bayName(bay, lang)}</span>
                     </label>
                   );
                 })}
@@ -519,22 +547,32 @@
   // ============================================================================
   // SPATIAL LAYOUT VIEW — top-down map of the yard.
   //
-  // Overview: Production area on the left + zones stacked on the right
-  //           (Unloading bay sits between Zone B and Zone C, same width).
-  //           Each zone shows high-emphasis metrics + a fill bar.
-  // Zone view: clickable breadcrumb, zone metrics, zoom controls,
-  //           horizontal scrolling row of bay tiles (matching real warehouse
-  //           layout), minimap above for jumping in large zones.
+  // Overview: zones stacked horizontally. Each zone shows headline metrics + a
+  //           fill bar + the top suppliers by weight stored in that zone.
+  // Zone view: clickable breadcrumb, zone metrics, full-detail bay tiles in a
+  //           single horizontal row, with a heat-mapped minimap above.
   // Bay view:  full load list (LoadRow re-used).
   // ============================================================================
-  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList }) {
+  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, lang = 'en', bayFilter, setSlMode }) {
     const [view, setView] = useState({ level: 'overview' });
-    const [zoom, setZoom] = useState(1); // 0 compact, 1 medium, 2 detail
+    // Which bay tile (if any) should appear first + highlighted (from the filter or minimap stepper)
+    const [focusBayId, setFocusBayId] = useState(null);
+    // Per-bay "Show N more suppliers" expander
+    const [showAllSuppliers, setShowAllSuppliers] = useState({});
     const bayRowRef = useRef(null);
 
-    const goOverview = () => setView({ level: 'overview' });
+    const goOverview = () => { setFocusBayId(null); setView({ level: 'overview' }); };
     const goZone = (zoneId) => setView({ level: 'zone', zoneId });
     const goBay = (zoneId, bayId) => setView({ level: 'bay', zoneId, bayId });
+
+    // If the user selects a bay via the BayFilter, jump to that bay's zone view and highlight.
+    useEffect(() => {
+      if (!bayFilter || bayFilter.size !== 1) return;
+      const [key] = Array.from(bayFilter);
+      const [zid, bid] = key.split('|');
+      setFocusBayId(bid);
+      setView({ level: 'zone', zoneId: zid });
+    }, [bayFilter]);
 
     // Reusable clickable breadcrumb
     const Breadcrumbs = ({ zone, bay }) => (
@@ -544,7 +582,7 @@
           disabled={!zone}
           className={zone ? 'text-safi-600 hover:underline' : 'text-neutral-100 font-medium'}
         >
-          Yard overview
+          {tr('yardOverview', lang)}
         </button>
         {zone && (
           <>
@@ -554,14 +592,14 @@
               disabled={!bay}
               className={bay ? 'text-safi-600 hover:underline' : 'text-neutral-100 font-medium'}
             >
-              {zone.esName}
+              {zoneName(zone, lang)}
             </button>
           </>
         )}
         {bay && (
           <>
             <span className="text-neutral-40">/</span>
-            <span className="text-neutral-100 font-medium">{bay.esName}</span>
+            <span className="text-neutral-100 font-medium">{bayName(bay, lang)}</span>
           </>
         )}
       </nav>
@@ -583,71 +621,74 @@
       );
     };
 
-    // ---- OVERVIEW: production + zones (B & C separated by Unloading bay) ----
+    // ---- OVERVIEW: just zones — no Production / Unloading containers --------
+    // Each zone card shows headline metrics, top 5 suppliers by weight, and a fill bar.
     const renderOverview = () => {
       const maxBales = Math.max(1, ...yard.map(z => zoneStats(z).bales));
-      // Insert the Unloading bay between the 2nd and 3rd zones if possible
-      const items = [];
-      yard.forEach((z, i) => {
-        items.push({ kind: 'zone', zone: z });
-        if (i === 1) items.push({ kind: 'unloading' });
-      });
       return (
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
-          <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">Yard overview · top-down view</div>
-          <div className="flex gap-3" style={{ minHeight: 420 }}>
-            {/* Production area on the left */}
-            <div className="w-[180px] shrink-0 flex flex-col">
-              <div className="flex-1 bg-neutral-5 border-2 border-dashed border-neutral-10 rounded-lg flex flex-col items-center justify-center text-center px-4 relative">
-                <div className="absolute top-3 right-3 text-neutral-40" title="Forklift access">
-                  <Icon d={I.truck} className="w-5 h-5" />
-                </div>
-                <div className="font-bold text-neutral-100 text-base">Production</div>
-                <div className="text-[13px] text-neutral-60 mt-1">Line / by-products</div>
-              </div>
-            </div>
-
-            {/* Zones stacked + unloading bay slotted between them */}
-            <div className="flex-1 flex flex-col gap-3">
-              {items.map((item, i) => {
-                if (item.kind === 'unloading') {
-                  return (
-                    <div key={'unloading-' + i} className="rounded-lg border-2 border-dashed border-neutral-10 bg-neutral-5 px-5 py-3 flex items-center gap-3 text-[13px] text-neutral-60">
-                      <Icon d={I.truck} className="w-5 h-5 text-neutral-60" />
-                      <span className="font-semibold uppercase tracking-wide text-neutral-80">Unloading bay</span>
-                      <span className="text-neutral-60">Lorries park here</span>
+          <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">
+            {tr('yardOverview', lang)} · {lang === 'es' ? 'vista superior' : 'top-down view'}
+          </div>
+          <div className="flex flex-col gap-3">
+            {yard.map(zone => {
+              const z = zoneStats(zone);
+              // Aggregate supplier weights for the zone
+              const supplierMap = {};
+              zone.bays.forEach(b => b.loads.forEach(l => {
+                supplierMap[l.supplier] = (supplierMap[l.supplier] || 0) + l.weight;
+              }));
+              const topSuppliers = Object.entries(supplierMap)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5);
+              return (
+                <button
+                  key={zone.id}
+                  onClick={() => goZone(zone.id)}
+                  className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
+                >
+                  <div className="flex items-start justify-between gap-6 flex-wrap">
+                    {/* Left: name + headline metrics */}
+                    <div className="flex-1 min-w-[280px]">
+                      <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
+                      <div className="flex items-center gap-6 mt-2 flex-wrap">
+                        <Metric2 label={tr('bays',  lang)} value={fmtNum(z.bays)} />
+                        <Metric2 label={tr('loads', lang)} value={fmtNum(z.loads)} />
+                        <Metric2 label={tr('bales', lang)} value={fmtNum(z.bales)} />
+                        <Metric2 label={tr('weight', lang)} value={fmtKg(z.weight)} />
+                      </div>
                     </div>
-                  );
-                }
-                const zone = item.zone;
-                const z = zoneStats(zone);
-                return (
-                  <button
-                    key={zone.id}
-                    onClick={() => goZone(zone.id)}
-                    className="flex-1 rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
-                  >
-                    <div className="flex items-start justify-between gap-6">
-                      {/* Left: name + headline metrics */}
-                      <div>
-                        <div className="font-bold text-neutral-100 text-xl">{zone.esName}</div>
-                        <div className="flex items-center gap-6 mt-2">
-                          <Metric2 label="Bays"   value={fmtNum(z.bays)} />
-                          <Metric2 label="Loads"  value={fmtNum(z.loads)} />
-                          <Metric2 label="Bales"  value={fmtNum(z.bales)} />
-                          <Metric2 label="Weight" value={fmtKg(z.weight)} />
+                    {/* Middle: top suppliers by weight */}
+                    <div className="flex-1 min-w-[260px] max-w-[420px]">
+                      <div className="text-[13px] uppercase tracking-wide text-neutral-60 mb-2">
+                        {lang === 'es' ? 'Top proveedores por peso' : 'Top suppliers by weight'}
+                      </div>
+                      {topSuppliers.length === 0 ? (
+                        <div className="text-[13px] text-neutral-40 italic">
+                          {tr('zone', lang)} {tr('empty', lang)}
                         </div>
-                      </div>
-                      {/* Right: fill bar */}
-                      <div className="w-[180px] shrink-0">
-                        <div className="text-[13px] uppercase tracking-wide text-neutral-60 mb-2">Bales stored</div>
-                        <FillBar value={z.bales} max={maxBales} suffix="bales" />
-                      </div>
+                      ) : (
+                        <ul className="space-y-1">
+                          {topSuppliers.map(([name, weight]) => (
+                            <li key={name} className="flex items-center justify-between text-[13px]">
+                              <span className="text-neutral-100 truncate pr-3">{name}</span>
+                              <span className="text-neutral-60 shrink-0">{fmtKg(weight)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
-                  </button>
-                );
-              })}
-            </div>
+                    {/* Right: fill bar */}
+                    <div className="w-[180px] shrink-0">
+                      <div className="text-[13px] uppercase tracking-wide text-neutral-60 mb-2">
+                        {lang === 'es' ? 'Pacas almacenadas' : 'Bales stored'}
+                      </div>
+                      <FillBar value={z.bales} max={maxBales} suffix={tr('bales', lang).toLowerCase()} />
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       );
@@ -666,15 +707,22 @@
       }
       const maxBalesInZone = Math.max(1, ...zone.bays.map(b => bayStats(b).bales));
       const z = zoneStats(zone);
-      const tileWidth = zoom === 0 ? 48 : zoom === 1 ? 120 : 200;
-      const tileHeight = zoom === 0 ? 64 : zoom === 1 ? 120 : 170;
 
-      // Scroll to a bay in the main row when clicked in the minimap
-      const scrollToBay = (idx) => {
+      // If a bay is "focused" (selected via the BayFilter or clicked in the
+      // stepper minimap), move it to the front of the list so it leads the row.
+      const reorderedBays = (() => {
+        if (!focusBayId) return zone.bays;
+        const idx = zone.bays.findIndex(b => b.id === focusBayId);
+        if (idx < 0) return zone.bays;
+        return [zone.bays[idx], ...zone.bays.slice(0, idx), ...zone.bays.slice(idx + 1)];
+      })();
+
+      const scrollToBay = (id) => {
+        setFocusBayId(id);
         const wrap = bayRowRef.current;
         if (!wrap) return;
-        const child = wrap.children[idx];
-        if (child) child.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        const child = wrap.querySelector(`[data-bay-id="${id}"]`);
+        if (child) child.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
       };
 
       return (
@@ -683,91 +731,93 @@
 
           <div className="mt-3 mb-4 flex items-end justify-between gap-6 flex-wrap">
             <div>
-              <h3 className="text-2xl font-bold text-neutral-100">{zone.esName}</h3>
-              <div className="flex items-center gap-6 mt-2">
-                <Metric2 label="Bays"   value={fmtNum(z.bays)} />
-                <Metric2 label="Loads"  value={fmtNum(z.loads)} />
-                <Metric2 label="Bales"  value={fmtNum(z.bales)} />
-                <Metric2 label="Weight" value={fmtKg(z.weight)} />
+              <h3 className="text-2xl font-bold text-neutral-100">{zoneName(zone, lang)}</h3>
+              <div className="flex items-center gap-6 mt-2 flex-wrap">
+                <Metric2 label={tr('bays',  lang)} value={fmtNum(z.bays)} />
+                <Metric2 label={tr('loads', lang)} value={fmtNum(z.loads)} />
+                <Metric2 label={tr('bales', lang)} value={fmtNum(z.bales)} />
+                <Metric2 label={tr('weight', lang)} value={fmtKg(z.weight)} />
               </div>
-            </div>
-            {/* Zoom controls */}
-            <div className="flex items-center gap-2 text-[13px]" role="group" aria-label="Zoom level">
-              <span className="text-neutral-60">Zoom</span>
-              <button
-                onClick={() => setZoom(z => Math.max(0, z - 1))}
-                disabled={zoom === 0}
-                aria-label="Zoom out"
-                className="w-8 h-8 rounded border border-neutral-10 text-neutral-80 hover:bg-neutral-5 disabled:opacity-40 flex items-center justify-center"
-              >−</button>
-              <span className="font-medium text-neutral-100 min-w-[70px] text-center">
-                {zoom === 0 ? 'Overview' : zoom === 1 ? 'Medium' : 'Detail'}
-              </span>
-              <button
-                onClick={() => setZoom(z => Math.min(2, z + 1))}
-                disabled={zoom === 2}
-                aria-label="Zoom in"
-                className="w-8 h-8 rounded border border-neutral-10 text-neutral-80 hover:bg-neutral-5 disabled:opacity-40 flex items-center justify-center"
-              >+</button>
             </div>
           </div>
 
           {/* Directional flow indicator above the bay row */}
           <div className="flex items-center gap-2 text-[13px] text-neutral-60 mb-2">
             <Icon d={I.truck} className="w-4 h-4 text-neutral-40" />
-            <span>Pick from left to right — bays are numbered in pick order →</span>
+            <span>
+              {lang === 'es'
+                ? 'Recoge de izquierda a derecha, las filas están numeradas en orden de recolección →'
+                : 'Pick from left to right, bays are numbered in pick order →'}
+            </span>
           </div>
 
-          {/* Minimap — all bays as tiny bars. Height = bales. Colour = average quality. */}
+          {/* Minimap — heat-mapped by quality + selected step highlighting */}
           {zone.bays.length > 8 && (
             <div className="mb-3 px-3 py-2 rounded-md bg-neutral-5 border border-neutral-10">
-              <div className="flex items-end gap-0.5 h-8" role="navigation" aria-label="Bay minimap — heat-mapped by average load quality">
-                {zone.bays.map((b, idx) => {
+              <div className="flex items-end gap-0.5 h-9" role="navigation" aria-label="Bay minimap — heat-mapped by average load quality">
+                {zone.bays.map((b) => {
                   const s = bayStats(b);
                   const pct = maxBalesInZone > 0 ? Math.max(8, (s.bales / maxBalesInZone) * 100) : 8;
                   const q = bayQuality(b);
+                  const isFocus = focusBayId === b.id;
                   return (
                     <button
                       key={b.id}
-                      onClick={() => scrollToBay(idx)}
-                      title={`${b.esName} · ${fmtNum(s.bales)} bales · ${q.label}`}
-                      aria-label={`Jump to ${b.esName} — ${q.label}`}
-                      className="flex-1 min-w-[6px] rounded-t transition-opacity hover:opacity-80"
+                      onClick={() => scrollToBay(b.id)}
+                      title={`${bayName(b, lang)} · ${fmtNum(s.bales)} ${tr('bales', lang).toLowerCase()} · ${q.label}`}
+                      aria-label={`Jump to ${bayName(b, lang)} — ${q.label}`}
+                      aria-pressed={isFocus}
+                      className={
+                        'flex-1 min-w-[6px] rounded-t transition-opacity hover:opacity-80 ' +
+                        (isFocus ? 'outline outline-2 outline-safi-600 outline-offset-1 relative z-10' : '')
+                      }
                       style={{ height: `${pct}%`, backgroundColor: q.color }}
                     />
                   );
                 })}
               </div>
-              <div className="mt-1 flex justify-between text-[13px] text-neutral-60">
-                <span>{zone.bays[0]?.esName}</span>
-                <span className="text-neutral-40">{zone.bays.length} bays · height = bales · colour = avg quality · click to jump</span>
-                <span>{zone.bays[zone.bays.length - 1]?.esName}</span>
+              {/* Endpoint labels in their own row so selected-bay outline doesn't clash */}
+              <div className="mt-2 flex justify-between text-[13px] text-neutral-60">
+                <span>{bayName(zone.bays[0], lang)}</span>
+                <span className="text-neutral-40">
+                  {zone.bays.length} {tr('bays', lang).toLowerCase()} ·
+                  {lang === 'es' ? ' altura = pacas · color = calidad media · clic para saltar' : ' height = bales · colour = avg quality · click to jump'}
+                </span>
+                <span>{bayName(zone.bays[zone.bays.length - 1], lang)}</span>
               </div>
               {/* Legend */}
               <div className="mt-2 pt-2 border-t border-neutral-10 flex items-center gap-3 flex-wrap text-[13px] text-neutral-60">
-                <span className="font-medium text-neutral-80">Quality:</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16A34A' }} />All specs met</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#84CC16' }} />Mostly in spec</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#F59E0B' }} />Mixed</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#EF4444' }} />Below spec</span>
-                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#D4D4D8' }} />Not analysed</span>
+                <span className="font-medium text-neutral-80">{lang === 'es' ? 'Calidad:' : 'Quality:'}</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#16A34A' }} />{lang === 'es' ? 'Todas las especificaciones cumplidas' : 'All specs met'}</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#84CC16' }} />{lang === 'es' ? 'Mayormente en especificación' : 'Mostly in spec'}</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#F59E0B' }} />{lang === 'es' ? 'Mixto' : 'Mixed'}</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#EF4444' }} />{lang === 'es' ? 'Por debajo de especificación' : 'Below spec'}</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#D4D4D8' }} />{lang === 'es' ? 'No analizado' : 'Not analysed'}</span>
               </div>
             </div>
           )}
 
-          {/* Horizontal scrollable bay row */}
+          {/* Horizontal scrollable bay row — all tiles same size (largest) */}
           <div
             ref={bayRowRef}
-            className="flex gap-2 overflow-x-auto pb-3 pt-1 scrollbar-thin"
+            className="flex gap-3 overflow-x-auto pb-3 pt-1 scrollbar-thin items-stretch"
             role="list"
           >
-            {zone.bays.map((bay, idx) => {
+            {reorderedBays.map((bay) => {
               const s = bayStats(bay);
               const blocked = isCreating && !bay.accessible;
               const empty = s.bales === 0;
               const bayLoadKeys = bay.loads.map(l => `${zone.id}|${bay.id}|${l.id}`);
               const allSelected = isCreating && bay.accessible && bayLoadKeys.length > 0 && bayLoadKeys.every(k => selectionBales[k] != null);
               const someSelected = isCreating && bayLoadKeys.some(k => selectionBales[k] != null);
+              const isFocus = focusBayId === bay.id;
+              const supplierAgg = {};
+              bay.loads.forEach(l => { supplierAgg[l.supplier] = (supplierAgg[l.supplier] || 0) + l.weight; });
+              const suppliers = Object.entries(supplierAgg).sort((a, b) => b[1] - a[1]);
+              const showAll = !!showAllSuppliers[bay.id];
+              const visibleSuppliers = showAll ? suppliers : suppliers.slice(0, 2);
+              const hiddenCount = suppliers.length - visibleSuppliers.length;
+
               const toggleAllInBay = (e) => {
                 e.stopPropagation();
                 if (!isCreating || !bay.accessible || bayLoadKeys.length === 0) return;
@@ -785,25 +835,35 @@
                 });
               };
               return (
-                <button
+                <div
                   key={bay.id}
-                  onClick={() => goBay(zone.id, bay.id)}
-                  className={
-                    'shrink-0 rounded-lg border text-left transition focus:outline-none focus:ring-2 focus:ring-safi-600 bg-white ' +
-                    (blocked ? 'border-neutral-10 bg-neutral-5 opacity-70'
-                      : (someSelected ? 'border-safi-300 ring-1 ring-safi-200 bg-safi-50/40'
-                        : 'border-neutral-10 hover:border-safi-300 hover:shadow-sm'))
-                  }
-                  style={{ width: tileWidth, height: tileHeight }}
+                  data-bay-id={bay.id}
                   role="listitem"
+                  className={
+                    'shrink-0 w-[260px] rounded-lg border transition bg-white ' +
+                    (blocked ? 'border-neutral-10 bg-neutral-5 opacity-70'
+                      : (isFocus ? 'border-safi-600 ring-2 ring-safi-200'
+                        : (someSelected ? 'border-safi-300 ring-1 ring-safi-200 bg-safi-50/40'
+                          : 'border-neutral-10 hover:border-safi-300 hover:shadow-sm')))
+                  }
                 >
-                  <div className="h-full flex flex-col p-2">
-                    <div className="flex items-start justify-between gap-1">
-                      <span className="font-bold text-[13px] text-neutral-100 truncate">
-                        {bay.esName.replace('Bay ', '')}
+                  <button
+                    onClick={() => goBay(zone.id, bay.id)}
+                    className="w-full text-left p-3 focus:outline-none focus:ring-2 focus:ring-safi-600 rounded-lg"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-bold text-[15px] text-neutral-100 truncate">
+                        {bay.id}
                       </span>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {blocked && <Icon d={I.lock} className="w-3 h-3 text-neutral-60" />}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {blocked && (
+                          <span
+                            title={lang === 'es' ? 'Bloqueada por la fila de delante' : 'Blocked by the bay in front'}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium bg-neutral-10 text-neutral-80"
+                          >
+                            <Icon d={I.lock} className="w-3 h-3" />
+                          </span>
+                        )}
                         {isCreating && bay.accessible && bayLoadKeys.length > 0 && (
                           <input
                             type="checkbox"
@@ -811,54 +871,64 @@
                             ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
                             onChange={toggleAllInBay}
                             onClick={(e) => e.stopPropagation()}
-                            aria-label={`Select all loads in ${bay.esName}`}
-                            title={allSelected ? 'Remove this bay from picking list' : 'Add this whole bay to picking list'}
-                            className="rounded text-safi-600 focus:ring-safi-500 cursor-pointer"
+                            aria-label={`${tr('selectAll', lang)} ${bayName(bay, lang)}`}
+                            title={lang === 'es'
+                              ? (allSelected ? 'Eliminar esta fila de la lista' : 'Añadir esta fila a la lista')
+                              : (allSelected ? 'Remove this bay from picking list' : 'Add this whole bay to picking list')}
+                            className="rounded text-safi-600 focus:ring-safi-500 cursor-pointer w-5 h-5"
                           />
                         )}
                       </div>
                     </div>
-                    {zoom === 0 ? (
-                      // Compact: just a fill bar + bale count
-                      <div className="mt-auto">
-                        <div className="h-1.5 bg-neutral-5 rounded-full overflow-hidden">
-                          <div className="h-full bg-sky-500" style={{ width: empty ? '0%' : `${Math.max(8, Math.min(100, (s.bales / maxBalesInZone) * 100))}%` }} />
-                        </div>
-                        <div className="text-[13px] text-neutral-60 mt-1 truncate">{empty ? '—' : fmtNum(s.bales)}</div>
+                    {/* Metrics on one line for density */}
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-[13px]">
+                      <div>
+                        <div className="text-neutral-60">{tr('loads', lang)}</div>
+                        <div className="font-bold text-neutral-100">{s.loads}</div>
                       </div>
-                    ) : zoom === 1 ? (
-                      // Medium: name + loads + bales + fill bar
-                      <>
-                        <div className="text-[13px] text-neutral-60 mt-1">
-                          Loads <span className="font-bold text-neutral-100">{s.loads}</span>
-                        </div>
-                        <div className="text-[13px] text-neutral-60">
-                          Bales <span className="font-bold text-neutral-100">{empty ? '—' : fmtNum(s.bales)}</span>
-                        </div>
-                        <div className="mt-auto">
-                          <div className="h-1.5 bg-neutral-5 rounded-full overflow-hidden">
-                            <div className="h-full bg-sky-500" style={{ width: empty ? '0%' : `${Math.max(8, Math.min(100, (s.bales / maxBalesInZone) * 100))}%` }} />
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      // Detail: name + all metrics + fill bar
-                      <>
-                        <div className="grid grid-cols-2 gap-1 mt-2 text-[13px]">
-                          <div><div className="text-neutral-60">Loads</div><div className="font-bold text-neutral-100">{s.loads}</div></div>
-                          <div><div className="text-neutral-60">Bales</div><div className="font-bold text-neutral-100">{empty ? '—' : fmtNum(s.bales)}</div></div>
-                        </div>
-                        <div className="text-[13px] text-neutral-60 mt-1">Weight</div>
-                        <div className="text-[13px] font-bold text-neutral-100 truncate">{empty ? '—' : fmtKg(s.weight)}</div>
-                        <div className="mt-auto">
-                          <div className="h-2 bg-neutral-5 rounded-full overflow-hidden">
-                            <div className="h-full bg-sky-500" style={{ width: empty ? '0%' : `${Math.max(8, Math.min(100, (s.bales / maxBalesInZone) * 100))}%` }} />
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </button>
+                      <div>
+                        <div className="text-neutral-60">{tr('bales', lang)}</div>
+                        <div className="font-bold text-neutral-100">{empty ? '—' : fmtNum(s.bales)}</div>
+                      </div>
+                      <div>
+                        <div className="text-neutral-60">{tr('weight', lang)}</div>
+                        <div className="font-bold text-neutral-100 truncate" title={empty ? '' : fmtKg(s.weight)}>{empty ? '—' : fmtKg(s.weight)}</div>
+                      </div>
+                    </div>
+                  </button>
+                  {/* Suppliers + Good material chip + expander */}
+                  {!empty && (
+                    <div className="px-3 pb-3 pt-1 border-t border-neutral-10/60 mt-1">
+                      <ul className="space-y-1">
+                        {visibleSuppliers.map(([name]) => (
+                          <li key={name} className="flex items-center justify-between gap-2 text-[13px]">
+                            <span className="text-neutral-100 truncate">{name}</span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[12px] font-medium bg-success-100 text-success-300 shrink-0">
+                              <Icon d={I.checkCircle} className="w-3 h-3" />
+                              {tr('goodMaterial', lang)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      {hiddenCount > 0 && (
+                        <button
+                          onClick={() => setShowAllSuppliers(s => ({ ...s, [bay.id]: true }))}
+                          className="mt-2 text-[13px] font-medium text-safi-700 hover:underline"
+                        >
+                          {lang === 'es' ? `Mostrar ${hiddenCount} más` : `Show ${hiddenCount} more`}
+                        </button>
+                      )}
+                      {showAll && suppliers.length > 2 && (
+                        <button
+                          onClick={() => setShowAllSuppliers(s => ({ ...s, [bay.id]: false }))}
+                          className="mt-2 text-[13px] font-medium text-neutral-60 hover:underline"
+                        >
+                          {lang === 'es' ? 'Mostrar menos' : 'Show fewer'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -1002,19 +1072,20 @@
   );
 
   // LoadRow — single tappable row.
-  //   - Default mode: clicking the row "opens" load details. External icon visible on hover.
+  //   - Default mode: hover shows "Open load details" tooltip. Clicking is a no-op
+  //     (conceptual — no real load details page exists).
   //   - Create mode: clicking toggles selection.
   //   - Three AI result chips inline next to the order ref. Shown only if analysed.
   //   - "On picking list" indicator when this load is on the active picking list (default mode only).
   const LoadRow = ({ load, isCreating, accessible, isSelected, onToggle, onPickingList }) => {
     const openDetails = (e) => {
       e.stopPropagation();
-      window.open('about:blank', '_blank');
+      // Conceptual placeholder — would normally navigate to a load details page.
     };
     const handleRowClick = () => {
       if (!accessible) return;
       if (isCreating) onToggle();
-      else window.open('about:blank', '_blank');
+      // Default mode: no-op. Tooltip on hover advertises the intent.
     };
     return (
       <div
@@ -1023,12 +1094,13 @@
         role="button"
         tabIndex={accessible ? 0 : -1}
         aria-pressed={isCreating ? isSelected : undefined}
+        title={isCreating ? undefined : 'Open load details'}
         onKeyDown={(e) => {
           if (!accessible) return;
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowClick(); }
         }}
         className={
-          'group flex items-start gap-3 pl-11 pr-4 py-3 transition-colors ' + // nest under bay title
+          'group flex items-start gap-3 pl-11 pr-3 py-4 transition-colors ' + // 16px vertical, 12px horizontal
           (accessible
             ? 'cursor-pointer hover:bg-safi-100 ' + (isCreating && isSelected ? 'bg-safi-50' : '')
             : 'opacity-60 cursor-not-allowed')
@@ -1052,10 +1124,10 @@
             <span className="text-neutral-40 text-sm">#{load.lot}</span>
             <AIResultChips load={load} />
           </div>
-          <div className="text-xs text-neutral-60 mt-1 flex items-center gap-2 flex-wrap">
+          <div className="text-[13px] text-neutral-60 mt-1 flex items-center gap-2 flex-wrap">
             <span>{fmtNum(load.bales)} bales · {fmtKg(load.weight)}</span>
             {onPickingList && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-safi-100 text-safi-700">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium bg-safi-100 text-safi-700">
                 <Icon d={I.list} className="w-3 h-3" />
                 {typeof onPickingList === 'object' && onPickingList.partial
                   ? `On picking list (${onPickingList.bales}/${load.bales} bales)`
@@ -1122,7 +1194,7 @@
   // ----------------------------------------------------------------------------
   // APP SHELL — top nav + sidebar
   // ----------------------------------------------------------------------------
-  function AppShell({ role, setRole, children }) {
+  function AppShell({ lang, setLang, children }) {
     const NavItem = ({ icon, label, active }) => (
       <button
         className={
@@ -1141,27 +1213,31 @@
           <button aria-label="Menu" className="p-2 rounded-lg hover:bg-slate-100"><Icon d={I.menu} /></button>
           <div className="flex items-center gap-2"></div>
           <div className="flex items-center gap-3">
-            {/* Demo role switcher */}
-            <div className="hidden md:flex items-center gap-1 bg-slate-100 rounded-full p-1 text-xs">
+            {/* Language toggle */}
+            <div
+              className="flex items-center gap-1 bg-slate-100 rounded-full p-1 text-[13px]"
+              role="group"
+              aria-label="Language"
+            >
               <button
-                onClick={() => setRole('SL')}
+                onClick={() => setLang('en')}
                 className={
                   'px-3 py-1.5 rounded-full font-medium transition ' +
-                  (role === 'SL' ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
+                  (lang === 'en' ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
                 }
-                aria-pressed={role === 'SL'}
+                aria-pressed={lang === 'en'}
               >
-                View as Shift Leader
+                English
               </button>
               <button
-                onClick={() => setRole('FO')}
+                onClick={() => setLang('es')}
                 className={
                   'px-3 py-1.5 rounded-full font-medium transition ' +
-                  (role === 'FO' ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
+                  (lang === 'es' ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
                 }
-                aria-pressed={role === 'FO'}
+                aria-pressed={lang === 'es'}
               >
-                View as Forklift Operator
+                Español
               </button>
             </div>
             <div className="relative">
@@ -1206,13 +1282,14 @@
   // ----------------------------------------------------------------------------
 
   function ProductionManagementPage() {
-    // Demo role: Shift Leader vs Forklift Operator
-    const [role, setRole] = useState('SL');
+    // EN / ES language toggle (replaces the old role switcher)
+    const [lang, setLang] = useState('en');
+    // The "role" concept is gone — the SL is always the persona. Picker tab can still be visited.
+    const role = 'SL';
+    const setRole = () => {};
 
-    // Tabs (Production & warehouse, Picker, History, Rejected bales)
-    const [tab, setTab] = useState(role === 'SL' ? 'pw' : 'picker');
-    // Keep the tab in sync with role change for the demo
-    useEffect(() => { setTab(role === 'SL' ? 'pw' : 'picker'); }, [role]);
+    // Tabs — accordion variant removed. Sticky is the default.
+    const [tab, setTab] = useState('pw-v2');
 
     // Picking list state (lifted to the page so both tabs share it)
     // Shape: { id, name, createdAt, loads: [{zoneId, bayId, loadId}], note }
@@ -1226,6 +1303,20 @@
 
     // SL workflow mode: 'default' (overview only) | 'create' (selecting loads) | 'confirm' (review modal)
     const [slMode, setSlMode] = useState('default');
+
+    // Lifted: selection state for the in-progress picking list (was inside ShiftLeaderView).
+    // Lifting lets the create-mode breadcrumb consult the count for its confirm-back dialog.
+    const [selectionBales, setSelectionBales] = useState({});
+    // Confirm-back-from-create dialog
+    const [showConfirmBack, setShowConfirmBack] = useState(false);
+    const onBreadcrumbBack = () => {
+      if (Object.keys(selectionBales).length > 1) {
+        setShowConfirmBack(true);
+      } else {
+        setSelectionBales({});
+        setSlMode('default');
+      }
+    };
 
     // Toast — { message, kind: 'success' } | null
     const [toast, setToast] = useState(null);
@@ -1241,72 +1332,108 @@
       : 0;
 
     return (
-      <AppShell role={role} setRole={setRole}>
-        <div className="px-8 py-6 max-w-[1400px]">
+      <LangContext.Provider value={lang}>
+      <AppShell lang={lang} setLang={setLang}>
+        <div className="px-8 py-6">
           {/* Page heading swaps when SL enters Create picking list mode */}
-          {slMode === 'create' && role === 'SL' && (tab === 'pw' || tab === 'pw-v2') ? (
+          {slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout') ? (
             <div className="mb-0 pb-2">
-              <button
-                onClick={() => setSlMode('default')}
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-neutral-60 hover:text-neutral-100 mb-2"
-              >
-                <Icon d={I.arrowL} className="w-4 h-4" />
-                Back to Production Management
-              </button>
+              <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[13px] mb-2">
+                <button
+                  onClick={onBreadcrumbBack}
+                  className="text-safi-600 hover:underline"
+                >
+                  {lang === 'es' ? 'Producción y almacén' : 'Production & warehouse'}
+                </button>
+                <span className="text-neutral-40">/</span>
+                <span className="text-neutral-100 font-medium">
+                  {lang === 'es' ? 'Crear lista de recolección' : 'Create picking list'}
+                </span>
+              </nav>
               <div className="flex items-start justify-between gap-6">
                 <div>
-                  <h1 className="text-3xl font-bold tracking-tight text-neutral-100">Create picking list</h1>
-                  <p className="text-sm text-neutral-60 mt-1">
-                    Select loads below to send to pickers. Only <span className="font-medium text-neutral-100">Clear PET Bottles</span> loads are displayed.
+                  <h1 id="create-picking-list-h1" className="text-3xl font-bold tracking-tight text-neutral-100">
+                    {lang === 'es' ? 'Crear lista de recolección' : 'Create picking list'}
+                  </h1>
+                  <p className="text-[13px] text-neutral-60 mt-1">
+                    {lang === 'es'
+                      ? <>Selecciona los lotes para enviar a los recolectores. Solo se muestran lotes de <span className="font-medium text-neutral-100">Botellas PET transparentes</span>.</>
+                      : <>Select loads below to send to pickers. Only <span className="font-medium text-neutral-100">Clear PET Bottles</span> loads are displayed.</>}
                   </p>
                 </div>
               </div>
             </div>
           ) : (
             <div className="mb-4">
-              <h1 className="text-3xl font-bold tracking-tight text-neutral-100">Production Management</h1>
+              <h1 className="text-3xl font-bold tracking-tight text-neutral-100">
+                {lang === 'es' ? 'Gestión de producción' : 'Production Management'}
+              </h1>
             </div>
           )}
 
           {/* Tabs — hidden during Create picking list to keep focus on the workflow */}
-          {!(slMode === 'create' && role === 'SL' && (tab === 'pw' || tab === 'pw-v2' || tab === 'pw-layout')) && (
-            <div className="border-b border-neutral-10 mb-6 flex gap-6 text-sm overflow-x-auto">
-              <Tab id="pw"        label="Production & warehouse"               tab={tab} setTab={setTab} />
-              <Tab id="pw-v2"     label="Production & warehouse (sticky)"      tab={tab} setTab={setTab} />
-              <Tab id="pw-layout" label="Production & warehouse (layout view)" tab={tab} setTab={setTab} />
-              <Tab id="picker"    label="Picker"                               tab={tab} setTab={setTab}
+          {!(slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout')) && (
+            <div className="border-b border-neutral-10 mb-6 flex gap-6 text-[13px] overflow-x-auto">
+              <Tab id="pw-v2"     label={lang === 'es' ? 'Producción y almacén' : 'Production & warehouse'}              tab={tab} setTab={setTab} />
+              <Tab id="pw-layout" label={lang === 'es' ? 'Producción y almacén (vista de plano)' : 'Production & warehouse (layout view)'} tab={tab} setTab={setTab} />
+              <Tab id="picker"    label={lang === 'es' ? 'Recolección' : 'Picker'}                                       tab={tab} setTab={setTab}
                    badge={pickingList ? loadsRemaining : null} />
-              <Tab id="history"   label="History"                              tab={tab} setTab={setTab} />
-              <Tab id="rejected"  label="Rejected bales"                       tab={tab} setTab={setTab} />
+              <Tab id="history"   label={lang === 'es' ? 'Historial' : 'History'}                                         tab={tab} setTab={setTab} />
+              <Tab id="rejected"  label={lang === 'es' ? 'Pacas rechazadas' : 'Rejected bales'}                           tab={tab} setTab={setTab} />
             </div>
           )}
 
-          {tab === 'pw'        && <ShiftLeaderView
-                                    layout="accordion"
-                                    pickingList={pickingList} setPickingList={setPickingList}
-                                    setTab={setTab} setRole={setRole}
-                                    slMode={slMode} setSlMode={setSlMode}
-                                    windowActive={windowActive} setWindowActive={setWindowActive}
-                                    setToast={setToast} processed={processed} />}
           {tab === 'pw-v2'     && <ShiftLeaderView
                                     layout="sticky"
                                     pickingList={pickingList} setPickingList={setPickingList}
                                     setTab={setTab} setRole={setRole}
                                     slMode={slMode} setSlMode={setSlMode}
                                     windowActive={windowActive} setWindowActive={setWindowActive}
-                                    setToast={setToast} processed={processed} />}
+                                    setToast={setToast} processed={processed} lang={lang}
+                                    selectionBales={selectionBales} setSelectionBales={setSelectionBales} />}
           {tab === 'pw-layout' && <ShiftLeaderView
                                     layout="spatial"
                                     pickingList={pickingList} setPickingList={setPickingList}
                                     setTab={setTab} setRole={setRole}
                                     slMode={slMode} setSlMode={setSlMode}
                                     windowActive={windowActive} setWindowActive={setWindowActive}
-                                    setToast={setToast} processed={processed} />}
+                                    setToast={setToast} processed={processed} lang={lang}
+                                    selectionBales={selectionBales} setSelectionBales={setSelectionBales} />}
           {tab === 'picker'  && <ForkliftPickerView pickingList={pickingList} processed={processed}
                                   setProcessed={setProcessed} setPickingList={setPickingList} setRole={setRole} />}
           {tab === 'history' && <HistoryView processed={processed} />}
           {tab === 'rejected' && <Placeholder title="Rejected bales" />}
         </div>
+
+        {/* Confirm-back dialog when leaving Create with > 1 selected load */}
+        {showConfirmBack && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowConfirmBack(false)}>
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+              <h3 className="font-bold text-lg text-neutral-100">
+                {lang === 'es' ? 'Salir sin guardar' : 'Leave without saving?'}
+              </h3>
+              <p className="text-[13px] text-neutral-60 mt-2">
+                {lang === 'es'
+                  ? `Tienes ${Object.keys(selectionBales).length} lotes seleccionados. Si vuelves ahora, los cambios no se guardarán.`
+                  : `You have ${Object.keys(selectionBales).length} loads selected. Going back now will discard your changes.`}
+              </p>
+              <div className="mt-6 flex items-center gap-2 justify-end">
+                <button
+                  onClick={() => setShowConfirmBack(false)}
+                  className="px-4 py-2 rounded border border-neutral-10 text-neutral-80 font-medium hover:bg-neutral-5 min-h-[44px]"
+                >
+                  {lang === 'es' ? 'Seguir editando' : 'Keep editing'}
+                </button>
+                <button
+                  onClick={() => { setShowConfirmBack(false); setSelectionBales({}); setSlMode('default'); }}
+                  className="px-4 py-2 rounded bg-rose-600 text-white font-medium hover:bg-rose-700 min-h-[44px]"
+                >
+                  {lang === 'es' ? 'Descartar y volver' : 'Discard and go back'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Success toast — bottom-centre, auto-dismiss, with optional Undo */}
         {toast && (
@@ -1335,6 +1462,7 @@
           </div>
         )}
       </AppShell>
+      </LangContext.Provider>
     );
   }
 
@@ -1464,7 +1592,7 @@
   // SHIFT LEADER VIEW — progressive disclosure + picking-list creation
   // ============================================================================
 
-  function ShiftLeaderView({ layout = 'accordion', pickingList, setPickingList, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {} }) {
+  function ShiftLeaderView({ layout = 'accordion', pickingList, setPickingList, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales }) {
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
@@ -1488,9 +1616,7 @@
       })).filter(zone => zone.bays.length > 0);
     }, [visibleYard, bayFilter]);
 
-    // Selection state — keyed by "zoneId|bayId|loadId", value = number of bales the SL wants picked.
-    // Defaults to the full bale count when a load is ticked; can be lowered in the picking list card.
-    const [selectionBales, setSelectionBales] = useState({}); // { [key]: bales }
+    // Selection state lives in ProductionManagementPage and is passed in via props.
     // Helper view that looks/feels like a Set membership check
     const selected = useMemo(() => new Set(Object.keys(selectionBales)), [selectionBales]);
     const setSelected = (updater) => {
@@ -1704,7 +1830,7 @@
               <label className="absolute -top-2 left-3 px-1 bg-white text-[11px] font-medium text-neutral-60">Supplier</label>
               <Icon d={I.chevron} className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-neutral-60 pointer-events-none" />
             </div>
-            <ZoneBayFilter value={bayFilter} onChange={setBayFilter} yard={visibleYard} />
+            <ZoneBayFilter value={bayFilter} onChange={setBayFilter} yard={visibleYard} lang={lang} />
             <div className="flex-1" />
             {!isCreating && !pickingList && (
               <button
@@ -1728,6 +1854,9 @@
               selectionBales={selectionBales}
               setSelectionBales={setSelectionBales}
               pickingList={pickingList}
+              lang={lang}
+              bayFilter={bayFilter}
+              setSlMode={setSlMode}
             />
           ) : (
           /* Yard — Zones / Bays / Loads */
@@ -1990,15 +2119,36 @@
           <aside className="col-span-12 lg:col-span-4">
             <div className="sticky top-[230px] bg-white border border-neutral-10 rounded-xl shadow-sm flex flex-col max-h-[calc(100vh-260px)]">
               <div className="p-5 border-b border-neutral-10 flex items-start justify-between shrink-0">
-                <h2 className="font-bold text-neutral-100 text-lg">Picking list</h2>
+                <h2 className="font-bold text-neutral-100 text-lg">
+                  {lang === 'es' ? 'Lista de recolección' : 'Picking list'}
+                </h2>
                 <button
-                  aria-label="Print picking list"
-                  title="Print picking list"
-                  className="p-2 rounded-full hover:bg-neutral-5 text-neutral-60 hover:text-neutral-100"
+                  aria-label={lang === 'es' ? 'Imprimir lista' : 'Print picking list'}
+                  title={lang === 'es' ? 'Imprimir lista' : 'Print picking list'}
+                  className="p-2 rounded-full hover:bg-neutral-5 text-neutral-60 hover:text-neutral-100 min-w-[44px] min-h-[44px]"
                 >
                   <Icon d={I.print} className="w-5 h-5" />
                 </button>
               </div>
+
+              {/* Production window snapshot — gives the SL a target to aim at while picking */}
+              {windowActive && (
+                <div className="px-5 py-3 border-b border-neutral-10 bg-neutral-5/60 shrink-0">
+                  <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60">
+                    {lang === 'es' ? 'Ventana de producción activa' : 'Active production window'}
+                  </div>
+                  <div className="mt-1 flex items-center gap-4 flex-wrap text-[13px]">
+                    <div>
+                      <span className="text-neutral-60">{lang === 'es' ? 'Material:' : 'Material:'} </span>
+                      <span className="font-bold text-neutral-100">Clear PET Bottles</span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-60">{lang === 'es' ? 'Objetivo de entrada:' : 'Target input:'} </span>
+                      <span className="font-bold text-neutral-100">{ACTIVE_WINDOW.targetInput.toFixed(1)}%</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="p-5 space-y-4 flex-1 overflow-y-auto scrollbar-thin min-h-0">
                 <div className="grid grid-cols-3 gap-3">
