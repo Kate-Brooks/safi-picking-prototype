@@ -1468,7 +1468,7 @@
           {/* Tabs — hidden during Create picking list to keep focus on the workflow */}
           {!(slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout')) && (
             <div className="border-b border-neutral-10 mb-6 flex gap-6 text-[13px] overflow-x-auto">
-              <Tab id="pw-v2"     label={lang === 'es' ? 'Producción y almacén' : 'Production & warehouse'}              tab={tab} setTab={setTab} />
+              <Tab id="pw-v2"     label={lang === 'es' ? 'Producción y almacén (vista de lista vertical)' : 'Production & warehouse (vertical-list view)'} tab={tab} setTab={setTab} />
               <Tab id="pw-layout" label={lang === 'es' ? 'Producción y almacén (vista de plano)' : 'Production & warehouse (layout view)'} tab={tab} setTab={setTab} />
               <Tab id="picker"    label={lang === 'es' ? 'Recolección' : 'Picker'}                                       tab={tab} setTab={setTab}
                    badge={pickingList ? loadsRemaining : null} />
