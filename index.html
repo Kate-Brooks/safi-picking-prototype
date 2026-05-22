@@ -716,18 +716,19 @@
             {yard.map(zone => {
               const z = zoneStats(zone);
               return (
+                // Entire card is the clickable zone target — clicking anywhere (including the
+                // bales-stored fill bar on the right) navigates into the zone. The "View top
+                // suppliers" button inside calls stopPropagation so it doesn't double-trigger.
                 <div
                   key={zone.id}
-                  className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition hover:border-safi-300 hover:shadow-sm"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => goZone(zone.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goZone(zone.id); } }}
+                  className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition cursor-pointer hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
                 >
                   <div className="flex items-start justify-between gap-6 flex-wrap">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => goZone(zone.id)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goZone(zone.id); } }}
-                      className="flex-1 min-w-[280px] cursor-pointer focus:outline-none focus:ring-2 focus:ring-safi-600 rounded"
-                    >
+                    <div className="flex-1 min-w-[280px]">
                       <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
                       <div className="flex items-center gap-6 mt-2 flex-wrap">
                         <Metric2 label={tr('bays',  lang)} value={fmtNum(z.bays)} />
