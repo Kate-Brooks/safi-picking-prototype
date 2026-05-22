@@ -638,8 +638,6 @@
     const [focusBayId, setFocusBayId] = useState(null);
     // Per-bay "Show N more suppliers" expander
     const [showAllSuppliers, setShowAllSuppliers] = useState({});
-    // Zone whose top-suppliers overlay is open (null = closed)
-    const [topSuppliersZoneId, setTopSuppliersZoneId] = useState(null);
     const bayRowRef = useRef(null);
 
     const goOverview = () => { setFocusBayId(null); setView({ level: 'overview' }); };
@@ -703,10 +701,10 @@
     };
 
     // ---- OVERVIEW: just zones — no Production / Unloading containers --------
-    // Each zone card shows headline metrics + a "View top suppliers" trigger that opens an overlay.
+    // Each zone card shows headline metrics + a bales-stored fill bar.
+    // The whole card is the clickable zone target.
     const renderOverview = () => {
       const maxBales = Math.max(1, ...yard.map(z => zoneStats(z).bales));
-      const [supplierOverlay, _setSupplierOverlay] = [topSuppliersZoneId, setTopSuppliersZoneId];
       return (
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
           <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">
@@ -736,15 +734,6 @@
                         <Metric2 label={tr('bales', lang)} value={fmtNum(z.bales)} />
                         <Metric2 label={tr('weight', lang)} value={fmtKg(z.weight)} />
                       </div>
-                      <div className="mt-3">
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); setTopSuppliersZoneId(zone.id); }}
-                          className="text-[13px] font-medium text-safi-600 hover:underline min-h-[36px]"
-                        >
-                          {lang === 'es' ? 'Ver top proveedores →' : 'View top suppliers →'}
-                        </button>
-                      </div>
                     </div>
                     {/* Right: fill bar — wide so it dominates the white space.
                         Push down so the label aligns with the metric labels row (Bays / Loads / Bales / Weight). */}
@@ -760,131 +749,6 @@
             })}
           </div>
 
-          {/* Top suppliers overlay (modal) — opens when the user clicks "View top suppliers" on a zone.
-              Ranks by total kg of Good material delivered (weight × Good material %).
-              Each row shows: supplier name, Good material % chip, kg of Good material, total kg, # loads,
-              and clickable bay refs that navigate the user into that bay's detail view. */}
-          {topSuppliersZoneId && (() => {
-            const z = yard.find(z => z.id === topSuppliersZoneId);
-            if (!z) return null;
-            const supplierMap = {};
-            z.bays.forEach(b => b.loads.forEach(l => {
-              if (!supplierMap[l.supplier]) supplierMap[l.supplier] = {
-                weight: 0, goodWeight: 0, qSum: 0, qWeight: 0, loads: 0, bayIds: new Set()
-              };
-              const s = supplierMap[l.supplier];
-              s.weight += l.weight;
-              s.loads += 1;
-              s.bayIds.add(b.id);
-              if (l.results) {
-                s.qSum += l.results.transparentPET * l.weight;
-                s.qWeight += l.weight;
-                s.goodWeight += (l.results.transparentPET / 100) * l.weight;
-              }
-            }));
-            const top = Object.entries(supplierMap)
-              .map(([n, v]) => ({
-                name: n,
-                weight: v.weight,
-                goodWeight: v.goodWeight,
-                avgGood: v.qWeight > 0 ? v.qSum / v.qWeight : null,
-                loads: v.loads,
-                bays: [...v.bayIds]
-              }))
-              .sort((a, b) => b.goodWeight - a.goodWeight)
-              .slice(0, 5);
-            const navToBay = (bayId) => {
-              setTopSuppliersZoneId(null);
-              goBay(z.id, bayId);
-            };
-            return (
-              <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setTopSuppliersZoneId(null)}>
-                <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-5" onClick={e => e.stopPropagation()}>
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-bold text-neutral-100 text-lg">
-                          {lang === 'es' ? 'Top proveedores' : 'Top suppliers'}
-                        </h3>
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success-100 text-success-300 text-[13px] font-semibold">
-                          <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
-                          {tr('goodMaterial', lang)}
-                        </span>
-                      </div>
-                      <p className="text-[13px] text-neutral-60 mt-1">
-                        {zoneName(z, lang)} · {lang === 'es'
-                          ? 'clasificado por peso de Material Bueno entregado'
-                          : 'ranked by kg of Good material delivered'}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setTopSuppliersZoneId(null)}
-                      aria-label={lang === 'es' ? 'Cerrar' : 'Close'}
-                      className="p-2 rounded-full hover:bg-neutral-5 text-neutral-60 hover:text-neutral-100 min-w-[44px] min-h-[44px] -mr-2 -mt-2"
-                    >
-                      <Icon d={I.close} className="w-5 h-5" />
-                    </button>
-                  </div>
-                  <ul className="mt-4 divide-y divide-neutral-10">
-                    {top.map((s, i) => {
-                      const goodOk = s.avgGood == null || s.avgGood >= 90;
-                      const chipCls = goodOk
-                        ? 'bg-success-100 text-success-300 border-success-200/40'
-                        : 'bg-rose-50 text-rose-700 border-rose-200';
-                      return (
-                        <li key={s.name} className="py-3">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex items-start gap-3 min-w-0">
-                              <span className="text-[13px] font-bold text-neutral-60 mt-0.5 w-5 text-right shrink-0">{i + 1}.</span>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="font-semibold text-neutral-100 text-[15px]">{s.name}</span>
-                                  <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[13px] font-semibold ' + chipCls}>
-                                    <Icon d={goodOk ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
-                                    {tr('goodMaterial', lang)}{s.avgGood != null ? ` ${s.avgGood.toFixed(1)}%` : ''}
-                                  </span>
-                                </div>
-                                <div className="mt-1.5 text-[13px] text-neutral-60 flex items-center flex-wrap gap-x-3 gap-y-1">
-                                  <span>{s.loads} {tr('loads', lang).toLowerCase()}</span>
-                                  <span className="text-neutral-40">·</span>
-                                  <span>{fmtKg(s.weight)} {lang === 'es' ? 'total' : 'total'}</span>
-                                </div>
-                                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                                  <span className="text-[13px] text-neutral-60">
-                                    {lang === 'es' ? 'En:' : 'In:'}
-                                  </span>
-                                  {s.bays.map(bid => {
-                                    const b = z.bays.find(bb => bb.id === bid);
-                                    if (!b) return null;
-                                    return (
-                                      <button
-                                        key={bid}
-                                        onClick={() => navToBay(bid)}
-                                        className="inline-flex items-center px-2 py-0.5 rounded-md border border-safi-200 bg-safi-50 text-safi-700 text-[13px] font-medium hover:bg-safi-100 transition"
-                                        aria-label={`${lang === 'es' ? 'Ir a' : 'Go to'} ${bayName(b, lang)}`}
-                                      >
-                                        {bayName(b, lang)}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <div className="font-bold text-neutral-100 text-base whitespace-nowrap">{fmtKg(s.goodWeight)}</div>
-                              <div className="text-[13px] text-neutral-60 mt-0.5 whitespace-nowrap">
-                                {lang === 'es' ? 'Material Bueno' : 'Good material'}
-                              </div>
-                            </div>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              </div>
-            );
-          })()}
         </div>
       );
     };
