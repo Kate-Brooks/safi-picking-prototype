@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Safi — Production Management prototype</title>
+  <title>Safi - Production Management prototype</title>
   <style>
-    /* Circular XX TT — Safi brand typeface */
+    /* Circular XX TT - Safi brand typeface */
     @font-face { font-family: 'Circular XX TT'; font-style: normal; font-weight: 400; src: url('CircularXXTT-Book.ttf') format('truetype'); font-display: swap; }
     @font-face { font-family: 'Circular XX TT'; font-style: italic; font-weight: 400; src: url('CircularXXTT-BookItalic.ttf') format('truetype'); font-display: swap; }
     @font-face { font-family: 'Circular XX TT'; font-style: normal; font-weight: 450; src: url('CircularXXTT-Regular.ttf') format('truetype'); font-display: swap; }
@@ -77,14 +77,14 @@
   const { useState, useMemo, useEffect, useRef, Fragment } = React;
 
   // ----------------------------------------------------------------------------
-  // MOCK DATA — anonymised warehouse layout for the prototype.
+  // MOCK DATA - anonymised warehouse layout for the prototype.
   // Zones, Bays, Loads with supplier + lot ref + weight + bales.
   // Materials: BLANCA, AMERICANA, AZUL, 50/50.
-  // Some bays are "blocked" — physically inaccessible because other bays sit in
+  // Some bays are "blocked" - physically inaccessible because other bays sit in
   // front of them. The SL cannot put a blocked bay on the picking list.
   // ----------------------------------------------------------------------------
 
-  // Clear PET Bottles spec — three result components per analysed load.
+  // Clear PET Bottles spec - three result components per analysed load.
   //   transparentPET >= 92    (higher is in-spec, green)
   //   colouredPET   <= 6      (lower is in-spec, green)
   //   contaminants  <= 2      (lower is in-spec, green)
@@ -92,6 +92,17 @@
     transparentPET: { label: 'Transparent PET', op: '>=', target: 92 },
     colouredPET:    { label: 'Coloured PET',    op: '<=', target: 6  },
     contaminants:   { label: 'Contaminants',    op: '<=', target: 2  }
+  };
+
+  // Material types for clear PET bottle loads (per spec: BLANCA, AMERICANA, AZUL, 50/50).
+  // We deterministically assign one to every load based on the lot ref so the same
+  // load always shows the same material across screens.
+  const MATERIALS = ['BLANCA', 'AMERICANA', 'AZUL', '50/50'];
+  const materialFor = (lot) => {
+    if (!lot) return MATERIALS[0];
+    let h = 0;
+    for (let i = 0; i < lot.length; i++) h = (h * 31 + lot.charCodeAt(i)) >>> 0;
+    return MATERIALS[h % MATERIALS.length];
   };
 
   // Helper: build a load object.
@@ -103,6 +114,7 @@
     lot,
     weight,
     bales,
+    material: materialFor(lot),
     results,
     processedAt: null
   });
@@ -204,7 +216,7 @@
   };
 
   // Yard structure. `accessible: false` means this bay is blocked by another bay
-  // in front of it — the FO physically cannot reach it for picking right now.
+  // in front of it - the FO physically cannot reach it for picking right now.
   // r = { transparentPET, colouredPET, contaminants } shorthand
   const r = (t, c, x) => ({ transparentPET: t, colouredPET: c, contaminants: x });
 
@@ -234,7 +246,7 @@
         // Empty
         out.push({ id: `A${i}`, esName: `Bay A${i}`, accessible: true, loads: [] });
       } else if (mod === 1) {
-        // Dense — 8 loads
+        // Dense - 8 loads
         out.push({
           id: `A${i}`, esName: `Bay A${i}`, accessible: true,
           loads: Array.from({ length: 8 }, (_, j) => mkLoad(j))
@@ -306,7 +318,7 @@
       esName: 'Zone B',
       bays: [
         {
-          // Bay with 5 loads — demonstrates the "Show all loads (N more)" expander in sticky tab
+          // Bay with 5 loads - demonstrates the "Show all loads (N more)" expander in sticky tab
           id: 'B5', name: 'Bay B5', esName: 'Bay B5', accessible: true,
           loads: [
             L('Supplier H',  'LOT-B001', 13779, 28, r(93.1, 5.4, 1.5)),
@@ -416,7 +428,7 @@
     );
   };
 
-  // AIResultChips — three chips per analysed load (Transparent PET / Coloured PET / Contaminants).
+  // AIResultChips - three chips per analysed load (Transparent PET / Coloured PET / Contaminants).
   // Each chip is green/red against its spec. Returns null if the load hasn't been analysed.
   const AIResultChips = ({ load, onPickingList }) => {
     if (!load.results) {
@@ -447,7 +459,7 @@
     );
   };
 
-  // BayFilter — multi-select dropdown of every bay grouped by zone.
+  // BayFilter - multi-select dropdown of every bay grouped by zone.
   // When selections are made, the parent filters the warehouse to show only those bays
   // (and force-expands their zones).
   function ZoneBayFilter({ value, onChange, yard, lang = 'en' }) {
@@ -556,7 +568,7 @@
     );
   }
 
-  // CapacityFilter — multi-select with Capacity / Full / Empty options.
+  // CapacityFilter - multi-select with Capacity / Full / Empty options.
   function CapacityFilter({ value, onChange }) {
     const options = ['Capacity', 'Full', 'Empty'];
     const [open, setOpen] = useState(false);
@@ -624,7 +636,7 @@
   }
 
   // ============================================================================
-  // SPATIAL LAYOUT VIEW — top-down map of the yard.
+  // SPATIAL LAYOUT VIEW - top-down map of the yard.
   //
   // Overview: zones stacked horizontally. Each zone shows headline metrics + a
   //           fill bar + the top suppliers by weight stored in that zone.
@@ -684,7 +696,7 @@
       </nav>
     );
 
-    // Horizontal fill bar — accessible (numeric label always visible). Uses sky
+    // Horizontal fill bar - accessible (numeric label always visible). Uses sky
     // tones so it's clearly distinct from the primary purple CTA.
     const FillBar = ({ value, max, suffix }) => {
       const pct = max > 0 ? Math.min(100, Math.max(2, (value / max) * 100)) : 0;
@@ -700,7 +712,7 @@
       );
     };
 
-    // ---- OVERVIEW: just zones — no Production / Unloading containers --------
+    // ---- OVERVIEW: just zones - no Production / Unloading containers --------
     // Each zone card shows headline metrics + a bales-stored fill bar.
     // The whole card is the clickable zone target.
     const renderOverview = () => {
@@ -714,7 +726,7 @@
             {yard.map(zone => {
               const z = zoneStats(zone);
               return (
-                // Entire card is the clickable zone target — clicking anywhere (including the
+                // Entire card is the clickable zone target - clicking anywhere (including the
                 // bales-stored fill bar on the right) navigates into the zone. The "View top
                 // suppliers" button inside calls stopPropagation so it doesn't double-trigger.
                 <div
@@ -735,7 +747,7 @@
                         <Metric2 label={tr('weight', lang)} value={fmtKg(z.weight)} />
                       </div>
                     </div>
-                    {/* Right: fill bar — wide so it dominates the white space.
+                    {/* Right: fill bar - wide so it dominates the white space.
                         Push down so the label aligns with the metric labels row (Bays / Loads / Bales / Weight). */}
                     <div className="flex-[2] min-w-[280px] pt-[38px]">
                       <div className="text-[13px] text-neutral-60 mb-1">
@@ -768,7 +780,7 @@
       const z = zoneStats(zone);
 
       // Bays render in their natural pick order. Focused bays just scroll into view +
-      // get a Primary outline — they don't reorder.
+      // get a Primary outline - they don't reorder.
       const reorderedBays = zone.bays;
 
       const scrollToBay = (id) => {
@@ -806,10 +818,10 @@
             </div>
           )}
 
-          {/* Minimap — heat-mapped by quality + selected step highlighting */}
+          {/* Minimap - heat-mapped by quality + selected step highlighting */}
           {zone.bays.length > 8 && (
             <div className="mb-3 px-3 py-2 rounded-md bg-neutral-5 border border-neutral-10">
-              <div className="flex items-end gap-0.5 h-12 w-full" role="navigation" aria-label="Bay minimap — heat-mapped by average load quality">
+              <div className="flex items-end gap-0.5 h-12 w-full" role="navigation" aria-label="Bay minimap - heat-mapped by average load quality">
                 {zone.bays.map((b) => {
                   const s = bayStats(b);
                   const pct = maxBalesInZone > 0 ? Math.max(8, (s.bales / maxBalesInZone) * 100) : 8;
@@ -828,7 +840,7 @@
                     <Tooltip key={b.id} content={tipContent} className="flex-1 flex items-end h-full">
                       <button
                         onClick={() => scrollToBay(b.id)}
-                        aria-label={`Jump to ${bayName(b, lang)} — ${q.label}`}
+                        aria-label={`Jump to ${bayName(b, lang)} - ${q.label}`}
                         aria-pressed={isFocus}
                         className={
                           'w-full rounded-t transition-opacity hover:opacity-80 ' +
@@ -861,7 +873,7 @@
             </div>
           )}
 
-          {/* Horizontal scrollable bay row — all tiles same size (largest) */}
+          {/* Horizontal scrollable bay row - all tiles same size (largest) */}
           <div
             ref={bayRowRef}
             className="flex gap-3 overflow-x-auto pb-3 pt-1 scrollbar-thin items-stretch"
@@ -966,14 +978,14 @@
                       </div>
                       <div>
                         <div className="text-neutral-60">{tr('bales', lang)}</div>
-                        <div className="font-bold text-neutral-100">{empty ? '—' : fmtNum(s.bales)}</div>
+                        <div className="font-bold text-neutral-100">{empty ? '-' : fmtNum(s.bales)}</div>
                       </div>
                       <div>
                         <div className="text-neutral-60">{tr('weight', lang)}</div>
-                        <div className="font-bold text-neutral-100 truncate" title={empty ? '' : fmtKg(s.weight)}>{empty ? '—' : fmtKg(s.weight)}</div>
+                        <div className="font-bold text-neutral-100 truncate" title={empty ? '' : fmtKg(s.weight)}>{empty ? '-' : fmtKg(s.weight)}</div>
                       </div>
                     </div>
-                    {/* Bales fill bar — sits between metrics and suppliers */}
+                    {/* Bales fill bar - sits between metrics and suppliers */}
                     {!empty && (
                       <div className="mt-3">
                         <div className="flex items-center justify-between text-[13px] text-neutral-60 mb-1">
@@ -1082,7 +1094,7 @@
             </div>
           ) : (
             <>
-              {/* Select all loads — visible during Create picking list when the bay has > 1 load */}
+              {/* Select all loads - visible during Create picking list when the bay has > 1 load */}
               {isCreating && bay.loads.length > 1 && (() => {
                 const bayKeys = bay.loads.map(l => `${zone.id}|${bay.id}|${l.id}`);
                 const allSel = bay.accessible && bayKeys.every(k => selectionBales[k] != null);
@@ -1165,16 +1177,16 @@
     </div>
   );
 
-  // LoadRow — single tappable row.
+  // LoadRow - single tappable row.
   //   - Default mode: hover shows "Open load details" tooltip. Clicking is a no-op
-  //     (conceptual — no real load details page exists).
+  //     (conceptual - no real load details page exists).
   //   - Create mode: clicking toggles selection.
   //   - Three AI result chips inline next to the order ref. Shown only if analysed.
   //   - "On picking list" indicator when this load is on the active picking list (default mode only).
   const LoadRow = ({ load, isCreating, accessible, isSelected, onToggle, onPickingList }) => {
     const openDetails = (e) => {
       e.stopPropagation();
-      // Conceptual placeholder — would normally navigate to a load details page.
+      // Conceptual placeholder - would normally navigate to a load details page.
     };
     const handleRowClick = () => {
       if (!accessible) return;
@@ -1230,7 +1242,7 @@
             )}
           </div>
         </div>
-        {/* External-link icon — Primary/400, visible on hover */}
+        {/* External-link icon - Primary/400, visible on hover */}
         <button
           onClick={openDetails}
           aria-label={`View details for load ${load.lot}`}
@@ -1286,7 +1298,7 @@
   };
 
   // ----------------------------------------------------------------------------
-  // APP SHELL — top nav + sidebar
+  // APP SHELL - top nav + sidebar
   // ----------------------------------------------------------------------------
   function AppShell({ lang, setLang, children }) {
     const NavItem = ({ icon, label, active }) => (
@@ -1353,7 +1365,7 @@
             <NavItem icon={I.list}     label="Partner Invites" />
             <NavItem icon={I.chart}    label="Quality Analytics" />
             <NavItem icon={I.claim}    label="Claim Reports" />
-            <NavItem icon={I.factory}  label="Production Management" active />
+            <NavItem icon={I.factory}  label="Production" active />
             <NavItem icon={I.deals}    label="Deals" />
             <NavItem icon={I.truck}    label="Collections" />
             <NavItem icon={I.ground}   label="Ground Control" />
@@ -1363,7 +1375,7 @@
             </div>
           </aside>
 
-          {/* Page — no overflow on this element so descendants can use the body
+          {/* Page - no overflow on this element so descendants can use the body
               as the scrolling ancestor and `position: sticky` works correctly. */}
           <main className="flex-1 min-w-0">{children}</main>
         </div>
@@ -1378,11 +1390,11 @@
   function ProductionManagementPage() {
     // EN / ES language toggle (replaces the old role switcher)
     const [lang, setLang] = useState('en');
-    // The "role" concept is gone — the SL is always the persona. Picker tab can still be visited.
+    // The "role" concept is gone - the SL is always the persona. Picker tab can still be visited.
     const role = 'SL';
     const setRole = () => {};
 
-    // Tabs — accordion variant removed. Sticky is the default.
+    // Tabs - accordion variant removed. Sticky is the default.
     const [tab, setTab] = useState('pw-v2');
 
     // Picking list state (lifted to the page so both tabs share it)
@@ -1412,7 +1424,7 @@
       }
     };
 
-    // Toast — { message, kind: 'success' } | null
+    // Toast - { message, kind: 'success' } | null
     const [toast, setToast] = useState(null);
     useEffect(() => {
       if (!toast) return;
@@ -1437,7 +1449,7 @@
                   onClick={onBreadcrumbBack}
                   className="text-safi-600 hover:underline"
                 >
-                  {lang === 'es' ? 'Producción y almacén' : 'Production & warehouse'}
+                  {lang === 'es' ? 'Almacén' : 'Warehouse'}
                 </button>
                 <span className="text-neutral-40">/</span>
                 <span className="text-neutral-100 font-medium">
@@ -1460,16 +1472,16 @@
           ) : (
             <div className="mb-4">
               <h1 className="text-3xl font-bold tracking-tight text-neutral-100">
-                {lang === 'es' ? 'Gestión de producción' : 'Production Management'}
+                {lang === 'es' ? 'Producción' : 'Production'}
               </h1>
             </div>
           )}
 
-          {/* Tabs — hidden during Create picking list to keep focus on the workflow */}
+          {/* Tabs - hidden during Create picking list to keep focus on the workflow */}
           {!(slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout')) && (
             <div className="border-b border-neutral-10 mb-6 flex gap-6 text-[13px] overflow-x-auto">
-              <Tab id="pw-v2"     label={lang === 'es' ? 'Producción y almacén (vista de lista vertical)' : 'Production & warehouse (vertical-list view)'} tab={tab} setTab={setTab} />
-              <Tab id="pw-layout" label={lang === 'es' ? 'Producción y almacén (vista de plano)' : 'Production & warehouse (layout view)'} tab={tab} setTab={setTab} />
+              <Tab id="pw-v2"     label={lang === 'es' ? 'Almacén (lista vertical)' : 'Warehouse (vertical-list)'} tab={tab} setTab={setTab} />
+              <Tab id="pw-layout" label={lang === 'es' ? 'Almacén (plano)' : 'Warehouse (layout)'} tab={tab} setTab={setTab} />
               <Tab id="picker"    label={lang === 'es' ? 'Recolección' : 'Picker'}                                       tab={tab} setTab={setTab}
                    badge={pickingList ? loadsRemaining : null} />
               <Tab id="picker-merged" label={lang === 'es' ? 'Recolección (lote/paca)' : 'Picker (load/bale)'}             tab={tab} setTab={setTab} />
@@ -1532,7 +1544,7 @@
           </div>
         )}
 
-        {/* Success toast — bottom-centre, auto-dismiss, with optional Undo */}
+        {/* Success toast - bottom-centre, auto-dismiss, with optional Undo */}
         {toast && (
           <div
             role="status"
@@ -1590,7 +1602,7 @@
     </div>
   );
 
-  // HistoryView — processed loads (most recent first). Resolves load IDs back to the
+  // HistoryView - processed loads (most recent first). Resolves load IDs back to the
   // yard structure for context (supplier, lot, bay, zone).
   function HistoryView({ processed }) {
     // Build an index of loadId -> { zone, bay, load } for resolution
@@ -1659,7 +1671,7 @@
                           </span>
                         ))}
                       </div>
-                    ) : <span className="text-neutral-40 text-[13px]">—</span>}
+                    ) : <span className="text-neutral-40 text-[13px]">-</span>}
                   </td>
                   <td className="px-5 py-3 text-neutral-60 text-[13px]">
                     {new Date(r.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
@@ -1686,14 +1698,14 @@
   }
 
   // ============================================================================
-  // SHIFT LEADER VIEW — progressive disclosure + picking-list creation
+  // SHIFT LEADER VIEW - progressive disclosure + picking-list creation
   // ============================================================================
 
   function ShiftLeaderView({ layout = 'accordion', pickingList, setPickingList, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales }) {
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
-    // Filter out fully processed loads — they live in History now.
+    // Filter out fully processed loads - they live in History now.
     const visibleYard = useMemo(() => YARD.map(zone => ({
       ...zone,
       bays: zone.bays.map(bay => ({
@@ -1702,7 +1714,7 @@
       }))
     })), [processed]);
 
-    // Zone & bay filter — when active, only show selected bays and force-expand their zones.
+    // Zone & bay filter - when active, only show selected bays and force-expand their zones.
     const [bayFilter, setBayFilter] = useState(new Set());
 
     const filteredYard = useMemo(() => {
@@ -1739,7 +1751,7 @@
     // Sticky layout: per-bay "Show all loads" expansion
     const [bayShowAll, setBayShowAll] = useState({});
 
-    // Zones expand and collapse freely — including all closed at once.
+    // Zones expand and collapse freely - including all closed at once.
     const toggleZone = (id) => {
       setOpenZones(prev => ({ ...prev, [id]: !prev[id] }));
     };
@@ -1826,7 +1838,7 @@
       const previousSelection = { ...selectionBales };
       const list = {
         id: 'pl-' + Date.now(),
-        name: `Shift picking list — ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`,
+        name: `Shift picking list - ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`,
         createdAt: new Date().toISOString(),
         loads: Object.entries(selectionBales).map(([k, bales]) => {
           const [zoneId, bayId, loadId] = k.split('|');
@@ -1851,16 +1863,16 @@
 
     return (
       <Fragment>
-        {/* Active production window — hidden during Create picking list */}
+        {/* Active production window - hidden during Create picking list */}
         {!isCreating && <ActiveProductionWindow active={windowActive} />}
 
-        {/* Existing-list banner — blue info style with Edit / destructive Clear */}
+        {/* Existing-list banner - blue info style with Edit / destructive Clear */}
         {!isCreating && pickingList && (
           <ActivePickingListAlert
             pickingList={pickingList}
             onEdit={() => {
               // Pre-populate the create workflow with the active list but DO NOT
-              // clear pickingList yet — so if the SL cancels mid-edit, the existing
+              // clear pickingList yet - so if the SL cancels mid-edit, the existing
               // active picking list is still in place.
               const next = {};
               pickingList.loads.forEach(l => {
@@ -1881,11 +1893,11 @@
           />
         )}
 
-        {/* Warehouse header — outside the grid so both columns align with the first zone card. */}
+        {/* Warehouse header - outside the grid so both columns align with the first zone card. */}
         <div className="sticky top-14 z-20 bg-[#fafafa] pt-6 pb-3 -mx-8 px-8">
           <h2 className="text-lg font-bold text-neutral-100">Warehouse</h2>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            {/* Material — the most important filter, first in order */}
+            {/* Material - the most important filter, first in order */}
             <div className="relative w-[180px]">
               <select
                 aria-label="Filter by material"
@@ -1942,7 +1954,7 @@
         </div>{/* /sticky warehouse header */}
 
       <div className="grid grid-cols-12 gap-6">
-        {/* Main column — zone list or spatial layout */}
+        {/* Main column - zone list or spatial layout */}
         <div className={isCreating ? 'col-span-12 lg:col-span-8' : 'col-span-12'}>
           {isSpatial ? (
             <SpatialLayoutView
@@ -1956,7 +1968,7 @@
               setSlMode={setSlMode}
             />
           ) : (
-          /* Yard — Zones / Bays / Loads */
+          /* Yard - Zones / Bays / Loads */
           <div className="space-y-3">
             {filteredYard.map(zone => {
               const z = zoneStats(zone);
@@ -2073,7 +2085,7 @@
                                   )}
                                 </div>
                               </div>
-                              {/* Loads list — flows below the sticky header, subtle dividers */}
+                              {/* Loads list - flows below the sticky header, subtle dividers */}
                               {hasLoads ? (
                                 <div className="bg-white">
                                   {visibleLoads.map(load => {
@@ -2209,9 +2221,9 @@
           )}{/* /isSpatial conditional */}
         </div>
 
-        {/* Side panel — only visible in Create picking list mode. Aligns with the first zone card.
+        {/* Side panel - only visible in Create picking list mode. Aligns with the first zone card.
             The card itself is bounded by viewport height so the footer buttons (Send to picker / Cancel / Schedule)
-            are always visible — only the middle section scrolls when many loads are selected. */}
+            are always visible - only the middle section scrolls when many loads are selected. */}
         {isCreating && (
           <aside className="col-span-12 lg:col-span-4">
             <div className="sticky top-[72px] bg-white border border-neutral-10 rounded-xl shadow-sm flex flex-col max-h-[calc(100vh-96px)]">
@@ -2228,7 +2240,7 @@
                 </button>
               </div>
 
-              {/* Production window snapshot — gives the SL a target to aim at while picking */}
+              {/* Production window snapshot - gives the SL a target to aim at while picking */}
               {windowActive && (
                 <div className="px-5 py-3 border-b border-neutral-10 bg-neutral-5/60 shrink-0">
                   <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60">
@@ -2373,7 +2385,7 @@
     );
   }
 
-  // Quieter "N selected" — inline subtle text, not a pill.
+  // Quieter "N selected" - inline subtle text, not a pill.
   function ZoneSelectionBadge({ zoneId, selected }) {
     const count = Array.from(selected).filter(k => k.startsWith(zoneId + '|')).length;
     if (count === 0) return null;
@@ -2488,7 +2500,7 @@
   }
 
   // ============================================================================
-  // FORKLIFT OPERATOR VIEW — Picker tab
+  // FORKLIFT OPERATOR VIEW - Picker tab
   // ============================================================================
 
   function ForkliftPickerView({ pickingList, processed, setProcessed, setPickingList, setRole }) {
@@ -2569,7 +2581,7 @@
             <p className="text-sm text-slate-700 mt-0.5">
               {allDone
                 ? 'All loads on this picking list have been processed. Confirm with the Shift Leader to close out the shift.'
-                : `${doneLoads} of ${totalLoads} loads processed. Pick from the bays below in any order — full load by default, or specify bales if the load is split.`}
+                : `${doneLoads} of ${totalLoads} loads processed. Pick from the bays below in any order - full load by default, or specify bales if the load is split.`}
             </p>
           </div>
           {allDone && (
@@ -2658,6 +2670,9 @@
                                     <div className="flex items-center gap-2 flex-wrap">
                                       <span className="font-semibold text-slate-900">{load.supplier}</span>
                                       <span className="text-slate-500 text-sm">Order ref <span className="font-mono">#{load.lot}</span></span>
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-neutral-10 text-[13px] font-medium text-neutral-80">
+                                        {load.material}
+                                      </span>
                                     </div>
                                     <div className="text-[13px] text-slate-500 mt-0.5">
                                       {fmtNum(load.bales)} bales · {fmtKg(load.weight)}
@@ -2755,10 +2770,10 @@
   }
 
   // ============================================================================
-  // FORKLIFT OPERATOR VIEW — Picker (load/bale) MERGED tab
+  // FORKLIFT OPERATOR VIEW - Picker (load/bale) MERGED tab
   // ----------------------------------------------------------------------------
   // Tablet-first FO view that unifies load-based and bale-based processing.
-  //  • Optional Buffer area (toggle hide/show) — for plants that stage material
+  //  • Optional Buffer area (toggle hide/show) - for plants that stage material
   //    before the line, vs. plants that process direct from the yard.
   //  • Each bay row exposes three actions: Reject / Move to buffer / Process material.
   //  • A single "Process material" modal supports per-bale entry (manual weight)
@@ -2778,6 +2793,87 @@
     'LOT-A005': [{ zoneId: 'B', bayId: 'B8', bales: 5, accessible: true }]
   };
 
+  // ----------------------------------------------------------------------------
+  // FO-tuned filter dropdowns (bigger touch targets - designed for fat fingers
+  // on iPad. Inspired by the existing ZoneBayFilter but with larger spacing,
+  // bigger checkboxes, and 56px+ option rows.)
+  // ----------------------------------------------------------------------------
+  function PickerFilterDropdown({ label, value, onChange, options, placeholder, lang }) {
+    const [open, setOpen] = useState(false);
+    const wrapRef = useRef(null);
+    useEffect(() => {
+      if (!open) return;
+      const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+      document.addEventListener('mousedown', onDoc);
+      return () => document.removeEventListener('mousedown', onDoc);
+    }, [open]);
+    const count = value.size;
+    const toggle = (k) => {
+      const next = new Set(value);
+      next.has(k) ? next.delete(k) : next.add(k);
+      onChange(next);
+    };
+    const clear = () => onChange(new Set());
+    return (
+      <div className="relative flex-1 min-w-[200px]" ref={wrapRef}>
+        <button
+          type="button"
+          onClick={() => setOpen(v => !v)}
+          className={
+            'w-full text-left pl-4 pr-10 py-3 text-[15px] rounded-lg bg-white border min-h-[52px] truncate ' +
+            (open ? 'border-safi-600' : 'border-neutral-10')
+          }
+          aria-haspopup="listbox"
+          aria-expanded={open}
+        >
+          <span className={'block truncate whitespace-nowrap ' + (count > 0 ? 'text-neutral-100 font-medium' : 'text-neutral-40')}>
+            {count > 0 ? `${count} ${lang === 'es' ? 'seleccionado(s)' : 'selected'}` : placeholder}
+          </span>
+        </button>
+        <label className={
+          'absolute -top-2 left-3 px-1.5 bg-[#fafafa] text-[13px] font-medium ' +
+          (open ? 'text-safi-600' : 'text-neutral-60')
+        }>{label}</label>
+        <Icon d={I.chevron} className={
+          'w-5 h-5 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ' +
+          (open ? 'text-safi-600 rotate-180' : 'text-neutral-60')
+        } />
+        {open && (
+          <div className="absolute z-30 mt-1 w-full min-w-[280px] left-0 bg-white border border-neutral-10 rounded-lg shadow-lg max-h-[400px] overflow-y-auto scrollbar-thin py-1">
+            {count > 0 && (
+              <div className="px-4 py-3 border-b border-neutral-10 flex justify-between items-center">
+                <span className="text-[13px] text-neutral-60">{count} {lang === 'es' ? 'seleccionado(s)' : 'selected'}</span>
+                <button onClick={clear} className="text-[15px] font-medium text-safi-700 hover:underline min-h-[32px]">
+                  {lang === 'es' ? 'Borrar' : 'Clear'}
+                </button>
+              </div>
+            )}
+            {options.map(opt => {
+              const checked = value.has(opt.key);
+              return (
+                <label
+                  key={opt.key}
+                  className="flex items-center gap-3 px-4 py-3.5 text-[15px] cursor-pointer hover:bg-neutral-5 min-h-[56px]"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(opt.key)}
+                    className="w-5 h-5 rounded text-safi-600 focus:ring-safi-500"
+                  />
+                  <span className="text-neutral-100">{opt.label}</span>
+                  {opt.hint && (
+                    <span className="ml-auto text-[13px] text-neutral-40">{opt.hint}</span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function ForkliftPickerMergedView({ pickingList, processed, setProcessed, lang, setToast }) {
     // All zones open by default so FO sees everything on landing.
     const initialOpen = useMemo(() => {
@@ -2787,19 +2883,98 @@
     const [bufferVisible, setBufferVisible] = useState(true);
     const [buffer, setBuffer] = useState([]);     // [{ uid, loadId, supplier, lot, bales, weightPerBale, sourceZoneId, sourceBayId }]
     const [modal, setModal] = useState(null);     // { type: 'move'|'process'|'reject', source: 'bay'|'buffer', zone?, bay?, bufferItems? }
+    // Lifted so the Process modal defaults to the FO's last choice ('auto' | 'manual')
+    const [weightMode, setWeightMode] = useState('auto');
+    // FO filters - "Bays" (zoneId|bayId keys) and "Material" (material name keys)
+    const [bayFilter, setBayFilter] = useState(new Set());
+    const [materialFilter, setMaterialFilter] = useState(new Set());
+    // Show only picking-list bays (off by default = whole warehouse)
+    const [pickingListOnly, setPickingListOnly] = useState(false);
+    // Summary card collapsed by default to save screen real estate
+    const [summaryOpen, setSummaryOpen] = useState(true);
 
     const tEN = (en, es) => lang === 'es' ? es : en;
 
-    // Picking-list recommended lookup
+    // Picking-list recommended lookup - load IDs the SL put on the active picking list
     const recommendedLoads = useMemo(() => {
       const s = new Set();
       pickingList?.loads.forEach(l => s.add(l.loadId));
       return s;
     }, [pickingList]);
 
+    // Picking-list bay lookup - set of "zoneId|bayId" keys that contain at least one
+    // picking-list item. Used for the "Show only picking list" filter and the badge.
+    const pickingListBays = useMemo(() => {
+      const s = new Set();
+      pickingList?.loads.forEach(l => s.add(`${l.zoneId}|${l.bayId}`));
+      return s;
+    }, [pickingList]);
+
+    // Picking-list summary - grouped by zone/bay with bale + load counts
+    const pickingListSummary = useMemo(() => {
+      if (!pickingList) return null;
+      const byBay = {};
+      pickingList.loads.forEach(({ zoneId, bayId, loadId }) => {
+        const zone = YARD.find(z => z.id === zoneId);
+        const bay = zone?.bays.find(b => b.id === bayId);
+        const load = bay?.loads.find(l => l.id === loadId);
+        if (!load) return;
+        const key = `${zoneId}|${bayId}`;
+        if (!byBay[key]) byBay[key] = { zoneId, bayId, loads: [], bales: 0, weight: 0 };
+        byBay[key].loads.push(load);
+        byBay[key].bales += load.bales;
+        byBay[key].weight += load.weight;
+      });
+      const items = Object.values(byBay);
+      const totalLoads = items.reduce((a, b) => a + b.loads.length, 0);
+      const totalBales = items.reduce((a, b) => a + b.bales, 0);
+      const totalWeight = items.reduce((a, b) => a + b.weight, 0);
+      const materials = new Set();
+      items.forEach(it => it.loads.forEach(l => materials.add(l.material)));
+      return { items, totalLoads, totalBales, totalWeight, materials: Array.from(materials) };
+    }, [pickingList]);
+
+    // Build the filter option list once
+    const bayOptions = useMemo(() => {
+      const out = [];
+      YARD.forEach(zone => {
+        zone.bays.forEach(bay => {
+          if (bay.loads.length === 0) return;
+          out.push({
+            key: `${zone.id}|${bay.id}`,
+            label: tEN(`Zone ${zone.id} · Bay ${bay.id}`, `Zona ${zone.id} · Fila ${bay.id}`),
+            hint: `${bay.loads.reduce((a, l) => a + l.bales, 0)} ${tEN('bales', 'pacas')}`
+          });
+        });
+      });
+      return out;
+    }, [lang]);
+
+    const materialOptions = MATERIALS.map(m => ({ key: m, label: m }));
+
     // Aggregate buffer totals
     const bufferBales = buffer.reduce((a, b) => a + b.bales, 0);
     const bufferWeight = buffer.reduce((a, b) => a + Math.round(b.bales * b.weightPerBale), 0);
+
+    // Visible bays after applying all three filters: picking-list-only, bay filter, material filter.
+    const visibleZones = useMemo(() => {
+      return YARD.map(zone => {
+        const bays = zone.bays.filter(bay => {
+          if (pickingListOnly && !pickingListBays.has(`${zone.id}|${bay.id}`)) return false;
+          if (bayFilter.size > 0 && !bayFilter.has(`${zone.id}|${bay.id}`)) return false;
+          if (materialFilter.size > 0 && !bay.loads.some(l => materialFilter.has(l.material))) return false;
+          return true;
+        });
+        return { zone, bays };
+      }).filter(z => z.bays.length > 0);
+    }, [pickingListOnly, pickingListBays, bayFilter, materialFilter]);
+
+    const anyFilterActive = pickingListOnly || bayFilter.size > 0 || materialFilter.size > 0;
+    const clearAllFilters = () => {
+      setPickingListOnly(false);
+      setBayFilter(new Set());
+      setMaterialFilter(new Set());
+    };
 
     // Bay-level "remaining accessible bales", taking into account anything already
     // moved to the buffer from this bay during the session.
@@ -2843,7 +3018,7 @@
         uid,
         loadId: primaryLoad?.id || `${bay.id}-mixed`,
         supplier: primaryLoad?.supplier || tEN('Mixed material', 'Material mixto'),
-        lot: primaryLoad?.lot || '—',
+        lot: primaryLoad?.lot || '-',
         bales,
         weightPerBale,
         sourceZoneId: zone.id,
@@ -2861,7 +3036,7 @@
       setToast?.({ message: tEN(`Returned ${item.bales} bales to ${item.sourceBayId}`, `${item.bales} pacas devueltas a ${item.sourceBayId}`), kind: 'success' });
     };
 
-    // Process material — used from both Bay and Buffer flows.
+    // Process material - used from both Bay and Buffer flows.
     // `source` shape depends on origin; we just record bales + weight and clear.
     const doProcess = ({ source, zone, bay, bufferItem, bales, weight }) => {
       // Synthetic processed entry per action (id keys avoid clobbering real load history)
@@ -2887,68 +3062,52 @@
 
     return (
       <div className="space-y-4">
-        {/* Intro banner — explains the merged tab + buffer toggle */}
-        <div className="rounded-xl p-4 bg-safi-50 border border-safi-200 flex items-start gap-3">
-          <Icon d={I.info} className="w-5 h-5 mt-0.5 text-safi-700" />
-          <div className="flex-1 text-[13px] text-neutral-80">
-            <div className="font-semibold text-neutral-100 mb-0.5">
-              {tEN('Picker (load/bale) — experimental merged flow', 'Recolección (lote/paca) — flujo combinado experimental')}
-            </div>
-            <p>
-              {tEN(
-                'One tab for forklift operators to process material at any granularity — whole load, partial load, or bale-by-bale. Use the buffer to stage material before the line, or process direct from the yard.',
-                'Una pestaña para que los operadores procesen material a cualquier nivel — lote completo, parcial o paca por paca. Usa el búfer para preparar material antes de la línea, o procesa directamente desde el patio.'
-              )}
-            </p>
-          </div>
-          <button
-            onClick={() => setBufferVisible(v => !v)}
-            className="px-3 py-1.5 rounded-lg border border-safi-300 text-safi-700 text-[13px] font-medium hover:bg-safi-100 shrink-0"
-          >
-            {bufferVisible
-              ? tEN('Hide buffer', 'Ocultar búfer')
-              : tEN('Show buffer', 'Mostrar búfer')}
-          </button>
-        </div>
-
-        {/* Buffer area */}
-        {bufferVisible && (
+        {/* Buffer area - toggle lives on the buffer card header */}
+        {bufferVisible ? (
           <div className="rounded-xl bg-white border border-neutral-10 overflow-hidden">
-            <div className="px-5 py-4 flex items-center justify-between border-b border-neutral-10">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-safi-100 flex items-center justify-center">
+            <div className="px-5 py-4 flex items-center justify-between border-b border-neutral-10 gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-lg bg-safi-100 flex items-center justify-center shrink-0">
                   <Icon d={I.box} className="w-5 h-5 text-safi-700" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="font-semibold text-neutral-100 text-base">
                     {tEN('Buffer', 'Búfer')}
                   </div>
                   <div className="text-[13px] text-neutral-60">
                     {buffer.length === 0
-                      ? tEN('Stage material here before processing — or skip and process direct from the yard.',
-                            'Prepara material aquí antes de procesar — o sáltatelo y procesa directamente desde el patio.')
-                      : `${fmtNum(bufferBales)} ${tEN('bales', 'pacas')} · ${fmtKg(bufferWeight)} · ${buffer.length} ${tEN('items', 'elementos')}`}
+                      ? tEN('Stage material here before processing, or skip and process direct from the yard.',
+                            'Prepara material aquí antes de procesar, o sáltatelo y procesa directamente desde el patio.')
+                      : `${fmtNum(bufferBales)} ${tEN('bales', 'pacas')} · ${fmtKg(bufferWeight)} · ${buffer.length} ${buffer.length === 1 ? tEN('item', 'elemento') : tEN('items', 'elementos')}`}
                   </div>
                 </div>
               </div>
-              {buffer.length > 0 && (
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => setModal({ type: 'reject', source: 'buffer', bufferItems: buffer })}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-red-300 text-red-700 text-[13px] font-medium hover:bg-red-50 min-h-[44px]"
-                  >
-                    <Icon d={I.trash} className="w-4 h-4" />
-                    {tEN('Reject buffer', 'Rechazar búfer')}
-                  </button>
-                  <button
-                    onClick={() => setModal({ type: 'process', source: 'buffer', bufferItems: buffer })}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700 min-h-[44px]"
-                  >
-                    {tEN('Process material', 'Procesar material')}
-                    <Icon d={I.arrowR} className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
+              <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                {buffer.length > 0 && (
+                  <Fragment>
+                    <button
+                      onClick={() => setModal({ type: 'reject', source: 'buffer', bufferItems: buffer })}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-red-300 text-red-700 text-[13px] font-medium hover:bg-red-50 min-h-[44px]"
+                    >
+                      <Icon d={I.trash} className="w-4 h-4" />
+                      {tEN('Reject buffer', 'Rechazar búfer')}
+                    </button>
+                    <button
+                      onClick={() => setModal({ type: 'process', source: 'buffer', bufferItems: buffer })}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700 min-h-[44px]"
+                    >
+                      {tEN('Process material', 'Procesar material')}
+                      <Icon d={I.arrowR} className="w-4 h-4" />
+                    </button>
+                  </Fragment>
+                )}
+                <button
+                  onClick={() => setBufferVisible(false)}
+                  className="px-3 py-2.5 rounded-lg border border-neutral-10 text-neutral-80 text-[13px] font-medium hover:bg-neutral-5 min-h-[44px]"
+                >
+                  {tEN('Hide buffer', 'Ocultar búfer')}
+                </button>
+              </div>
             </div>
             {buffer.length > 0 && (
               <ul className="divide-y divide-neutral-10">
@@ -2978,11 +3137,145 @@
               </ul>
             )}
           </div>
+        ) : (
+          /* Collapsed buffer - small bar with Show buffer button */
+          <div className="rounded-xl bg-white border border-neutral-10 px-5 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-lg bg-neutral-5 flex items-center justify-center shrink-0">
+                <Icon d={I.box} className="w-5 h-5 text-neutral-60" />
+              </div>
+              <div className="text-[13px] text-neutral-60">
+                {tEN('Buffer hidden. Material is processed direct from the yard.',
+                     'Búfer oculto. El material se procesa directamente desde el patio.')}
+              </div>
+            </div>
+            <button
+              onClick={() => setBufferVisible(true)}
+              className="px-3 py-1.5 rounded-lg border border-neutral-10 text-neutral-80 text-[13px] font-medium hover:bg-neutral-5 shrink-0"
+            >
+              {tEN('Show buffer', 'Mostrar búfer')}
+            </button>
+          </div>
         )}
+
+        {/* Picking list summary - only shows when an SL has sent a list */}
+        {pickingList && pickingListSummary && (
+          <div className="rounded-xl bg-white border border-safi-200 overflow-hidden">
+            <button
+              onClick={() => setSummaryOpen(v => !v)}
+              className="w-full px-5 py-4 flex items-center gap-3 hover:bg-safi-50/40"
+              aria-expanded={summaryOpen}
+            >
+              <div className="w-9 h-9 rounded-lg bg-safi-100 flex items-center justify-center shrink-0">
+                <Icon d={I.list} className="w-5 h-5 text-safi-700" />
+              </div>
+              <div className="flex-1 min-w-0 text-left">
+                <div className="font-semibold text-neutral-100 text-base">
+                  {tEN('Picking list', 'Lista de recolección')}
+                  <span className="text-neutral-60 font-normal"> · {pickingList.name}</span>
+                </div>
+                <div className="text-[13px] text-neutral-60 mt-0.5">
+                  {tEN(
+                    `${pickingListSummary.totalLoads} loads · ${fmtNum(pickingListSummary.totalBales)} bales · ${fmtKg(pickingListSummary.totalWeight)} · ${pickingListSummary.items.length} bays · ${pickingListSummary.materials.join(', ')}`,
+                    `${pickingListSummary.totalLoads} lotes · ${fmtNum(pickingListSummary.totalBales)} pacas · ${fmtKg(pickingListSummary.totalWeight)} · ${pickingListSummary.items.length} filas · ${pickingListSummary.materials.join(', ')}`
+                  )}
+                </div>
+              </div>
+              <Icon d={summaryOpen ? I.chevron : I.chevronR} className="w-5 h-5 text-neutral-60 shrink-0" />
+            </button>
+            {summaryOpen && (
+              <ul className="border-t border-neutral-10 divide-y divide-neutral-10">
+                {pickingListSummary.items.map(item => (
+                  <li key={`${item.zoneId}|${item.bayId}`} className="px-5 py-3 flex items-center gap-3 min-h-[56px]">
+                    <button
+                      onClick={() => {
+                        setOpenZones(s => ({ ...s, [item.zoneId]: true }));
+                        setBayFilter(new Set([`${item.zoneId}|${item.bayId}`]));
+                        // Scroll the bay into view after a tick
+                        setTimeout(() => {
+                          const el = document.getElementById(`merged-bay-${item.zoneId}-${item.bayId}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 50);
+                      }}
+                      className="flex-1 min-w-0 text-left hover:underline focus:outline-none focus:ring-2 focus:ring-safi-600 rounded"
+                    >
+                      <div className="text-[15px] font-medium text-neutral-100">
+                        {tEN(`Zone ${item.zoneId} · Bay ${item.bayId}`, `Zona ${item.zoneId} · Fila ${item.bayId}`)}
+                      </div>
+                      <div className="text-[13px] text-neutral-60 mt-0.5">
+                        {item.loads.length} {item.loads.length === 1 ? tEN('load', 'lote') : tEN('loads', 'lotes')} · {fmtNum(item.bales)} {tEN('bales', 'pacas')} · {fmtKg(item.weight)}
+                        {' · '}
+                        {Array.from(new Set(item.loads.map(l => l.material))).join(', ')}
+                      </div>
+                    </button>
+                    <span className="text-[13px] text-safi-700 font-medium shrink-0">
+                      {tEN('Go to bay', 'Ir a fila')} →
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {/* Filter row - Bay + Material multi-select + picking-list toggle */}
+        <div className="flex flex-wrap items-center gap-3">
+          <PickerFilterDropdown
+            label={tEN('Bays', 'Filas')}
+            value={bayFilter}
+            onChange={setBayFilter}
+            options={bayOptions}
+            placeholder={tEN('All bays', 'Todas las filas')}
+            lang={lang}
+          />
+          <PickerFilterDropdown
+            label={tEN('Material', 'Material')}
+            value={materialFilter}
+            onChange={setMaterialFilter}
+            options={materialOptions}
+            placeholder={tEN('All materials', 'Todos los materiales')}
+            lang={lang}
+          />
+          {pickingList && (
+            <button
+              onClick={() => setPickingListOnly(v => !v)}
+              className={
+                'inline-flex items-center gap-2 px-4 py-3 rounded-lg border min-h-[52px] text-[15px] font-medium ' +
+                (pickingListOnly
+                  ? 'border-safi-600 bg-safi-50 text-safi-700'
+                  : 'border-neutral-10 bg-white text-neutral-80 hover:bg-neutral-5')
+              }
+              aria-pressed={pickingListOnly}
+            >
+              <Icon d={pickingListOnly ? I.check : I.list} className="w-5 h-5" />
+              {pickingListOnly
+                ? tEN('Showing picking list only', 'Mostrando solo lista')
+                : tEN('Show picking list only', 'Mostrar solo lista')}
+            </button>
+          )}
+          {anyFilterActive && (
+            <button
+              onClick={clearAllFilters}
+              className="inline-flex items-center px-4 py-3 rounded-lg text-safi-700 text-[15px] font-medium hover:underline min-h-[52px]"
+            >
+              {tEN('Clear filters', 'Borrar filtros')}
+            </button>
+          )}
+        </div>
 
         {/* Zones / bays */}
         <div className="space-y-3">
-          {YARD.map(zone => {
+          {visibleZones.length === 0 && (
+            <div className="rounded-xl bg-white border border-neutral-10 px-5 py-10 text-center">
+              <div className="text-[15px] font-medium text-neutral-100">
+                {tEN('No bays match the current filters.', 'Ninguna fila coincide con los filtros actuales.')}
+              </div>
+              <button onClick={clearAllFilters} className="mt-2 text-[15px] text-safi-700 font-medium hover:underline">
+                {tEN('Clear filters', 'Borrar filtros')}
+              </button>
+            </div>
+          )}
+          {visibleZones.map(({ zone, bays: filteredBays }) => {
             const open = !!openZones[zone.id];
             const accessibleBays = zone.bays.filter(b => b.accessible);
             const zoneBales = accessibleBays.reduce((a, b) => a + bayRemaining(zone, b).bales, 0);
@@ -3008,7 +3301,7 @@
 
                 {open && (
                   <div className="border-t border-neutral-10 px-5 py-4 space-y-3">
-                    {zone.bays.filter(b => b.loads.length > 0).slice(0, 6).map(bay => {
+                    {filteredBays.filter(b => b.loads.length > 0).map(bay => {
                       const rem = bayRemaining(zone, bay);
                       const isRecommended = bay.loads.some(l => recommendedLoads.has(l.id));
                       const splits = splitForBay(bay);
@@ -3016,9 +3309,10 @@
                       return (
                         <div
                           key={bay.id}
+                          id={`merged-bay-${zone.id}-${bay.id}`}
                           className={
                             'rounded-lg border ' +
-                            (bay.accessible ? 'border-neutral-10' : 'border-neutral-10 bg-neutral-5')
+                            (isRecommended ? 'border-safi-300 bg-safi-50/30' : (bay.accessible ? 'border-neutral-10' : 'border-neutral-10 bg-neutral-5'))
                           }
                         >
                           <div className="px-4 py-3 sm:px-5 sm:py-4 flex flex-wrap items-center gap-x-4 gap-y-3">
@@ -3047,15 +3341,16 @@
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[13px] text-neutral-60 mt-1">
-                                {rem.loads === 1
-                                  ? `${bay.loads[0].supplier} · #${bay.loads[0].lot}`
-                                  : tEN(`${rem.loads} loads · ${fmtKg(rem.weight)} total`,
-                                        `${rem.loads} lotes · ${fmtKg(rem.weight)} total`)}
-                              </div>
+                              {/* Per-load detail: supplier · order ref · weight · material */}
+                              {bay.accessible && bay.loads.length > 0 && (
+                                <div className="text-[13px] text-neutral-60 mt-1">
+                                  {tEN(`${rem.loads} ${rem.loads === 1 ? 'load' : 'loads'} · ${fmtKg(rem.weight)} total`,
+                                       `${rem.loads} ${rem.loads === 1 ? 'lote' : 'lotes'} · ${fmtKg(rem.weight)} total`)}
+                                </div>
+                              )}
                             </div>
 
-                            {/* Actions — tablet-first big buttons, wrap below identity on narrow */}
+                            {/* Actions - tablet-first big buttons, wrap below identity on narrow */}
                             <div className="flex gap-2 flex-wrap shrink-0 w-full md:w-auto">
                               <button
                                 disabled={!canAct}
@@ -3101,6 +3396,41 @@
                             </div>
                           </div>
 
+                          {/* Per-load detail panel - supplier, order ref, weight, material */}
+                          {bay.accessible && bay.loads.length > 0 && (
+                            <div className="px-4 sm:px-5 pb-3 pt-1 -mt-1">
+                              <div className="rounded-lg border border-neutral-10 bg-neutral-5/40">
+                                <ul className="divide-y divide-neutral-10">
+                                  {bay.loads.map(load => {
+                                    const onList = recommendedLoads.has(load.id);
+                                    return (
+                                      <li key={load.id} className="px-3 py-2.5 flex items-center gap-3 flex-wrap min-h-[44px]">
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="text-[13px] font-medium text-neutral-100">{load.supplier}</span>
+                                            <span className="text-[13px] text-neutral-60">{tEN('Order ref', 'Ref. pedido')} <span className="font-mono">#{load.lot}</span></span>
+                                            {onList && (
+                                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-medium whitespace-nowrap">
+                                                <Icon d={I.check} className="w-3.5 h-3.5" />
+                                                {tEN('On picking list', 'En lista de recolección')}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-[13px] text-neutral-60 mt-0.5">
+                                            {fmtNum(load.bales)} {tEN('bales', 'pacas')} · {fmtKg(load.weight)}
+                                          </div>
+                                        </div>
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-neutral-10 text-[13px] font-medium text-neutral-80 whitespace-nowrap">
+                                          {load.material}
+                                        </span>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Split-load warning at bay level (collapsible-style summary) */}
                           {splits.length > 0 && bay.accessible && (
                             <div className="px-4 sm:px-5 pb-3 -mt-1">
@@ -3130,12 +3460,6 @@
                         </div>
                       );
                     })}
-                    {zone.bays.filter(b => b.loads.length > 0).length > 6 && (
-                      <div className="text-center text-[13px] text-neutral-60 pt-1">
-                        {tEN(`+${zone.bays.filter(b => b.loads.length > 0).length - 6} more bays in this zone`,
-                             `+${zone.bays.filter(b => b.loads.length > 0).length - 6} filas más en esta zona`)}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -3174,19 +3498,32 @@
               : (modal.bufferItems?.reduce((a, b) => a + b.weightPerBale * b.bales, 0) / Math.max(1, modal.bufferItems?.reduce((a, b) => a + b.bales, 0)))}
             splits={modal.source === 'bay' ? splitForBay(modal.bay) : []}
             lang={lang}
+            weightMode={weightMode}
+            setWeightMode={setWeightMode}
             onCancel={() => setModal(null)}
             onConfirm={({ bales, weight }) => {
               if (modal.source === 'buffer') {
-                // Process across buffer items (oldest first) up to `bales`
-                let remaining = bales;
-                modal.bufferItems.forEach(it => {
-                  if (remaining <= 0) return;
-                  const take = Math.min(it.bales, remaining);
-                  remaining -= take;
+                // Decrement bales from buffer items oldest-first; only remove items
+                // when their bale count reaches zero. Fixes bug where processing 1
+                // bale from a 45-bale buffer item wiped the whole thing.
+                setBuffer(prev => {
+                  let toTake = bales;
+                  const next = prev.map(it => {
+                    if (toTake <= 0) return it;
+                    const take = Math.min(it.bales, toTake);
+                    toTake -= take;
+                    return { ...it, bales: it.bales - take };
+                  }).filter(it => it.bales > 0);
+                  return next;
                 });
-                doProcess({ source: 'buffer', bales, weight });
-                // Clear buffer items proportionally (simplified for prototype)
-                setBuffer([]);
+                // Record processed entry (doProcess without bufferItem only logs history)
+                const pid = `merged-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                setProcessed(prev => ({
+                  ...prev,
+                  [pid]: { bales, weight, at: new Date().toISOString(), partial: true, source: 'Buffer' }
+                }));
+                setModal(null);
+                setToast?.({ message: tEN(`Processed ${bales} bales (${fmtKg(weight)})`, `Procesadas ${bales} pacas (${fmtKg(weight)})`), kind: 'success' });
               } else {
                 doProcess({ source: 'bay', zone: modal.zone, bay: modal.bay, bales, weight });
               }
@@ -3209,7 +3546,18 @@
                 message: tEN(`Rejected ${bales} bales (${reason})`, `Rechazadas ${bales} pacas (${reason})`),
                 kind: 'success'
               });
-              if (modal.source === 'buffer') setBuffer([]);
+              if (modal.source === 'buffer') {
+                // Same partial-decrement logic for reject (was also wiping the whole buffer)
+                setBuffer(prev => {
+                  let toTake = bales;
+                  return prev.map(it => {
+                    if (toTake <= 0) return it;
+                    const take = Math.min(it.bales, toTake);
+                    toTake -= take;
+                    return { ...it, bales: it.bales - take };
+                  }).filter(it => it.bales > 0);
+                });
+              }
             }}
           />
         )}
@@ -3292,7 +3640,7 @@
                 <span key={i}>
                   <span className="font-medium">+{loc.bales} {tEN('bales', 'pacas')} {tEN('in', 'en')} Bay {loc.bayId}</span>
                   {!loc.accessible && (
-                    <span> ({tEN('blocked by Bay', 'bloqueada por Fila')} {loc.blockedBy} — {tEN('not accessible', 'no accesible')})</span>
+                    <span> ({tEN('blocked by Bay', 'bloqueada por Fila')} {loc.blockedBy} - {tEN('not accessible', 'no accesible')})</span>
                   )}
                   {i < locations.length - 1 ? ', ' : ''}
                 </span>
@@ -3358,7 +3706,7 @@
     );
   }
 
-  function ProcessMaterialModal({ source, zone, bay, bufferItems, remaining, avgWeight, splits, lang, onCancel, onConfirm }) {
+  function ProcessMaterialModal({ source, zone, bay, bufferItems, remaining, avgWeight, splits, lang, weightMode, setWeightMode, onCancel, onConfirm }) {
     const max = source === 'buffer'
       ? bufferItems.reduce((a, b) => a + b.bales, 0)
       : remaining.bales;
@@ -3367,7 +3715,10 @@
       : remaining.weight;
     const tEN = (en, es) => lang === 'es' ? es : en;
     const [bales, setBales] = useState(Math.min(max, 1));
-    const [mode, setMode] = useState('auto'); // 'auto' = avg weight, 'manual' = enter per-bale weight
+    // Weight mode is hoisted to the parent so the FO's last choice (auto vs manual)
+    // persists across modal opens.
+    const mode = weightMode;
+    const setMode = setWeightMode;
     const [manualWeight, setManualWeight] = useState('');
     const assumedWeight = Math.round(bales * avgWeight);
     const manualWeightNum = Number(manualWeight) || 0;
