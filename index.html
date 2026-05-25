@@ -317,18 +317,15 @@
       ]
     },
     {
-      // Zone B - LIFO yard. 5 bays. Each bay has 8-12 loads stacked 6-high.
+      // Zone B - LIFO yard. 5 bays. Each bay has 8-12 loads of 20-25 bales each.
       // Loads are stored in `loads` array in PICK ORDER: index 0 = front/accessible
       // (most recently stacked, LIFO), subsequent indexes are blocked until the
-      // load in front of them is cleared. Each load represents one 6-bale "stack".
+      // load in front of them is cleared.
       id: 'B',
       name: 'Zone B',
       esName: 'Zone B',
       inventoryRule: 'LIFO',
       bays: (() => {
-        // Build 5 LIFO bays. Each bay has 8-12 loads of 6 bales each.
-        // We re-use a small pool of suppliers so the same lot can appear across bays
-        // (matches Kate's reference: Load 123 spans Bay 1 + Bay 2, etc.)
         const layout = [
           { id: '1', loadIds: ['B-L123', 'B-L456', 'B-L321', 'B-L654', 'B-L987', 'B-L741', 'B-L852', 'B-L963', 'B-L159'] },
           { id: '2', loadIds: ['B-L123', 'B-L456', 'B-L357', 'B-L468', 'B-L579', 'B-L680', 'B-L791', 'B-L802', 'B-L913', 'B-L024'] },
@@ -340,17 +337,18 @@
         return layout.map(({ id, loadIds }) => ({
           id, name: `Bay ${id}`, esName: `Bay ${id}`, accessible: true,
           loads: loadIds.map((lot, i) => {
-            // Deterministic AI results per lot for realism
             const seed = lot.charCodeAt(lot.length - 1);
             const tp = 90 + (seed % 8);
             const cp = Math.max(1, Math.round((100 - tp) * 0.65 * 10) / 10);
             const ct = Math.max(0.2, Math.round((100 - tp - cp) * 10) / 10);
             const analysed = (seed + i) % 4 !== 0;
+            // 20-25 bales per load, ~640 kg/bale (typical PET bale weight) for realism
+            const bales = 20 + ((seed * 3 + i * 5) % 6); // 20-25
             return L(
               suppliers[(seed + i) % suppliers.length],
               `LOT-${lot}`,
-              6 * (640 + (seed * 13 + i * 7) % 80), // ~3,840-4,320 kg per stack of 6
-              6,                                     // 6 bales per stack (LIFO 6-high)
+              bales * (620 + (seed * 7 + i * 3) % 80), // 620-700 kg/bale → ~12,400-17,500 kg/load
+              bales,
               analysed ? r(tp, cp, ct) : null
             );
           })
@@ -1193,6 +1191,7 @@
                 {bay.loads.map(load => {
                   const key = `${zone.id}|${bay.id}|${load.id}`;
                   const accessible = !isCreating || bay.accessible;
+                  const access = accessibilityOf(zone, bay, load);
                   let onPickingList = false;
                   if (!isCreating && pickingList) {
                     const entry = pickingList.loads.find(l => l.loadId === load.id);
@@ -1206,6 +1205,7 @@
                       load={load}
                       isCreating={isCreating}
                       accessible={accessible}
+                      isAccessibleLoad={access.status === 'accessible'}
                       isSelected={selectionBales[key] != null}
                       onToggle={() => toggleLoad(key)}
                       onPickingList={onPickingList}
@@ -1238,7 +1238,7 @@
   //   - Create mode: clicking toggles selection.
   //   - Three AI result chips inline next to the order ref. Shown only if analysed.
   //   - "On picking list" indicator when this load is on the active picking list (default mode only).
-  const LoadRow = ({ load, isCreating, accessible, isSelected, onToggle, onPickingList }) => {
+  const LoadRow = ({ load, isCreating, accessible, isSelected, onToggle, onPickingList, isAccessibleLoad }) => {
     const openDetails = (e) => {
       e.stopPropagation();
       // Conceptual placeholder - would normally navigate to a load details page.
@@ -1287,6 +1287,12 @@
           </div>
           <div className="text-[13px] text-neutral-60 mt-1 flex items-center gap-2 flex-wrap">
             <span>{fmtNum(load.bales)} bales · {fmtKg(load.weight)}</span>
+            {isAccessibleLoad && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200">
+                <Icon d={I.check} className="w-3 h-3" />
+                Accessible to FO
+              </span>
+            )}
             {onPickingList && (
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium bg-safi-100 text-safi-700">
                 <Icon d={I.list} className="w-3 h-3" />
@@ -1355,7 +1361,7 @@
   // ----------------------------------------------------------------------------
   // APP SHELL - top nav + sidebar
   // ----------------------------------------------------------------------------
-  function AppShell({ lang, setLang, children }) {
+  function AppShell({ lang, setLang, bufferEnabled, setBufferEnabled, children }) {
     const NavItem = ({ icon, label, active }) => (
       <button
         className={
@@ -1401,6 +1407,35 @@
                 Español
               </button>
             </div>
+            {/* Buffer area plant setting - sibling style to the language switch */}
+            {typeof setBufferEnabled === 'function' && (
+              <div
+                className="flex items-center gap-1 bg-slate-100 rounded-full p-1 text-[13px]"
+                role="group"
+                aria-label="Buffer area"
+              >
+                <button
+                  onClick={() => setBufferEnabled(true)}
+                  className={
+                    'px-3 py-1.5 rounded-full font-medium transition ' +
+                    (bufferEnabled ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
+                  }
+                  aria-pressed={bufferEnabled === true}
+                >
+                  {lang === 'es' ? 'Búfer' : 'Buffer'}
+                </button>
+                <button
+                  onClick={() => setBufferEnabled(false)}
+                  className={
+                    'px-3 py-1.5 rounded-full font-medium transition ' +
+                    (!bufferEnabled ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
+                  }
+                  aria-pressed={bufferEnabled === false}
+                >
+                  {lang === 'es' ? 'Sin búfer' : 'No buffer'}
+                </button>
+              </div>
+            )}
             <div className="relative">
               <Icon d={I.search} className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -1489,31 +1524,8 @@
 
     // Buffer-enabled plant setting (separate from the per-session Hide/Show toggle on the
     // buffer card). Disabling here removes buffer functionality entirely from Picker (load/bale).
+    // Lives in the global header toggle next to the language switch.
     const [bufferEnabled, setBufferEnabled] = useState(true);
-
-    // Shift timer + processed counter for the page header
-    const shiftStartRef = useRef(Date.now());
-    const [, forceTick] = useState(0);
-    useEffect(() => {
-      const id = setInterval(() => forceTick(t => t + 1), 1000);
-      return () => clearInterval(id);
-    }, []);
-    const elapsedMs = Date.now() - shiftStartRef.current;
-    const elapsedStr = (() => {
-      const total = Math.floor(elapsedMs / 1000);
-      const h = String(Math.floor(total / 3600)).padStart(2, '0');
-      const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
-      const s = String(total % 60).padStart(2, '0');
-      return `${h}:${m}:${s}`;
-    })();
-    // Sum of all processed records this session
-    const processedTotals = useMemo(() => {
-      const entries = Object.values(processed);
-      const bales = entries.reduce((a, p) => a + (p.bales || 0), 0);
-      const weight = entries.reduce((a, p) => a + (p.weight || 0), 0);
-      const loads = new Set(entries.map(p => p.loadId).filter(Boolean)).size;
-      return { bales, weight, loads, actions: entries.length };
-    }, [processed]);
 
     // Loads remaining to pick (for Picker tab badge)
     const loadsRemaining = pickingList
@@ -1522,7 +1534,7 @@
 
     return (
       <LangContext.Provider value={lang}>
-      <AppShell lang={lang} setLang={setLang}>
+      <AppShell lang={lang} setLang={setLang} bufferEnabled={bufferEnabled} setBufferEnabled={setBufferEnabled}>
         <div className="px-8 py-6">
           {/* Page heading swaps when SL enters Create picking list mode */}
           {slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout') ? (
@@ -1553,36 +1565,10 @@
               </div>
             </div>
           ) : (
-            <div className="mb-4 flex items-end justify-between gap-6 flex-wrap">
+            <div className="mb-4">
               <h1 className="text-3xl font-bold tracking-tight text-neutral-100">
                 {lang === 'es' ? 'Producción' : 'Production'}
               </h1>
-              {/* Shift + processed counter + buffer-enabled setting */}
-              <div className="flex items-center gap-4 flex-wrap">
-                <div className="rounded-lg bg-white border border-neutral-10 px-4 py-2 flex items-center gap-4">
-                  <div>
-                    <div className="text-[13px] text-neutral-60">{lang === 'es' ? 'Turno' : 'Shift'}</div>
-                    <div className="text-[15px] font-semibold text-neutral-100 font-mono tabular-nums">{elapsedStr}</div>
-                  </div>
-                  <div className="w-px h-8 bg-neutral-10" />
-                  <div>
-                    <div className="text-[13px] text-neutral-60">{lang === 'es' ? 'Procesado' : 'Processed'}</div>
-                    <div className="text-[15px] font-semibold text-neutral-100">
-                      {fmtNum(processedTotals.bales)} {lang === 'es' ? 'pacas' : 'bales'}
-                      <span className="text-neutral-60 font-normal"> · {fmtKg(processedTotals.weight)}</span>
-                    </div>
-                  </div>
-                </div>
-                <label className="inline-flex items-center gap-2 text-[13px] text-neutral-80 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={bufferEnabled}
-                    onChange={e => setBufferEnabled(e.target.checked)}
-                    className="w-4 h-4 rounded text-safi-600 focus:ring-safi-500"
-                  />
-                  <span>{lang === 'es' ? 'Búfer habilitado' : 'Buffer area enabled'}</span>
-                </label>
-              </div>
             </div>
           )}
 
@@ -2199,12 +2185,14 @@
                                 <div className="bg-white">
                                   {visibleLoads.map(load => {
                                     const key = `${zone.id}|${bay.id}|${load.id}`;
+                                    const access = accessibilityOf(zone, bay, load);
                                     return (
                                       <div key={load.id} className="border-b border-neutral-10/60 last:border-b-0">
                                         <LoadRow
                                           load={load}
                                           isCreating={isCreating}
                                           accessible={!isCreating || bay.accessible}
+                                          isAccessibleLoad={access.status === 'accessible'}
                                           isSelected={selected.has(key)}
                                           onToggle={() => toggleLoad(key, bay.accessible)}
                                           onPickingList={(() => {
@@ -2304,12 +2292,14 @@
                               <div className="border-t border-neutral-10 divide-y divide-neutral-10">
                                 {bay.loads.map(load => {
                                   const key = `${zone.id}|${bay.id}|${load.id}`;
+                                  const access = accessibilityOf(zone, bay, load);
                                   return (
                                     <LoadRow
                                       key={load.id}
                                       load={load}
                                       isCreating={isCreating}
                                       accessible={!isCreating || bay.accessible}
+                                      isAccessibleLoad={access.status === 'accessible'}
                                       isSelected={selected.has(key)}
                                       onToggle={() => toggleLoad(key, bay.accessible)}
                                       onPickingList={!isCreating && pickingList && pickingList.loads.some(l => l.loadId === load.id)}
@@ -3004,6 +2994,15 @@
     const [pickingListOnly, setPickingListOnly] = useState(false);
     // Summary card collapsed by default to save screen real estate
     const [summaryOpen, setSummaryOpen] = useState(true);
+    // Bays for which the FO has chosen to show blocked loads ("Show N more loads")
+    const [expandedBlocked, setExpandedBlocked] = useState(new Set());
+    const toggleBlockedExpander = (key) => {
+      setExpandedBlocked(prev => {
+        const next = new Set(prev);
+        next.has(key) ? next.delete(key) : next.add(key);
+        return next;
+      });
+    };
 
     const tEN = (en, es) => lang === 'es' ? es : en;
 
@@ -3397,9 +3396,10 @@
             const zoneLoads = accessibleBays.reduce((a, b) => a + b.loads.length, 0);
             return (
               <div key={zone.id} className="bg-white border border-neutral-10 rounded-xl">
+                {/* Sticky zone header - stays at top of viewport while scrolling so FOs always know which zone they're in */}
                 <button
                   onClick={() => setOpenZones(s => ({ ...s, [zone.id]: !s[zone.id] }))}
-                  className="w-full flex items-center justify-between px-5 py-4 hover:bg-neutral-5 rounded-xl"
+                  className="w-full flex items-center justify-between px-5 py-4 hover:bg-neutral-5 rounded-t-xl bg-white sticky top-0 z-20 border-b border-neutral-10"
                   aria-expanded={open}
                 >
                   <div className="flex items-center gap-3">
@@ -3449,21 +3449,10 @@
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-50 text-safi-700 text-[13px] font-medium whitespace-nowrap">
                                   {fmtNum(rem.bales)} {tEN('bales', 'pacas')}
                                 </span>
-                                {isRecommended && (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-medium whitespace-nowrap">
-                                    {tEN('Recommended', 'Recomendado')}
-                                  </span>
-                                )}
                                 {!bay.accessible && (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[13px] font-medium whitespace-nowrap">
                                     <Icon d={I.lock} className="w-3.5 h-3.5" />
                                     {tEN(`Blocked by Bay ${bay.blockedBy}`, `Bloqueada por Fila ${bay.blockedBy}`)}
-                                  </span>
-                                )}
-                                {splits.length > 0 && bay.accessible && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[13px] font-medium whitespace-nowrap">
-                                    <Icon d={I.info} className="w-3.5 h-3.5" />
-                                    {tEN('Split load', 'Lote dividido')}
                                   </span>
                                 )}
                               </div>
@@ -3476,145 +3465,131 @@
                             </div>
                           </div>
 
-                          {/* Per-load detail panel - each load gets its own actions + accessibility status */}
-                          {bay.accessible && bay.loads.length > 0 && (
-                            <div className="px-4 sm:px-5 pb-3 pt-1 -mt-1">
-                              <ul className="rounded-lg border border-neutral-10 bg-white divide-y divide-neutral-10 overflow-hidden">
-                                {bay.loads.map((load, idx) => {
-                                  const access = accessibilityOf(zone, bay, load, recommendedLoads);
-                                  const onList = recommendedLoads.has(load.id);
-                                  const canAct = access.status === 'accessible' && access.accessibleBales > 0;
-                                  // Faint background for blocked loads so they recede
-                                  const bgCls = canAct ? 'bg-white' : 'bg-neutral-5/60';
-                                  return (
-                                    <li key={`${load.id}-${idx}`} className={'px-3 sm:px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2 ' + bgCls}>
-                                      {/* Pick-order pill */}
-                                      <span
-                                        className={
-                                          'shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[13px] font-semibold ' +
-                                          (canAct ? 'bg-safi-600 text-white' : 'bg-neutral-10 text-neutral-60')
-                                        }
-                                        title={tEN(`Pick position ${idx + 1}`, `Posición de recogida ${idx + 1}`)}
-                                      >
-                                        {idx + 1}
-                                      </span>
-                                      {/* Identity */}
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                          <span className="text-[13px] font-medium text-neutral-100">{load.supplier}</span>
-                                          <span className="text-[13px] text-neutral-60">{tEN('Order ref', 'Ref. pedido')} <span className="font-mono">#{load.lot}</span></span>
-                                          <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-neutral-10 text-[13px] font-medium text-neutral-80 whitespace-nowrap">
-                                            {load.material}
-                                          </span>
-                                          {onList && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-medium whitespace-nowrap">
-                                              <Icon d={I.check} className="w-3.5 h-3.5" />
-                                              {tEN('On picking list', 'En lista de recolección')}
-                                            </span>
-                                          )}
-                                          {/* Accessibility chip */}
-                                          {access.status === 'accessible' && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[13px] font-medium whitespace-nowrap">
-                                              <Icon d={I.check} className="w-3.5 h-3.5" />
-                                              {access.accessibleBales < load.bales
-                                                ? tEN(`Accessible (${access.accessibleBales}/${load.bales} bales)`, `Accesible (${access.accessibleBales}/${load.bales} pacas)`)
-                                                : tEN(`Accessible (${load.bales} bales)`, `Accesible (${load.bales} pacas)`)}
-                                            </span>
-                                          )}
-                                          {access.status === 'blocked' && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[13px] font-medium whitespace-nowrap">
-                                              <Icon d={I.lock} className="w-3.5 h-3.5" />
-                                              {tEN(`Blocked by #${access.blockedBy?.lot}`, `Bloqueada por #${access.blockedBy?.lot}`)}
-                                            </span>
-                                          )}
-                                          {access.status === 'blocked-clearable-via-list' && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 text-[13px] font-medium whitespace-nowrap">
-                                              <Icon d={I.info} className="w-3.5 h-3.5" />
-                                              {tEN('Unblocks after list', 'Se desbloquea con lista')}
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="text-[13px] text-neutral-60 mt-0.5">
-                                          {fmtNum(load.bales)} {tEN('bales', 'pacas')} · {fmtKg(load.weight)}
-                                        </div>
-                                      </div>
-                                      {/* Per-load actions - only on accessible loads */}
-                                      <div className="flex gap-1.5 flex-wrap shrink-0 w-full sm:w-auto">
-                                        <button
-                                          disabled={!canAct}
-                                          onClick={() => setModal({ type: 'reject', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
-                                          className={
-                                            'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
-                                            (canAct
-                                              ? 'border-red-300 text-red-700 hover:bg-red-50'
-                                              : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
-                                          }
-                                        >
-                                          <Icon d={I.trash} className="w-4 h-4" />
-                                          {tEN('Reject', 'Rechazar')}
-                                        </button>
-                                        {bufferVisible && (
-                                          <button
-                                            disabled={!canAct}
-                                            onClick={() => setModal({ type: 'move', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
-                                            className={
-                                              'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
-                                              (canAct
-                                                ? 'border-neutral-10 text-neutral-100 hover:bg-neutral-5'
-                                                : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
-                                            }
-                                          >
-                                            <Icon d={I.arrowR} className="w-4 h-4" />
-                                            {tEN('Buffer', 'Búfer')}
-                                          </button>
-                                        )}
-                                        <button
-                                          disabled={!canAct}
-                                          onClick={() => setModal({ type: 'process', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
-                                          className={
-                                            'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
-                                            (canAct
-                                              ? 'bg-safi-600 text-white hover:bg-safi-700'
-                                              : 'bg-neutral-10 text-neutral-40 cursor-not-allowed')
-                                          }
-                                        >
-                                          {tEN('Process', 'Procesar')}
-                                          <Icon d={I.arrowR} className="w-4 h-4" />
-                                        </button>
-                                      </div>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            </div>
-                          )}
+                          {/* Per-load detail panel - accessible loads visible, blocked under expander */}
+                          {bay.accessible && bay.loads.length > 0 && (() => {
+                            const bayKey = `${zone.id}:${bay.id}`;
+                            const expanded = expandedBlocked.has(bayKey);
+                            // Loads with accessibility info, in pick order
+                            const annotated = bay.loads.map(load => ({
+                              load,
+                              access: accessibilityOf(zone, bay, load, recommendedLoads)
+                            }));
+                            const accessibleRows = annotated.filter(a => a.access.status === 'accessible');
+                            const blockedRows = annotated.filter(a => a.access.status !== 'accessible');
+                            const visibleRows = expanded ? annotated : accessibleRows;
 
-                          {/* Split-load warning at bay level (collapsible-style summary) */}
-                          {splits.length > 0 && bay.accessible && (
-                            <div className="px-4 sm:px-5 pb-3 -mt-1">
-                              <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[13px] text-amber-900 flex items-start gap-2">
-                                <Icon d={I.info} className="w-4 h-4 mt-0.5 shrink-0" />
-                                <div>
-                                  {splits.map(({ load, locations }) => (
-                                    <div key={load.id}>
-                                      <span className="font-mono font-semibold">{load.lot}</span>{' '}
-                                      {tEN('also has', 'también tiene')}{' '}
-                                      {locations.map((loc, i) => (
-                                        <span key={i}>
-                                          <span className="font-medium">{loc.bales} {tEN('bales', 'pacas')} {tEN('in', 'en')} Bay {loc.bayId}</span>
-                                          {!loc.accessible && (
-                                            <span className="text-amber-800"> ({tEN('blocked by Bay', 'bloqueada por Fila')} {loc.blockedBy})</span>
-                                          )}
-                                          {i < locations.length - 1 ? ', ' : ''}
+                            const renderRow = ({ load, access }) => {
+                              const onList = recommendedLoads.has(load.id);
+                              const canAct = access.status === 'accessible' && access.accessibleBales > 0;
+                              const bgCls = canAct ? 'bg-white' : 'bg-neutral-5/60';
+                              return (
+                                <li key={load.id} className={'px-3 sm:px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2 ' + bgCls}>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-[13px] font-medium text-neutral-100">{load.supplier}</span>
+                                      <span className="text-[13px] text-neutral-60">{tEN('Order ref', 'Ref. pedido')} <span className="font-mono">#{load.lot}</span></span>
+                                      {onList && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-medium whitespace-nowrap">
+                                          <Icon d={I.check} className="w-3.5 h-3.5" />
+                                          {tEN('On picking list', 'En lista de recolección')}
                                         </span>
-                                      ))}
-                                      .
+                                      )}
+                                      {access.status === 'accessible' && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[13px] font-medium whitespace-nowrap">
+                                          <Icon d={I.check} className="w-3.5 h-3.5" />
+                                          {access.accessibleBales < load.bales
+                                            ? tEN(`Accessible (${access.accessibleBales}/${load.bales} bales)`, `Accesible (${access.accessibleBales}/${load.bales} pacas)`)
+                                            : tEN(`Accessible (${load.bales} bales)`, `Accesible (${load.bales} pacas)`)}
+                                        </span>
+                                      )}
+                                      {access.status === 'blocked' && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[13px] font-medium whitespace-nowrap">
+                                          <Icon d={I.lock} className="w-3.5 h-3.5" />
+                                          {tEN(`Blocked by #${access.blockedBy?.lot}`, `Bloqueada por #${access.blockedBy?.lot}`)}
+                                        </span>
+                                      )}
+                                      {access.status === 'blocked-clearable-via-list' && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 text-[13px] font-medium whitespace-nowrap">
+                                          <Icon d={I.info} className="w-3.5 h-3.5" />
+                                          {tEN('Unblocks after list', 'Se desbloquea con lista')}
+                                        </span>
+                                      )}
                                     </div>
-                                  ))}
-                                </div>
+                                    <div className="text-[13px] text-neutral-60 mt-0.5">
+                                      {fmtNum(load.bales)} {tEN('bales', 'pacas')} · {fmtKg(load.weight)}
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-1.5 flex-wrap shrink-0 w-full sm:w-auto">
+                                    <button
+                                      disabled={!canAct}
+                                      onClick={() => setModal({ type: 'reject', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
+                                      className={
+                                        'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
+                                        (canAct
+                                          ? 'border-red-300 text-red-700 hover:bg-red-50'
+                                          : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
+                                      }
+                                    >
+                                      <Icon d={I.trash} className="w-4 h-4" />
+                                      {tEN('Reject', 'Rechazar')}
+                                    </button>
+                                    {bufferVisible && (
+                                      <button
+                                        disabled={!canAct}
+                                        onClick={() => setModal({ type: 'move', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
+                                        className={
+                                          'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
+                                          (canAct
+                                            ? 'border-neutral-10 text-neutral-100 hover:bg-neutral-5'
+                                            : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
+                                        }
+                                      >
+                                        <Icon d={I.arrowR} className="w-4 h-4" />
+                                        {tEN('Buffer', 'Búfer')}
+                                      </button>
+                                    )}
+                                    <button
+                                      disabled={!canAct}
+                                      onClick={() => setModal({ type: 'process', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
+                                      className={
+                                        'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
+                                        (canAct
+                                          ? 'bg-safi-600 text-white hover:bg-safi-700'
+                                          : 'bg-neutral-10 text-neutral-40 cursor-not-allowed')
+                                      }
+                                    >
+                                      {tEN('Process', 'Procesar')}
+                                      <Icon d={I.arrowR} className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </li>
+                              );
+                            };
+
+                            return (
+                              <div className="px-4 sm:px-5 pb-3 pt-1 -mt-1">
+                                <ul className="rounded-lg border border-neutral-10 bg-white divide-y divide-neutral-10 overflow-hidden">
+                                  {visibleRows.map(renderRow)}
+                                  {blockedRows.length > 0 && (
+                                    <li className="px-3 sm:px-4">
+                                      <button
+                                        onClick={() => toggleBlockedExpander(bayKey)}
+                                        className="w-full py-2.5 text-[13px] font-medium text-safi-700 hover:underline flex items-center justify-center gap-1.5 min-h-[40px]"
+                                        aria-expanded={expanded}
+                                      >
+                                        <Icon d={expanded ? I.chevron : I.chevronR} className="w-4 h-4" />
+                                        {expanded
+                                          ? tEN(`Hide ${blockedRows.length} blocked ${blockedRows.length === 1 ? 'load' : 'loads'}`,
+                                                `Ocultar ${blockedRows.length} ${blockedRows.length === 1 ? 'lote bloqueado' : 'lotes bloqueados'}`)
+                                          : tEN(`Show ${blockedRows.length} more ${blockedRows.length === 1 ? 'load' : 'loads'}`,
+                                                `Mostrar ${blockedRows.length} ${blockedRows.length === 1 ? 'lote más' : 'lotes más'}`)}
+                                      </button>
+                                    </li>
+                                  )}
+                                </ul>
                               </div>
-                            </div>
-                          )}
+                            );
+                          })()}
                         </div>
                       );
                     })}
