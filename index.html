@@ -1472,6 +1472,7 @@
               <Tab id="pw-layout" label={lang === 'es' ? 'Producción y almacén (vista de plano)' : 'Production & warehouse (layout view)'} tab={tab} setTab={setTab} />
               <Tab id="picker"    label={lang === 'es' ? 'Recolección' : 'Picker'}                                       tab={tab} setTab={setTab}
                    badge={pickingList ? loadsRemaining : null} />
+              <Tab id="picker-merged" label={lang === 'es' ? 'Recolección (lote/paca)' : 'Picker (load/bale)'}             tab={tab} setTab={setTab} />
               <Tab id="history"   label={lang === 'es' ? 'Historial' : 'History'}                                         tab={tab} setTab={setTab} />
               <Tab id="rejected"  label={lang === 'es' ? 'Pacas rechazadas' : 'Rejected bales'}                           tab={tab} setTab={setTab} />
             </div>
@@ -1495,6 +1496,8 @@
                                     selectionBales={selectionBales} setSelectionBales={setSelectionBales} />}
           {tab === 'picker'  && <ForkliftPickerView pickingList={pickingList} processed={processed}
                                   setProcessed={setProcessed} setPickingList={setPickingList} setRole={setRole} />}
+          {tab === 'picker-merged' && <ForkliftPickerMergedView pickingList={pickingList} processed={processed}
+                                  setProcessed={setProcessed} lang={lang} setToast={setToast} />}
           {tab === 'history' && <HistoryView processed={processed} />}
           {tab === 'rejected' && <Placeholder title="Rejected bales" />}
         </div>
@@ -2745,6 +2748,836 @@
           <div className="mt-6 flex gap-2 justify-end">
             <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium hover:bg-slate-50">Cancel</button>
             <button onClick={() => onConfirm(bales)} className="px-4 py-2 rounded-lg bg-safi-600 text-white text-sm font-medium hover:bg-safi-700">Confirm pick</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // FORKLIFT OPERATOR VIEW — Picker (load/bale) MERGED tab
+  // ----------------------------------------------------------------------------
+  // Tablet-first FO view that unifies load-based and bale-based processing.
+  //  • Optional Buffer area (toggle hide/show) — for plants that stage material
+  //    before the line, vs. plants that process direct from the yard.
+  //  • Each bay row exposes three actions: Reject / Move to buffer / Process material.
+  //  • A single "Process material" modal supports per-bale entry (manual weight)
+  //    OR partial/whole load (assumed average weight). Same modal serves bay
+  //    and buffer sources.
+  //  • Split-load awareness: if a lot's bales are stored across multiple bays the
+  //    modal shows a warning + locations, and FO can only act on what's accessible.
+  //  • +1/+2/+3/+10 quick-add chips next to the numeric input on Move-to-buffer
+  //    and Process modals.
+  //  • Items in the buffer can be returned to their source bay (mistake undo).
+  // ============================================================================
+
+  // Demo metadata: which lots are split across multiple bays.
+  // Maps lot → list of OTHER locations (not the bay the load is recorded in).
+  const SPLIT_LOAD_DEMO = {
+    'LOT-A001': [{ zoneId: 'A', bayId: 'A8', bales: 7, accessible: false, blockedBy: 'A6' }],
+    'LOT-A005': [{ zoneId: 'B', bayId: 'B8', bales: 5, accessible: true }]
+  };
+
+  function ForkliftPickerMergedView({ pickingList, processed, setProcessed, lang, setToast }) {
+    // All zones open by default so FO sees everything on landing.
+    const initialOpen = useMemo(() => {
+      const o = {}; YARD.forEach(z => { o[z.id] = true; }); return o;
+    }, []);
+    const [openZones, setOpenZones] = useState(initialOpen);
+    const [bufferVisible, setBufferVisible] = useState(true);
+    const [buffer, setBuffer] = useState([]);     // [{ uid, loadId, supplier, lot, bales, weightPerBale, sourceZoneId, sourceBayId }]
+    const [modal, setModal] = useState(null);     // { type: 'move'|'process'|'reject', source: 'bay'|'buffer', zone?, bay?, bufferItems? }
+
+    const tEN = (en, es) => lang === 'es' ? es : en;
+
+    // Picking-list recommended lookup
+    const recommendedLoads = useMemo(() => {
+      const s = new Set();
+      pickingList?.loads.forEach(l => s.add(l.loadId));
+      return s;
+    }, [pickingList]);
+
+    // Aggregate buffer totals
+    const bufferBales = buffer.reduce((a, b) => a + b.bales, 0);
+    const bufferWeight = buffer.reduce((a, b) => a + Math.round(b.bales * b.weightPerBale), 0);
+
+    // Bay-level "remaining accessible bales", taking into account anything already
+    // moved to the buffer from this bay during the session.
+    const bufferConsumedByBay = useMemo(() => {
+      const map = {};
+      buffer.forEach(b => {
+        const key = `${b.sourceZoneId}:${b.sourceBayId}`;
+        map[key] = (map[key] || 0) + b.bales;
+      });
+      return map;
+    }, [buffer]);
+
+    const bayRemaining = (zone, bay) => {
+      if (!bay.accessible) return { bales: 0, weight: 0, loads: bay.loads.length };
+      const consumed = bufferConsumedByBay[`${zone.id}:${bay.id}`] || 0;
+      const totalBales = bay.loads.reduce((a, l) => a + l.bales, 0);
+      const totalWeight = bay.loads.reduce((a, l) => a + l.weight, 0);
+      const remBales = Math.max(0, totalBales - consumed);
+      // Approximate remaining weight by the consumed ratio
+      const remWeight = totalBales === 0 ? 0 : Math.round(totalWeight * (remBales / totalBales));
+      return { bales: remBales, weight: remWeight, loads: bay.loads.length };
+    };
+
+    // Average bale weight in a bay (used for assumed weight when not entered manually)
+    const avgBaleWeight = (bay) => {
+      const tb = bay.loads.reduce((a, l) => a + l.bales, 0);
+      const tw = bay.loads.reduce((a, l) => a + l.weight, 0);
+      return tb === 0 ? 0 : tw / tb;
+    };
+
+    // Split-load detection for a bay → array of { load, locations[] }
+    const splitForBay = (bay) =>
+      bay.loads.filter(l => SPLIT_LOAD_DEMO[l.lot]).map(l => ({ load: l, locations: SPLIT_LOAD_DEMO[l.lot] }));
+
+    // Move material from a bay into the buffer
+    const moveToBuffer = ({ zone, bay, bales, weightPerBale }) => {
+      const uid = `${zone.id}:${bay.id}:${Date.now()}`;
+      // Pick the "primary" load just for display (use the first non-processed load)
+      const primaryLoad = bay.loads[0];
+      setBuffer(prev => [...prev, {
+        uid,
+        loadId: primaryLoad?.id || `${bay.id}-mixed`,
+        supplier: primaryLoad?.supplier || tEN('Mixed material', 'Material mixto'),
+        lot: primaryLoad?.lot || '—',
+        bales,
+        weightPerBale,
+        sourceZoneId: zone.id,
+        sourceBayId: bay.id
+      }]);
+      setModal(null);
+      setToast?.({ message: tEN(`${bales} bales moved to buffer from ${bay.esName}`, `${bales} pacas movidas al búfer desde ${bay.esName}`), kind: 'success' });
+    };
+
+    // Return a single buffer item back to its source bay
+    const returnFromBuffer = (uid) => {
+      const item = buffer.find(b => b.uid === uid);
+      if (!item) return;
+      setBuffer(prev => prev.filter(b => b.uid !== uid));
+      setToast?.({ message: tEN(`Returned ${item.bales} bales to ${item.sourceBayId}`, `${item.bales} pacas devueltas a ${item.sourceBayId}`), kind: 'success' });
+    };
+
+    // Process material — used from both Bay and Buffer flows.
+    // `source` shape depends on origin; we just record bales + weight and clear.
+    const doProcess = ({ source, zone, bay, bufferItem, bales, weight }) => {
+      // Synthetic processed entry per action (id keys avoid clobbering real load history)
+      const pid = `merged-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      setProcessed(prev => ({
+        ...prev,
+        [pid]: {
+          bales, weight, at: new Date().toISOString(), partial: true,
+          source: source === 'buffer' ? 'Buffer' : `${zone.esName} · ${bay.esName}`
+        }
+      }));
+      if (source === 'buffer' && bufferItem) {
+        // Decrement / remove buffer item
+        setBuffer(prev => {
+          return prev
+            .map(b => b.uid === bufferItem.uid ? { ...b, bales: b.bales - bales } : b)
+            .filter(b => b.bales > 0);
+        });
+      }
+      setModal(null);
+      setToast?.({ message: tEN(`Processed ${bales} bales (${fmtKg(weight)})`, `Procesadas ${bales} pacas (${fmtKg(weight)})`), kind: 'success' });
+    };
+
+    return (
+      <div className="space-y-4">
+        {/* Intro banner — explains the merged tab + buffer toggle */}
+        <div className="rounded-xl p-4 bg-safi-50 border border-safi-200 flex items-start gap-3">
+          <Icon d={I.info} className="w-5 h-5 mt-0.5 text-safi-700" />
+          <div className="flex-1 text-[13px] text-neutral-80">
+            <div className="font-semibold text-neutral-100 mb-0.5">
+              {tEN('Picker (load/bale) — experimental merged flow', 'Recolección (lote/paca) — flujo combinado experimental')}
+            </div>
+            <p>
+              {tEN(
+                'One tab for forklift operators to process material at any granularity — whole load, partial load, or bale-by-bale. Use the buffer to stage material before the line, or process direct from the yard.',
+                'Una pestaña para que los operadores procesen material a cualquier nivel — lote completo, parcial o paca por paca. Usa el búfer para preparar material antes de la línea, o procesa directamente desde el patio.'
+              )}
+            </p>
+          </div>
+          <button
+            onClick={() => setBufferVisible(v => !v)}
+            className="px-3 py-1.5 rounded-lg border border-safi-300 text-safi-700 text-[13px] font-medium hover:bg-safi-100 shrink-0"
+          >
+            {bufferVisible
+              ? tEN('Hide buffer', 'Ocultar búfer')
+              : tEN('Show buffer', 'Mostrar búfer')}
+          </button>
+        </div>
+
+        {/* Buffer area */}
+        {bufferVisible && (
+          <div className="rounded-xl bg-white border border-neutral-10 overflow-hidden">
+            <div className="px-5 py-4 flex items-center justify-between border-b border-neutral-10">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-safi-100 flex items-center justify-center">
+                  <Icon d={I.box} className="w-5 h-5 text-safi-700" />
+                </div>
+                <div>
+                  <div className="font-semibold text-neutral-100 text-base">
+                    {tEN('Buffer', 'Búfer')}
+                  </div>
+                  <div className="text-[13px] text-neutral-60">
+                    {buffer.length === 0
+                      ? tEN('Stage material here before processing — or skip and process direct from the yard.',
+                            'Prepara material aquí antes de procesar — o sáltatelo y procesa directamente desde el patio.')
+                      : `${fmtNum(bufferBales)} ${tEN('bales', 'pacas')} · ${fmtKg(bufferWeight)} · ${buffer.length} ${tEN('items', 'elementos')}`}
+                  </div>
+                </div>
+              </div>
+              {buffer.length > 0 && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setModal({ type: 'reject', source: 'buffer', bufferItems: buffer })}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-red-300 text-red-700 text-[13px] font-medium hover:bg-red-50 min-h-[44px]"
+                  >
+                    <Icon d={I.trash} className="w-4 h-4" />
+                    {tEN('Reject buffer', 'Rechazar búfer')}
+                  </button>
+                  <button
+                    onClick={() => setModal({ type: 'process', source: 'buffer', bufferItems: buffer })}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700 min-h-[44px]"
+                  >
+                    {tEN('Process material', 'Procesar material')}
+                    <Icon d={I.arrowR} className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+            {buffer.length > 0 && (
+              <ul className="divide-y divide-neutral-10">
+                {buffer.map(item => (
+                  <li key={item.uid} className="px-5 py-3 flex items-center gap-3 hover:bg-neutral-5">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] text-neutral-100">
+                        <span className="font-semibold">{item.bales} {tEN('bales', 'pacas')}</span>
+                        <span className="text-neutral-60"> · {fmtKg(Math.round(item.bales * item.weightPerBale))} · </span>
+                        <span className="text-neutral-60">{tEN('from', 'desde')} </span>
+                        <span className="font-medium">{tEN(`Zone ${item.sourceZoneId} · Bay ${item.sourceBayId}`, `Zona ${item.sourceZoneId} · Fila ${item.sourceBayId}`)}</span>
+                      </div>
+                      <div className="text-[13px] text-neutral-60 mt-0.5">
+                        {item.supplier} · <span className="font-mono">#{item.lot}</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => returnFromBuffer(item.uid)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-10 text-neutral-80 text-[13px] font-medium hover:bg-white"
+                      title={tEN('Return to source bay', 'Devolver a la fila origen')}
+                    >
+                      <Icon d={I.arrowL} className="w-4 h-4" />
+                      {tEN('Return to bay', 'Devolver a fila')}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {/* Zones / bays */}
+        <div className="space-y-3">
+          {YARD.map(zone => {
+            const open = !!openZones[zone.id];
+            const accessibleBays = zone.bays.filter(b => b.accessible);
+            const zoneBales = accessibleBays.reduce((a, b) => a + bayRemaining(zone, b).bales, 0);
+            const zoneLoads = accessibleBays.reduce((a, b) => a + b.loads.length, 0);
+            return (
+              <div key={zone.id} className="bg-white border border-neutral-10 rounded-xl">
+                <button
+                  onClick={() => setOpenZones(s => ({ ...s, [zone.id]: !s[zone.id] }))}
+                  className="w-full flex items-center justify-between px-5 py-4 hover:bg-neutral-5 rounded-xl"
+                  aria-expanded={open}
+                >
+                  <div className="flex items-center gap-3">
+                    <Icon d={open ? I.chevron : I.chevronR} className="w-4 h-4 text-neutral-60" />
+                    <div className="text-left">
+                      <div className="font-semibold text-neutral-100">{tEN(`Zone ${zone.id}`, `Zona ${zone.id}`)}</div>
+                      <div className="text-[13px] text-neutral-60 mt-0.5">
+                        {tEN(`${accessibleBays.length} bays · ${fmtNum(zoneLoads)} loads · ${fmtNum(zoneBales)} bales accessible`,
+                             `${accessibleBays.length} filas · ${fmtNum(zoneLoads)} lotes · ${fmtNum(zoneBales)} pacas accesibles`)}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+
+                {open && (
+                  <div className="border-t border-neutral-10 px-5 py-4 space-y-3">
+                    {zone.bays.filter(b => b.loads.length > 0).slice(0, 6).map(bay => {
+                      const rem = bayRemaining(zone, bay);
+                      const isRecommended = bay.loads.some(l => recommendedLoads.has(l.id));
+                      const splits = splitForBay(bay);
+                      const canAct = bay.accessible && rem.bales > 0;
+                      return (
+                        <div
+                          key={bay.id}
+                          className={
+                            'rounded-lg border ' +
+                            (bay.accessible ? 'border-neutral-10' : 'border-neutral-10 bg-neutral-5')
+                          }
+                        >
+                          <div className="px-4 py-3 sm:px-5 sm:py-4 flex flex-wrap items-center gap-x-4 gap-y-3">
+                            {/* Identity + chips */}
+                            <div className="min-w-0 flex-1 basis-full md:basis-auto">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-neutral-100 text-base whitespace-nowrap">{tEN(`Bay ${bay.id}`, `Fila ${bay.id}`)}</span>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-50 text-safi-700 text-[13px] font-medium whitespace-nowrap">
+                                  {fmtNum(rem.bales)} {tEN('bales', 'pacas')}
+                                </span>
+                                {isRecommended && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-medium whitespace-nowrap">
+                                    {tEN('Recommended', 'Recomendado')}
+                                  </span>
+                                )}
+                                {!bay.accessible && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[13px] font-medium whitespace-nowrap">
+                                    <Icon d={I.lock} className="w-3.5 h-3.5" />
+                                    {tEN(`Blocked by Bay ${bay.blockedBy}`, `Bloqueada por Fila ${bay.blockedBy}`)}
+                                  </span>
+                                )}
+                                {splits.length > 0 && bay.accessible && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[13px] font-medium whitespace-nowrap">
+                                    <Icon d={I.info} className="w-3.5 h-3.5" />
+                                    {tEN('Split load', 'Lote dividido')}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[13px] text-neutral-60 mt-1">
+                                {rem.loads === 1
+                                  ? `${bay.loads[0].supplier} · #${bay.loads[0].lot}`
+                                  : tEN(`${rem.loads} loads · ${fmtKg(rem.weight)} total`,
+                                        `${rem.loads} lotes · ${fmtKg(rem.weight)} total`)}
+                              </div>
+                            </div>
+
+                            {/* Actions — tablet-first big buttons, wrap below identity on narrow */}
+                            <div className="flex gap-2 flex-wrap shrink-0 w-full md:w-auto">
+                              <button
+                                disabled={!canAct}
+                                onClick={() => setModal({ type: 'reject', source: 'bay', zone, bay })}
+                                className={
+                                  'inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg border text-[13px] font-medium min-h-[44px] whitespace-nowrap ' +
+                                  (canAct
+                                    ? 'border-red-300 text-red-700 hover:bg-red-50'
+                                    : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
+                                }
+                              >
+                                <Icon d={I.trash} className="w-4 h-4" />
+                                {tEN('Reject', 'Rechazar')}
+                              </button>
+                              {bufferVisible && (
+                                <button
+                                  disabled={!canAct}
+                                  onClick={() => setModal({ type: 'move', source: 'bay', zone, bay })}
+                                  className={
+                                    'inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg border text-[13px] font-medium min-h-[44px] whitespace-nowrap ' +
+                                    (canAct
+                                      ? 'border-neutral-10 text-neutral-100 hover:bg-neutral-5'
+                                      : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
+                                  }
+                                >
+                                  <Icon d={I.arrowR} className="w-4 h-4" />
+                                  {tEN('Move to buffer', 'Mover al búfer')}
+                                </button>
+                              )}
+                              <button
+                                disabled={!canAct}
+                                onClick={() => setModal({ type: 'process', source: 'bay', zone, bay })}
+                                className={
+                                  'inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-[13px] font-medium min-h-[44px] whitespace-nowrap flex-1 md:flex-initial justify-center ' +
+                                  (canAct
+                                    ? 'bg-safi-600 text-white hover:bg-safi-700'
+                                    : 'bg-neutral-10 text-neutral-40 cursor-not-allowed')
+                                }
+                              >
+                                {tEN('Process material', 'Procesar material')}
+                                <Icon d={I.arrowR} className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Split-load warning at bay level (collapsible-style summary) */}
+                          {splits.length > 0 && bay.accessible && (
+                            <div className="px-4 sm:px-5 pb-3 -mt-1">
+                              <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[13px] text-amber-900 flex items-start gap-2">
+                                <Icon d={I.info} className="w-4 h-4 mt-0.5 shrink-0" />
+                                <div>
+                                  {splits.map(({ load, locations }) => (
+                                    <div key={load.id}>
+                                      <span className="font-mono font-semibold">{load.lot}</span>{' '}
+                                      {tEN('also has', 'también tiene')}{' '}
+                                      {locations.map((loc, i) => (
+                                        <span key={i}>
+                                          <span className="font-medium">{loc.bales} {tEN('bales', 'pacas')} {tEN('in', 'en')} Bay {loc.bayId}</span>
+                                          {!loc.accessible && (
+                                            <span className="text-amber-800"> ({tEN('blocked by Bay', 'bloqueada por Fila')} {loc.blockedBy})</span>
+                                          )}
+                                          {i < locations.length - 1 ? ', ' : ''}
+                                        </span>
+                                      ))}
+                                      .
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {zone.bays.filter(b => b.loads.length > 0).length > 6 && (
+                      <div className="text-center text-[13px] text-neutral-60 pt-1">
+                        {tEN(`+${zone.bays.filter(b => b.loads.length > 0).length - 6} more bays in this zone`,
+                             `+${zone.bays.filter(b => b.loads.length > 0).length - 6} filas más en esta zona`)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Modals */}
+        {modal?.type === 'move' && modal.source === 'bay' && (
+          <MoveToBufferModal
+            zone={modal.zone}
+            bay={modal.bay}
+            remaining={bayRemaining(modal.zone, modal.bay)}
+            avgWeight={avgBaleWeight(modal.bay)}
+            splits={splitForBay(modal.bay)}
+            lang={lang}
+            onCancel={() => setModal(null)}
+            onConfirm={({ bales }) => moveToBuffer({
+              zone: modal.zone,
+              bay: modal.bay,
+              bales,
+              weightPerBale: avgBaleWeight(modal.bay)
+            })}
+          />
+        )}
+
+        {modal?.type === 'process' && (
+          <ProcessMaterialModal
+            source={modal.source}
+            zone={modal.zone}
+            bay={modal.bay}
+            bufferItems={modal.bufferItems}
+            remaining={modal.source === 'bay' ? bayRemaining(modal.zone, modal.bay) : null}
+            avgWeight={modal.source === 'bay'
+              ? avgBaleWeight(modal.bay)
+              : (modal.bufferItems?.reduce((a, b) => a + b.weightPerBale * b.bales, 0) / Math.max(1, modal.bufferItems?.reduce((a, b) => a + b.bales, 0)))}
+            splits={modal.source === 'bay' ? splitForBay(modal.bay) : []}
+            lang={lang}
+            onCancel={() => setModal(null)}
+            onConfirm={({ bales, weight }) => {
+              if (modal.source === 'buffer') {
+                // Process across buffer items (oldest first) up to `bales`
+                let remaining = bales;
+                modal.bufferItems.forEach(it => {
+                  if (remaining <= 0) return;
+                  const take = Math.min(it.bales, remaining);
+                  remaining -= take;
+                });
+                doProcess({ source: 'buffer', bales, weight });
+                // Clear buffer items proportionally (simplified for prototype)
+                setBuffer([]);
+              } else {
+                doProcess({ source: 'bay', zone: modal.zone, bay: modal.bay, bales, weight });
+              }
+            }}
+          />
+        )}
+
+        {modal?.type === 'reject' && (
+          <RejectMaterialModal
+            source={modal.source}
+            zone={modal.zone}
+            bay={modal.bay}
+            remaining={modal.source === 'bay' ? bayRemaining(modal.zone, modal.bay) : { bales: bufferBales, weight: bufferWeight, loads: 1 }}
+            avgWeight={modal.source === 'bay' ? avgBaleWeight(modal.bay) : (bufferBales === 0 ? 0 : bufferWeight / bufferBales)}
+            lang={lang}
+            onCancel={() => setModal(null)}
+            onConfirm={({ bales, reason, weight }) => {
+              setModal(null);
+              setToast?.({
+                message: tEN(`Rejected ${bales} bales (${reason})`, `Rechazadas ${bales} pacas (${reason})`),
+                kind: 'success'
+              });
+              if (modal.source === 'buffer') setBuffer([]);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ----------------------------------------------------------------------------
+  // Modals used by the merged Picker tab
+  // ----------------------------------------------------------------------------
+
+  // Reusable numeric stepper with +1/+2/+3/+10 quick-add chips
+  function BaleStepper({ value, setValue, max, label, lang }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const clamp = (n) => Math.max(0, Math.min(max, n));
+    return (
+      <div>
+        <label className="block text-[13px] font-medium text-neutral-80 mb-1.5">{label}</label>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setValue(clamp(value - 1))}
+            className="w-12 h-12 rounded-lg border border-neutral-10 text-xl font-semibold hover:bg-neutral-5"
+            aria-label="Decrease"
+          >−</button>
+          <input
+            type="number"
+            min={0}
+            max={max}
+            value={value}
+            onChange={e => setValue(clamp(Number(e.target.value) || 0))}
+            className="w-24 h-12 text-center border border-neutral-10 rounded-lg text-2xl font-bold text-neutral-100 bg-[#fafafa] focus:bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+          />
+          <button
+            type="button"
+            onClick={() => setValue(clamp(value + 1))}
+            className="w-12 h-12 rounded-lg border border-neutral-10 text-xl font-semibold hover:bg-neutral-5"
+            aria-label="Increase"
+          >+</button>
+          {[1, 2, 3, 10].map(n => (
+            <button
+              key={n}
+              type="button"
+              disabled={value + n > max}
+              onClick={() => setValue(clamp(value + n))}
+              className={
+                'h-12 px-3 rounded-lg border text-[13px] font-medium ' +
+                (value + n > max
+                  ? 'border-neutral-10 text-neutral-40 cursor-not-allowed'
+                  : 'border-safi-300 text-safi-700 hover:bg-safi-50')
+              }
+            >+{n}</button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setValue(max)}
+            className="h-12 px-3 rounded-lg border border-neutral-10 text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+          >
+            {tEN(`All ${max}`, `Todas ${max}`)}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function SplitLoadBanner({ splits, lang }) {
+    if (!splits || splits.length === 0) return null;
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    return (
+      <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2.5 text-[13px] text-amber-900 flex items-start gap-2">
+        <Icon d={I.info} className="w-4 h-4 mt-0.5 shrink-0" />
+        <div>
+          <div className="font-semibold mb-0.5">
+            {tEN('Some of this material is stored elsewhere', 'Parte de este material está en otra ubicación')}
+          </div>
+          {splits.map(({ load, locations }) => (
+            <div key={load.id}>
+              <span className="font-mono font-semibold">{load.lot}</span>:{' '}
+              {locations.map((loc, i) => (
+                <span key={i}>
+                  <span className="font-medium">+{loc.bales} {tEN('bales', 'pacas')} {tEN('in', 'en')} Bay {loc.bayId}</span>
+                  {!loc.accessible && (
+                    <span> ({tEN('blocked by Bay', 'bloqueada por Fila')} {loc.blockedBy} — {tEN('not accessible', 'no accesible')})</span>
+                  )}
+                  {i < locations.length - 1 ? ', ' : ''}
+                </span>
+              ))}
+              . {tEN('You can only act on the bales accessible here.', 'Solo puedes actuar sobre las pacas accesibles aquí.')}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function MoveToBufferModal({ zone, bay, remaining, avgWeight, splits, lang, onCancel, onConfirm }) {
+    const [bales, setBales] = useState(Math.min(remaining.bales, 3));
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const estimatedWeight = Math.round(bales * avgWeight);
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-xl p-6" onClick={e => e.stopPropagation()}>
+          <h3 className="font-bold text-lg text-neutral-100">
+            {tEN(`Move material to buffer`, `Mover material al búfer`)}
+          </h3>
+          <p className="text-[13px] text-neutral-60 mt-1">
+            {tEN(`From Zone ${zone.id} · Bay ${bay.id}`, `Desde Zona ${zone.id} · Fila ${bay.id}`)} ·{' '}
+            <span className="font-medium">{fmtNum(remaining.bales)} {tEN('bales accessible', 'pacas accesibles')}</span> ·{' '}
+            {fmtKg(remaining.weight)}
+          </p>
+
+          <div className="mt-5 space-y-4">
+            <BaleStepper
+              value={bales}
+              setValue={setBales}
+              max={remaining.bales}
+              label={tEN('Number of bales to move', 'Número de pacas a mover')}
+              lang={lang}
+            />
+            <div className="text-[13px] text-neutral-60">
+              {tEN(`Estimated weight: ${fmtKg(estimatedWeight)} (avg ${Math.round(avgWeight)} kg/bale)`,
+                   `Peso estimado: ${fmtKg(estimatedWeight)} (prom. ${Math.round(avgWeight)} kg/paca)`)}
+            </div>
+            <SplitLoadBanner splits={splits} lang={lang} />
+          </div>
+
+          <div className="mt-6 flex gap-2 justify-end">
+            <button onClick={onCancel} className="px-4 py-2.5 rounded-lg border border-neutral-10 text-[13px] font-medium hover:bg-neutral-5 min-h-[44px]">
+              {tEN('Cancel', 'Cancelar')}
+            </button>
+            <button
+              disabled={bales === 0}
+              onClick={() => onConfirm({ bales })}
+              className={
+                'px-4 py-2.5 rounded-lg text-[13px] font-medium min-h-[44px] ' +
+                (bales === 0
+                  ? 'bg-neutral-10 text-neutral-40 cursor-not-allowed'
+                  : 'bg-safi-600 text-white hover:bg-safi-700')
+              }
+            >
+              {tEN('Move to buffer', 'Mover al búfer')}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function ProcessMaterialModal({ source, zone, bay, bufferItems, remaining, avgWeight, splits, lang, onCancel, onConfirm }) {
+    const max = source === 'buffer'
+      ? bufferItems.reduce((a, b) => a + b.bales, 0)
+      : remaining.bales;
+    const totalWeight = source === 'buffer'
+      ? bufferItems.reduce((a, b) => a + Math.round(b.bales * b.weightPerBale), 0)
+      : remaining.weight;
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const [bales, setBales] = useState(Math.min(max, 1));
+    const [mode, setMode] = useState('auto'); // 'auto' = avg weight, 'manual' = enter per-bale weight
+    const [manualWeight, setManualWeight] = useState('');
+    const assumedWeight = Math.round(bales * avgWeight);
+    const manualWeightNum = Number(manualWeight) || 0;
+    const finalWeight = mode === 'manual' ? manualWeightNum * bales : assumedWeight;
+
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-xl p-6" onClick={e => e.stopPropagation()}>
+          <h3 className="font-bold text-lg text-neutral-100">
+            {tEN('Process material', 'Procesar material')}
+          </h3>
+          <p className="text-[13px] text-neutral-60 mt-1">
+            {source === 'buffer'
+              ? tEN(`From buffer · ${fmtNum(max)} bales · ${fmtKg(totalWeight)}`,
+                    `Desde búfer · ${fmtNum(max)} pacas · ${fmtKg(totalWeight)}`)
+              : tEN(`From Zone ${zone.id} · Bay ${bay.id} · ${fmtNum(max)} bales accessible · ${fmtKg(totalWeight)}`,
+                    `Desde Zona ${zone.id} · Fila ${bay.id} · ${fmtNum(max)} pacas accesibles · ${fmtKg(totalWeight)}`)}
+          </p>
+
+          <div className="mt-5 space-y-5">
+            <BaleStepper
+              value={bales}
+              setValue={setBales}
+              max={max}
+              label={tEN('Number of bales to process', 'Número de pacas a procesar')}
+              lang={lang}
+            />
+
+            {/* Weight mode */}
+            <div className="space-y-2">
+              <div className="text-[13px] font-medium text-neutral-80">{tEN('Weight', 'Peso')}</div>
+              <div className="space-y-2">
+                <label className={
+                  'flex items-start gap-3 p-3 rounded-lg border cursor-pointer ' +
+                  (mode === 'auto' ? 'border-safi-300 bg-safi-50' : 'border-neutral-10 hover:bg-neutral-5')
+                }>
+                  <input
+                    type="radio"
+                    name="weight-mode"
+                    checked={mode === 'auto'}
+                    onChange={() => setMode('auto')}
+                    className="mt-1 accent-safi-600"
+                  />
+                  <div className="flex-1">
+                    <div className="text-[13px] font-medium text-neutral-100">
+                      {tEN('Use average weight (recommended for whole/partial load)',
+                           'Usar peso promedio (recomendado para lote completo/parcial)')}
+                    </div>
+                    <div className="text-[13px] text-neutral-60 mt-0.5">
+                      {tEN(`Assumed ${fmtKg(assumedWeight)} (${Math.round(avgWeight)} kg/bale × ${bales} bales)`,
+                           `Asumido ${fmtKg(assumedWeight)} (${Math.round(avgWeight)} kg/paca × ${bales} pacas)`)}
+                    </div>
+                  </div>
+                </label>
+                <label className={
+                  'flex items-start gap-3 p-3 rounded-lg border cursor-pointer ' +
+                  (mode === 'manual' ? 'border-safi-300 bg-safi-50' : 'border-neutral-10 hover:bg-neutral-5')
+                }>
+                  <input
+                    type="radio"
+                    name="weight-mode"
+                    checked={mode === 'manual'}
+                    onChange={() => setMode('manual')}
+                    className="mt-1 accent-safi-600"
+                  />
+                  <div className="flex-1">
+                    <div className="text-[13px] font-medium text-neutral-100">
+                      {tEN('Enter weight per bale manually (recommended for bale-by-bale)',
+                           'Introducir peso por paca manualmente (recomendado paca por paca)')}
+                    </div>
+                    <div className="text-[13px] text-neutral-60 mt-0.5">
+                      {mode === 'manual'
+                        ? tEN(`Total: ${fmtKg(manualWeightNum * bales)}`, `Total: ${fmtKg(manualWeightNum * bales)}`)
+                        : tEN('Forklift operator scales the bale and enters the weight.',
+                              'El operador pesa la paca e introduce el peso.')}
+                    </div>
+                    {mode === 'manual' && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.1"
+                          value={manualWeight}
+                          onChange={e => setManualWeight(e.target.value)}
+                          placeholder="0"
+                          className="w-32 h-11 px-3 border border-neutral-10 rounded-lg text-base font-medium bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                        />
+                        <span className="text-[13px] text-neutral-60">{tEN('kg per bale', 'kg por paca')}</span>
+                      </div>
+                    )}
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <SplitLoadBanner splits={splits} lang={lang} />
+          </div>
+
+          <div className="mt-6 flex gap-2 justify-end">
+            <button onClick={onCancel} className="px-4 py-2.5 rounded-lg border border-neutral-10 text-[13px] font-medium hover:bg-neutral-5 min-h-[44px]">
+              {tEN('Cancel', 'Cancelar')}
+            </button>
+            <button
+              disabled={bales === 0 || (mode === 'manual' && manualWeightNum <= 0)}
+              onClick={() => onConfirm({ bales, weight: finalWeight })}
+              className={
+                'px-4 py-2.5 rounded-lg text-[13px] font-medium min-h-[44px] ' +
+                (bales === 0 || (mode === 'manual' && manualWeightNum <= 0)
+                  ? 'bg-neutral-10 text-neutral-40 cursor-not-allowed'
+                  : 'bg-safi-600 text-white hover:bg-safi-700')
+              }
+            >
+              {tEN('Process material', 'Procesar material')}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function RejectMaterialModal({ source, zone, bay, remaining, avgWeight, lang, onCancel, onConfirm }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const max = remaining.bales;
+    const [bales, setBales] = useState(Math.min(max, 1));
+    const [reason, setReason] = useState('');
+    const [bWeight, setBWeight] = useState('');
+    const reasons = lang === 'es'
+      ? ['Contaminación', 'Material incorrecto', 'Daño por humedad', 'Otro']
+      : ['Contamination', 'Wrong material', 'Moisture damage', 'Other'];
+    const assumedWeight = Math.round(bales * avgWeight);
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <h3 className="font-bold text-lg text-neutral-100">
+            {tEN('Reject material', 'Rechazar material')}
+          </h3>
+          <p className="text-[13px] text-neutral-60 mt-1">
+            {source === 'buffer'
+              ? tEN(`From buffer · ${fmtNum(max)} bales`, `Desde búfer · ${fmtNum(max)} pacas`)
+              : tEN(`From Zone ${zone.id} · Bay ${bay.id} · ${fmtNum(max)} bales`,
+                    `Desde Zona ${zone.id} · Fila ${bay.id} · ${fmtNum(max)} pacas`)}
+          </p>
+
+          <div className="mt-5 space-y-4">
+            <BaleStepper
+              value={bales}
+              setValue={setBales}
+              max={max}
+              label={tEN('Number of bales to reject', 'Número de pacas a rechazar')}
+              lang={lang}
+            />
+            <div>
+              <label className="block text-[13px] font-medium text-neutral-80 mb-1.5">
+                {tEN('Reason', 'Motivo')}
+              </label>
+              <select
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                className="w-full h-11 px-3 border border-neutral-10 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+              >
+                <option value="">{tEN('Select a reason…', 'Selecciona un motivo…')}</option>
+                {reasons.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            {bales === 1 && (
+              <div>
+                <label className="block text-[13px] font-medium text-neutral-80 mb-1.5">
+                  {tEN('Bale weight (optional)', 'Peso de la paca (opcional)')}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    value={bWeight}
+                    onChange={e => setBWeight(e.target.value)}
+                    placeholder={tEN('e.g. 60', 'p. ej. 60')}
+                    className="w-32 h-11 px-3 border border-neutral-10 rounded-lg text-base font-medium bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                  />
+                  <span className="text-[13px] text-neutral-60">kg</span>
+                </div>
+                <p className="text-[13px] text-neutral-60 mt-1">
+                  {tEN('Only recorded when rejecting a single bale.', 'Solo se registra al rechazar una sola paca.')}
+                </p>
+              </div>
+            )}
+            {bales > 1 && (
+              <div className="text-[13px] text-neutral-60">
+                {tEN(`Estimated weight: ${fmtKg(assumedWeight)} (avg ${Math.round(avgWeight)} kg/bale)`,
+                     `Peso estimado: ${fmtKg(assumedWeight)} (prom. ${Math.round(avgWeight)} kg/paca)`)}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-6 flex gap-2 justify-end">
+            <button onClick={onCancel} className="px-4 py-2.5 rounded-lg border border-neutral-10 text-[13px] font-medium hover:bg-neutral-5 min-h-[44px]">
+              {tEN('Cancel', 'Cancelar')}
+            </button>
+            <button
+              disabled={bales === 0 || !reason}
+              onClick={() => onConfirm({ bales, reason, weight: bWeight ? Number(bWeight) * bales : assumedWeight })}
+              className={
+                'px-4 py-2.5 rounded-lg text-[13px] font-medium min-h-[44px] ' +
+                (bales === 0 || !reason
+                  ? 'bg-neutral-10 text-neutral-40 cursor-not-allowed'
+                  : 'bg-red-600 text-white hover:bg-red-700')
+              }
+            >
+              {tEN('Reject', 'Rechazar')}
+            </button>
           </div>
         </div>
       </div>
