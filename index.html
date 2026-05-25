@@ -274,9 +274,13 @@
   // current loads vs capacity → "Empty" | "Capacity for N load" | "Full" chip.
   const YARD = [
     {
+      // Zone A - FIFO yard. Loads stored in arrival order; the "front" load
+      // (loads[0]) has up to 20 bales accessible. Subsequent loads are blocked
+      // until the front load is fully cleared.
       id: 'A',
       name: 'Zone A',
       esName: 'Zone A',
+      inventoryRule: 'FIFO',
       bays: [
         {
           id: 'A1', name: 'Bay A1', esName: 'Bay A1', accessible: true,
@@ -313,40 +317,51 @@
       ]
     },
     {
+      // Zone B - LIFO yard. 5 bays. Each bay has 8-12 loads stacked 6-high.
+      // Loads are stored in `loads` array in PICK ORDER: index 0 = front/accessible
+      // (most recently stacked, LIFO), subsequent indexes are blocked until the
+      // load in front of them is cleared. Each load represents one 6-bale "stack".
       id: 'B',
       name: 'Zone B',
       esName: 'Zone B',
-      bays: [
-        {
-          // Bay with 5 loads - demonstrates the "Show all loads (N more)" expander in sticky tab
-          id: 'B5', name: 'Bay B5', esName: 'Bay B5', accessible: true,
-          loads: [
-            L('Supplier H',  'LOT-B001', 13779, 28, r(93.1, 5.4, 1.5)),
-            L('Supplier I',  'LOT-B002',  8845, 20, r(88.3, 9.0, 2.7)),
-            L('Supplier J',  'LOT-B003', 14260, 30, r(95.0, 4.6, 0.4)),
-            L('Supplier K',  'LOT-B004', 12880, 24, r(91.8, 6.2, 2.0)),
-            L('Supplier L',  'LOT-B005', 10250, 22)
-          ]
-        },
-        {
-          id: 'B9', name: 'Bay B9', esName: 'Bay B9', accessible: true,
-          loads: [
-            L('Supplier M',  'LOT-B006', 17986, 52, r(94.7, 4.1, 1.2))
-          ]
-        },
-        {
-          id: 'B10', name: 'Bay B10', esName: 'Bay B10', accessible: true,
-          loads: [
-            L('Supplier N',  'LOT-B007', 20330, 25, r(96.0, 3.6, 0.4)),
-            L('Supplier O',  'LOT-B008', 11337, 20, r(82.4, 11.8, 5.8))
-          ]
-        }
-      ]
+      inventoryRule: 'LIFO',
+      bays: (() => {
+        // Build 5 LIFO bays. Each bay has 8-12 loads of 6 bales each.
+        // We re-use a small pool of suppliers so the same lot can appear across bays
+        // (matches Kate's reference: Load 123 spans Bay 1 + Bay 2, etc.)
+        const layout = [
+          { id: '1', loadIds: ['B-L123', 'B-L456', 'B-L321', 'B-L654', 'B-L987', 'B-L741', 'B-L852', 'B-L963', 'B-L159'] },
+          { id: '2', loadIds: ['B-L123', 'B-L456', 'B-L357', 'B-L468', 'B-L579', 'B-L680', 'B-L791', 'B-L802', 'B-L913', 'B-L024'] },
+          { id: '3', loadIds: ['B-L456', 'B-L135', 'B-L246', 'B-L789', 'B-L890', 'B-L901', 'B-L012', 'B-L234'] },
+          { id: '4', loadIds: ['B-L789', 'B-L345', 'B-L567', 'B-L678', 'B-L890', 'B-L912', 'B-L023', 'B-L134', 'B-L245', 'B-L356', 'B-L467'] },
+          { id: '5', loadIds: ['B-L789', 'B-L578', 'B-L689', 'B-L790', 'B-L801', 'B-L912', 'B-L023', 'B-L134', 'B-L245', 'B-L356', 'B-L467', 'B-L578'] }
+        ];
+        const suppliers = ['Supplier H', 'Supplier I', 'Supplier J', 'Supplier K', 'Supplier L', 'Supplier M', 'Supplier N', 'Supplier O'];
+        return layout.map(({ id, loadIds }) => ({
+          id, name: `Bay ${id}`, esName: `Bay ${id}`, accessible: true,
+          loads: loadIds.map((lot, i) => {
+            // Deterministic AI results per lot for realism
+            const seed = lot.charCodeAt(lot.length - 1);
+            const tp = 90 + (seed % 8);
+            const cp = Math.max(1, Math.round((100 - tp) * 0.65 * 10) / 10);
+            const ct = Math.max(0.2, Math.round((100 - tp - cp) * 10) / 10);
+            const analysed = (seed + i) % 4 !== 0;
+            return L(
+              suppliers[(seed + i) % suppliers.length],
+              `LOT-${lot}`,
+              6 * (640 + (seed * 13 + i * 7) % 80), // ~3,840-4,320 kg per stack of 6
+              6,                                     // 6 bales per stack (LIFO 6-high)
+              analysed ? r(tp, cp, ct) : null
+            );
+          })
+        }));
+      })()
     },
     {
       id: 'C',
       name: 'Zone C',
       esName: 'Zone C',
+      inventoryRule: 'FIFO',
       bays: [
         {
           id: 'C2', name: 'Bay C2', esName: 'Bay C2', accessible: true,
@@ -393,6 +408,46 @@
   const fmtKg = (n) => (n ?? 0).toLocaleString('en-US') + ' kg';
   const fmtNum = (n) => (n ?? 0).toLocaleString('en-US');
   const sum = (arr, fn) => arr.reduce((a, b) => a + fn(b), 0);
+
+  // Max bales accessible from the FIFO "front" load per bay.
+  const FIFO_TOP_LOAD_BALES = 20;
+
+  // Accessibility of a load within a bay, given the zone's inventory rule and
+  // (optionally) a set of loadIds that are scheduled on the active picking list.
+  //
+  // Returns: {
+  //   status: 'accessible' | 'blocked' | 'blocked-clearable-via-list',
+  //   accessibleBales: number,   // bales the FO can act on right now
+  //   blockedBy: load|null,      // the load immediately in front of this one
+  //   reason: string             // i18n-friendly explanation
+  // }
+  //
+  // - LIFO: only the FIRST load in `bay.loads` is accessible. All its bales.
+  // - FIFO: the FIRST load gets up to FIFO_TOP_LOAD_BALES (20) bales accessible.
+  //         Subsequent loads are blocked.
+  // - If a blocked load's blockers (all preceding loads in the bay) are also on
+  //   the picking list, it becomes 'blocked-clearable-via-list' - still selectable
+  //   by the SL because the FO will unblock it by clearing the list in order.
+  const accessibilityOf = (zone, bay, load, pickingListLoadIds = null) => {
+    const idx = bay.loads.findIndex(l => l.id === load.id);
+    if (idx < 0) return { status: 'accessible', accessibleBales: load.bales, blockedBy: null, reason: '' };
+    if (!bay.accessible) {
+      return { status: 'blocked', accessibleBales: 0, blockedBy: null, reason: 'Bay blocked' };
+    }
+    if (idx === 0) {
+      if (zone.inventoryRule === 'FIFO') {
+        return { status: 'accessible', accessibleBales: Math.min(load.bales, FIFO_TOP_LOAD_BALES), blockedBy: null, reason: '' };
+      }
+      return { status: 'accessible', accessibleBales: load.bales, blockedBy: null, reason: '' };
+    }
+    // Blocked - check if all loads ahead of this one are on the picking list
+    const blockers = bay.loads.slice(0, idx);
+    const blockedBy = blockers[blockers.length - 1];
+    if (pickingListLoadIds && blockers.every(b => pickingListLoadIds.has(b.id))) {
+      return { status: 'blocked-clearable-via-list', accessibleBales: 0, blockedBy, reason: 'Will unblock as list is picked' };
+    }
+    return { status: 'blocked', accessibleBales: 0, blockedBy, reason: `Blocked by ${blockedBy?.lot || 'preceding load'}` };
+  };
 
   // Aggregate stats for a bay or zone given its loads array
   const bayStats  = (bay)  => ({
@@ -1432,6 +1487,34 @@
       return () => clearTimeout(t);
     }, [toast]);
 
+    // Buffer-enabled plant setting (separate from the per-session Hide/Show toggle on the
+    // buffer card). Disabling here removes buffer functionality entirely from Picker (load/bale).
+    const [bufferEnabled, setBufferEnabled] = useState(true);
+
+    // Shift timer + processed counter for the page header
+    const shiftStartRef = useRef(Date.now());
+    const [, forceTick] = useState(0);
+    useEffect(() => {
+      const id = setInterval(() => forceTick(t => t + 1), 1000);
+      return () => clearInterval(id);
+    }, []);
+    const elapsedMs = Date.now() - shiftStartRef.current;
+    const elapsedStr = (() => {
+      const total = Math.floor(elapsedMs / 1000);
+      const h = String(Math.floor(total / 3600)).padStart(2, '0');
+      const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+      const s = String(total % 60).padStart(2, '0');
+      return `${h}:${m}:${s}`;
+    })();
+    // Sum of all processed records this session
+    const processedTotals = useMemo(() => {
+      const entries = Object.values(processed);
+      const bales = entries.reduce((a, p) => a + (p.bales || 0), 0);
+      const weight = entries.reduce((a, p) => a + (p.weight || 0), 0);
+      const loads = new Set(entries.map(p => p.loadId).filter(Boolean)).size;
+      return { bales, weight, loads, actions: entries.length };
+    }, [processed]);
+
     // Loads remaining to pick (for Picker tab badge)
     const loadsRemaining = pickingList
       ? pickingList.loads.filter(({ loadId }) => !processed[loadId]).length
@@ -1470,10 +1553,36 @@
               </div>
             </div>
           ) : (
-            <div className="mb-4">
+            <div className="mb-4 flex items-end justify-between gap-6 flex-wrap">
               <h1 className="text-3xl font-bold tracking-tight text-neutral-100">
                 {lang === 'es' ? 'Producción' : 'Production'}
               </h1>
+              {/* Shift + processed counter + buffer-enabled setting */}
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="rounded-lg bg-white border border-neutral-10 px-4 py-2 flex items-center gap-4">
+                  <div>
+                    <div className="text-[13px] text-neutral-60">{lang === 'es' ? 'Turno' : 'Shift'}</div>
+                    <div className="text-[15px] font-semibold text-neutral-100 font-mono tabular-nums">{elapsedStr}</div>
+                  </div>
+                  <div className="w-px h-8 bg-neutral-10" />
+                  <div>
+                    <div className="text-[13px] text-neutral-60">{lang === 'es' ? 'Procesado' : 'Processed'}</div>
+                    <div className="text-[15px] font-semibold text-neutral-100">
+                      {fmtNum(processedTotals.bales)} {lang === 'es' ? 'pacas' : 'bales'}
+                      <span className="text-neutral-60 font-normal"> · {fmtKg(processedTotals.weight)}</span>
+                    </div>
+                  </div>
+                </div>
+                <label className="inline-flex items-center gap-2 text-[13px] text-neutral-80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={bufferEnabled}
+                    onChange={e => setBufferEnabled(e.target.checked)}
+                    className="w-4 h-4 rounded text-safi-600 focus:ring-safi-500"
+                  />
+                  <span>{lang === 'es' ? 'Búfer habilitado' : 'Buffer area enabled'}</span>
+                </label>
+              </div>
             </div>
           )}
 
@@ -1509,7 +1618,7 @@
           {tab === 'picker'  && <ForkliftPickerView pickingList={pickingList} processed={processed}
                                   setProcessed={setProcessed} setPickingList={setPickingList} setRole={setRole} />}
           {tab === 'picker-merged' && <ForkliftPickerMergedView pickingList={pickingList} processed={processed}
-                                  setProcessed={setProcessed} lang={lang} setToast={setToast} />}
+                                  setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} />}
           {tab === 'history' && <HistoryView processed={processed} />}
           {tab === 'rejected' && <Placeholder title="Rejected bales" />}
         </div>
@@ -2874,13 +2983,16 @@
     );
   }
 
-  function ForkliftPickerMergedView({ pickingList, processed, setProcessed, lang, setToast }) {
+  function ForkliftPickerMergedView({ pickingList, processed, setProcessed, lang, setToast, bufferEnabled = true }) {
     // All zones open by default so FO sees everything on landing.
     const initialOpen = useMemo(() => {
       const o = {}; YARD.forEach(z => { o[z.id] = true; }); return o;
     }, []);
     const [openZones, setOpenZones] = useState(initialOpen);
-    const [bufferVisible, setBufferVisible] = useState(true);
+    // Per-session show/hide. The plant-level "Buffer area enabled" setting is bufferEnabled.
+    // When bufferEnabled is false, no buffer UI shows at all - we shadow bufferVisible.
+    const [bufferVisibleRaw, setBufferVisible] = useState(true);
+    const bufferVisible = bufferEnabled && bufferVisibleRaw;
     const [buffer, setBuffer] = useState([]);     // [{ uid, loadId, supplier, lot, bales, weightPerBale, sourceZoneId, sourceBayId }]
     const [modal, setModal] = useState(null);     // { type: 'move'|'process'|'reject', source: 'bay'|'buffer', zone?, bay?, bufferItems? }
     // Lifted so the Process modal defaults to the FO's last choice ('auto' | 'manual')
@@ -3062,8 +3174,8 @@
 
     return (
       <div className="space-y-4">
-        {/* Buffer area - toggle lives on the buffer card header */}
-        {bufferVisible ? (
+        {/* Buffer area - hidden entirely when plant-level "Buffer area enabled" is off */}
+        {!bufferEnabled ? null : bufferVisible ? (
           <div className="rounded-xl bg-white border border-neutral-10 overflow-hidden">
             <div className="px-5 py-4 flex items-center justify-between border-b border-neutral-10 gap-3">
               <div className="flex items-center gap-3 min-w-0">
@@ -3186,31 +3298,34 @@
             {summaryOpen && (
               <ul className="border-t border-neutral-10 divide-y divide-neutral-10">
                 {pickingListSummary.items.map(item => (
-                  <li key={`${item.zoneId}|${item.bayId}`} className="px-5 py-3 flex items-center gap-3 min-h-[56px]">
+                  <li key={`${item.zoneId}|${item.bayId}`} className="min-h-[56px]">
+                    {/* Whole row is now a single button - clickable + hover */}
                     <button
+                      type="button"
                       onClick={() => {
                         setOpenZones(s => ({ ...s, [item.zoneId]: true }));
                         setBayFilter(new Set([`${item.zoneId}|${item.bayId}`]));
-                        // Scroll the bay into view after a tick
                         setTimeout(() => {
                           const el = document.getElementById(`merged-bay-${item.zoneId}-${item.bayId}`);
                           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }, 50);
                       }}
-                      className="flex-1 min-w-0 text-left hover:underline focus:outline-none focus:ring-2 focus:ring-safi-600 rounded"
+                      className="w-full px-5 py-3 flex items-center gap-3 text-left transition hover:bg-safi-50/50 focus:outline-none focus:bg-safi-50 focus:ring-2 focus:ring-inset focus:ring-safi-600"
                     >
-                      <div className="text-[15px] font-medium text-neutral-100">
-                        {tEN(`Zone ${item.zoneId} · Bay ${item.bayId}`, `Zona ${item.zoneId} · Fila ${item.bayId}`)}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[15px] font-medium text-neutral-100">
+                          {tEN(`Zone ${item.zoneId} · Bay ${item.bayId}`, `Zona ${item.zoneId} · Fila ${item.bayId}`)}
+                        </div>
+                        <div className="text-[13px] text-neutral-60 mt-0.5">
+                          {item.loads.length} {item.loads.length === 1 ? tEN('load', 'lote') : tEN('loads', 'lotes')} · {fmtNum(item.bales)} {tEN('bales', 'pacas')} · {fmtKg(item.weight)}
+                          {' · '}
+                          {Array.from(new Set(item.loads.map(l => l.material))).join(', ')}
+                        </div>
                       </div>
-                      <div className="text-[13px] text-neutral-60 mt-0.5">
-                        {item.loads.length} {item.loads.length === 1 ? tEN('load', 'lote') : tEN('loads', 'lotes')} · {fmtNum(item.bales)} {tEN('bales', 'pacas')} · {fmtKg(item.weight)}
-                        {' · '}
-                        {Array.from(new Set(item.loads.map(l => l.material))).join(', ')}
-                      </div>
+                      <span className="text-[13px] text-safi-700 font-medium shrink-0">
+                        {tEN('Go to bay', 'Ir a fila')} →
+                      </span>
                     </button>
-                    <span className="text-[13px] text-safi-700 font-medium shrink-0">
-                      {tEN('Go to bay', 'Ir a fila')} →
-                    </span>
                   </li>
                 ))}
               </ul>
@@ -3290,7 +3405,19 @@
                   <div className="flex items-center gap-3">
                     <Icon d={open ? I.chevron : I.chevronR} className="w-4 h-4 text-neutral-60" />
                     <div className="text-left">
-                      <div className="font-semibold text-neutral-100">{tEN(`Zone ${zone.id}`, `Zona ${zone.id}`)}</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-neutral-100">{tEN(`Zone ${zone.id}`, `Zona ${zone.id}`)}</span>
+                        {zone.inventoryRule && (
+                          <span
+                            className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80"
+                            title={zone.inventoryRule === 'LIFO'
+                              ? tEN('Last in, first out - stacks picked top-down', 'Último en entrar, primero en salir - se recoge de arriba abajo')
+                              : tEN('First in, first out - oldest load picked first', 'Primero en entrar, primero en salir - se recoge primero el lote más antiguo')}
+                          >
+                            {zone.inventoryRule}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[13px] text-neutral-60 mt-0.5">
                         {tEN(`${accessibleBays.length} bays · ${fmtNum(zoneLoads)} loads · ${fmtNum(zoneBales)} bales accessible`,
                              `${accessibleBays.length} filas · ${fmtNum(zoneLoads)} lotes · ${fmtNum(zoneBales)} pacas accesibles`)}
@@ -3305,7 +3432,6 @@
                       const rem = bayRemaining(zone, bay);
                       const isRecommended = bay.loads.some(l => recommendedLoads.has(l.id));
                       const splits = splitForBay(bay);
-                      const canAct = bay.accessible && rem.bales > 0;
                       return (
                         <div
                           key={bay.id}
@@ -3315,9 +3441,9 @@
                             (isRecommended ? 'border-safi-300 bg-safi-50/30' : (bay.accessible ? 'border-neutral-10' : 'border-neutral-10 bg-neutral-5'))
                           }
                         >
-                          <div className="px-4 py-3 sm:px-5 sm:py-4 flex flex-wrap items-center gap-x-4 gap-y-3">
-                            {/* Identity + chips */}
-                            <div className="min-w-0 flex-1 basis-full md:basis-auto">
+                          {/* Bay header - identity + status chips ONLY. Actions live on each load row below. */}
+                          <div className="px-4 py-3 sm:px-5 sm:py-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+                            <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-semibold text-neutral-100 text-base whitespace-nowrap">{tEN(`Bay ${bay.id}`, `Fila ${bay.id}`)}</span>
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-50 text-safi-700 text-[13px] font-medium whitespace-nowrap">
@@ -3341,93 +3467,125 @@
                                   </span>
                                 )}
                               </div>
-                              {/* Per-load detail: supplier · order ref · weight · material */}
                               {bay.accessible && bay.loads.length > 0 && (
                                 <div className="text-[13px] text-neutral-60 mt-1">
-                                  {tEN(`${rem.loads} ${rem.loads === 1 ? 'load' : 'loads'} · ${fmtKg(rem.weight)} total`,
-                                       `${rem.loads} ${rem.loads === 1 ? 'lote' : 'lotes'} · ${fmtKg(rem.weight)} total`)}
+                                  {tEN(`${rem.loads} ${rem.loads === 1 ? 'load' : 'loads'} · ${fmtKg(rem.weight)} total · pick from top first (${zone.inventoryRule || 'FIFO'})`,
+                                       `${rem.loads} ${rem.loads === 1 ? 'lote' : 'lotes'} · ${fmtKg(rem.weight)} total · recoger desde arriba (${zone.inventoryRule || 'FIFO'})`)}
                                 </div>
                               )}
                             </div>
-
-                            {/* Actions - tablet-first big buttons, wrap below identity on narrow */}
-                            <div className="flex gap-2 flex-wrap shrink-0 w-full md:w-auto">
-                              <button
-                                disabled={!canAct}
-                                onClick={() => setModal({ type: 'reject', source: 'bay', zone, bay })}
-                                className={
-                                  'inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg border text-[13px] font-medium min-h-[44px] whitespace-nowrap ' +
-                                  (canAct
-                                    ? 'border-red-300 text-red-700 hover:bg-red-50'
-                                    : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
-                                }
-                              >
-                                <Icon d={I.trash} className="w-4 h-4" />
-                                {tEN('Reject', 'Rechazar')}
-                              </button>
-                              {bufferVisible && (
-                                <button
-                                  disabled={!canAct}
-                                  onClick={() => setModal({ type: 'move', source: 'bay', zone, bay })}
-                                  className={
-                                    'inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg border text-[13px] font-medium min-h-[44px] whitespace-nowrap ' +
-                                    (canAct
-                                      ? 'border-neutral-10 text-neutral-100 hover:bg-neutral-5'
-                                      : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
-                                  }
-                                >
-                                  <Icon d={I.arrowR} className="w-4 h-4" />
-                                  {tEN('Move to buffer', 'Mover al búfer')}
-                                </button>
-                              )}
-                              <button
-                                disabled={!canAct}
-                                onClick={() => setModal({ type: 'process', source: 'bay', zone, bay })}
-                                className={
-                                  'inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-[13px] font-medium min-h-[44px] whitespace-nowrap flex-1 md:flex-initial justify-center ' +
-                                  (canAct
-                                    ? 'bg-safi-600 text-white hover:bg-safi-700'
-                                    : 'bg-neutral-10 text-neutral-40 cursor-not-allowed')
-                                }
-                              >
-                                {tEN('Process material', 'Procesar material')}
-                                <Icon d={I.arrowR} className="w-4 h-4" />
-                              </button>
-                            </div>
                           </div>
 
-                          {/* Per-load detail panel - supplier, order ref, weight, material */}
+                          {/* Per-load detail panel - each load gets its own actions + accessibility status */}
                           {bay.accessible && bay.loads.length > 0 && (
                             <div className="px-4 sm:px-5 pb-3 pt-1 -mt-1">
-                              <div className="rounded-lg border border-neutral-10 bg-neutral-5/40">
-                                <ul className="divide-y divide-neutral-10">
-                                  {bay.loads.map(load => {
-                                    const onList = recommendedLoads.has(load.id);
-                                    return (
-                                      <li key={load.id} className="px-3 py-2.5 flex items-center gap-3 flex-wrap min-h-[44px]">
-                                        <div className="flex-1 min-w-0">
-                                          <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-[13px] font-medium text-neutral-100">{load.supplier}</span>
-                                            <span className="text-[13px] text-neutral-60">{tEN('Order ref', 'Ref. pedido')} <span className="font-mono">#{load.lot}</span></span>
-                                            {onList && (
-                                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-medium whitespace-nowrap">
-                                                <Icon d={I.check} className="w-3.5 h-3.5" />
-                                                {tEN('On picking list', 'En lista de recolección')}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="text-[13px] text-neutral-60 mt-0.5">
-                                            {fmtNum(load.bales)} {tEN('bales', 'pacas')} · {fmtKg(load.weight)}
-                                          </div>
+                              <ul className="rounded-lg border border-neutral-10 bg-white divide-y divide-neutral-10 overflow-hidden">
+                                {bay.loads.map((load, idx) => {
+                                  const access = accessibilityOf(zone, bay, load, recommendedLoads);
+                                  const onList = recommendedLoads.has(load.id);
+                                  const canAct = access.status === 'accessible' && access.accessibleBales > 0;
+                                  // Faint background for blocked loads so they recede
+                                  const bgCls = canAct ? 'bg-white' : 'bg-neutral-5/60';
+                                  return (
+                                    <li key={`${load.id}-${idx}`} className={'px-3 sm:px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2 ' + bgCls}>
+                                      {/* Pick-order pill */}
+                                      <span
+                                        className={
+                                          'shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[13px] font-semibold ' +
+                                          (canAct ? 'bg-safi-600 text-white' : 'bg-neutral-10 text-neutral-60')
+                                        }
+                                        title={tEN(`Pick position ${idx + 1}`, `Posición de recogida ${idx + 1}`)}
+                                      >
+                                        {idx + 1}
+                                      </span>
+                                      {/* Identity */}
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="text-[13px] font-medium text-neutral-100">{load.supplier}</span>
+                                          <span className="text-[13px] text-neutral-60">{tEN('Order ref', 'Ref. pedido')} <span className="font-mono">#{load.lot}</span></span>
+                                          <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-neutral-10 text-[13px] font-medium text-neutral-80 whitespace-nowrap">
+                                            {load.material}
+                                          </span>
+                                          {onList && (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-medium whitespace-nowrap">
+                                              <Icon d={I.check} className="w-3.5 h-3.5" />
+                                              {tEN('On picking list', 'En lista de recolección')}
+                                            </span>
+                                          )}
+                                          {/* Accessibility chip */}
+                                          {access.status === 'accessible' && (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[13px] font-medium whitespace-nowrap">
+                                              <Icon d={I.check} className="w-3.5 h-3.5" />
+                                              {access.accessibleBales < load.bales
+                                                ? tEN(`Accessible (${access.accessibleBales}/${load.bales} bales)`, `Accesible (${access.accessibleBales}/${load.bales} pacas)`)
+                                                : tEN(`Accessible (${load.bales} bales)`, `Accesible (${load.bales} pacas)`)}
+                                            </span>
+                                          )}
+                                          {access.status === 'blocked' && (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[13px] font-medium whitespace-nowrap">
+                                              <Icon d={I.lock} className="w-3.5 h-3.5" />
+                                              {tEN(`Blocked by #${access.blockedBy?.lot}`, `Bloqueada por #${access.blockedBy?.lot}`)}
+                                            </span>
+                                          )}
+                                          {access.status === 'blocked-clearable-via-list' && (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 text-[13px] font-medium whitespace-nowrap">
+                                              <Icon d={I.info} className="w-3.5 h-3.5" />
+                                              {tEN('Unblocks after list', 'Se desbloquea con lista')}
+                                            </span>
+                                          )}
                                         </div>
-                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-neutral-10 text-[13px] font-medium text-neutral-80 whitespace-nowrap">
-                                          {load.material}
-                                        </span>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              </div>
+                                        <div className="text-[13px] text-neutral-60 mt-0.5">
+                                          {fmtNum(load.bales)} {tEN('bales', 'pacas')} · {fmtKg(load.weight)}
+                                        </div>
+                                      </div>
+                                      {/* Per-load actions - only on accessible loads */}
+                                      <div className="flex gap-1.5 flex-wrap shrink-0 w-full sm:w-auto">
+                                        <button
+                                          disabled={!canAct}
+                                          onClick={() => setModal({ type: 'reject', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
+                                          className={
+                                            'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
+                                            (canAct
+                                              ? 'border-red-300 text-red-700 hover:bg-red-50'
+                                              : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
+                                          }
+                                        >
+                                          <Icon d={I.trash} className="w-4 h-4" />
+                                          {tEN('Reject', 'Rechazar')}
+                                        </button>
+                                        {bufferVisible && (
+                                          <button
+                                            disabled={!canAct}
+                                            onClick={() => setModal({ type: 'move', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
+                                            className={
+                                              'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
+                                              (canAct
+                                                ? 'border-neutral-10 text-neutral-100 hover:bg-neutral-5'
+                                                : 'border-neutral-10 text-neutral-40 cursor-not-allowed')
+                                            }
+                                          >
+                                            <Icon d={I.arrowR} className="w-4 h-4" />
+                                            {tEN('Buffer', 'Búfer')}
+                                          </button>
+                                        )}
+                                        <button
+                                          disabled={!canAct}
+                                          onClick={() => setModal({ type: 'process', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
+                                          className={
+                                            'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
+                                            (canAct
+                                              ? 'bg-safi-600 text-white hover:bg-safi-700'
+                                              : 'bg-neutral-10 text-neutral-40 cursor-not-allowed')
+                                          }
+                                        >
+                                          {tEN('Process', 'Procesar')}
+                                          <Icon d={I.arrowR} className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
                             </div>
                           )}
 
@@ -3468,21 +3626,40 @@
         </div>
 
         {/* Modals */}
-        {modal?.type === 'move' && modal.source === 'bay' && (
+        {modal?.type === 'move' && modal.source === 'load' && (
           <MoveToBufferModal
             zone={modal.zone}
             bay={modal.bay}
-            remaining={bayRemaining(modal.zone, modal.bay)}
-            avgWeight={avgBaleWeight(modal.bay)}
-            splits={splitForBay(modal.bay)}
+            load={modal.load}
+            remaining={{
+              bales: modal.accessibleBales,
+              weight: Math.round(modal.accessibleBales * (modal.load.weight / modal.load.bales)),
+              loads: 1
+            }}
+            avgWeight={modal.load.weight / modal.load.bales}
+            splits={SPLIT_LOAD_DEMO[modal.load.lot] ? [{ load: modal.load, locations: SPLIT_LOAD_DEMO[modal.load.lot] }] : []}
             lang={lang}
             onCancel={() => setModal(null)}
-            onConfirm={({ bales }) => moveToBuffer({
-              zone: modal.zone,
-              bay: modal.bay,
-              bales,
-              weightPerBale: avgBaleWeight(modal.bay)
-            })}
+            onConfirm={({ bales }) => {
+              const weightPerBale = modal.load.weight / modal.load.bales;
+              const uid = `${modal.zone.id}:${modal.bay.id}:${modal.load.id}:${Date.now()}`;
+              setBuffer(prev => [...prev, {
+                uid,
+                loadId: modal.load.id,
+                supplier: modal.load.supplier,
+                lot: modal.load.lot,
+                material: modal.load.material,
+                bales,
+                weightPerBale,
+                sourceZoneId: modal.zone.id,
+                sourceBayId: modal.bay.id
+              }]);
+              setModal(null);
+              setToast?.({
+                message: tEN(`${bales} bales moved to buffer (#${modal.load.lot})`, `${bales} pacas movidas al búfer (#${modal.load.lot})`),
+                kind: 'success'
+              });
+            }}
           />
         )}
 
@@ -3491,32 +3668,33 @@
             source={modal.source}
             zone={modal.zone}
             bay={modal.bay}
+            load={modal.load}
             bufferItems={modal.bufferItems}
-            remaining={modal.source === 'bay' ? bayRemaining(modal.zone, modal.bay) : null}
-            avgWeight={modal.source === 'bay'
-              ? avgBaleWeight(modal.bay)
+            remaining={modal.source === 'load' ? {
+              bales: modal.accessibleBales,
+              weight: Math.round(modal.accessibleBales * (modal.load.weight / modal.load.bales)),
+              loads: 1
+            } : null}
+            avgWeight={modal.source === 'load'
+              ? (modal.load.weight / modal.load.bales)
               : (modal.bufferItems?.reduce((a, b) => a + b.weightPerBale * b.bales, 0) / Math.max(1, modal.bufferItems?.reduce((a, b) => a + b.bales, 0)))}
-            splits={modal.source === 'bay' ? splitForBay(modal.bay) : []}
+            splits={modal.source === 'load' && SPLIT_LOAD_DEMO[modal.load.lot]
+              ? [{ load: modal.load, locations: SPLIT_LOAD_DEMO[modal.load.lot] }] : []}
             lang={lang}
             weightMode={weightMode}
             setWeightMode={setWeightMode}
             onCancel={() => setModal(null)}
             onConfirm={({ bales, weight }) => {
               if (modal.source === 'buffer') {
-                // Decrement bales from buffer items oldest-first; only remove items
-                // when their bale count reaches zero. Fixes bug where processing 1
-                // bale from a 45-bale buffer item wiped the whole thing.
                 setBuffer(prev => {
                   let toTake = bales;
-                  const next = prev.map(it => {
+                  return prev.map(it => {
                     if (toTake <= 0) return it;
                     const take = Math.min(it.bales, toTake);
                     toTake -= take;
                     return { ...it, bales: it.bales - take };
                   }).filter(it => it.bales > 0);
-                  return next;
                 });
-                // Record processed entry (doProcess without bufferItem only logs history)
                 const pid = `merged-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
                 setProcessed(prev => ({
                   ...prev,
@@ -3525,7 +3703,21 @@
                 setModal(null);
                 setToast?.({ message: tEN(`Processed ${bales} bales (${fmtKg(weight)})`, `Procesadas ${bales} pacas (${fmtKg(weight)})`), kind: 'success' });
               } else {
-                doProcess({ source: 'bay', zone: modal.zone, bay: modal.bay, bales, weight });
+                // Load source - record processed entry tied to the specific load
+                const pid = `merged-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                setProcessed(prev => ({
+                  ...prev,
+                  [pid]: {
+                    bales, weight, at: new Date().toISOString(), partial: true,
+                    source: `${modal.zone.esName} · ${modal.bay.esName} · #${modal.load.lot}`,
+                    loadId: modal.load.id
+                  }
+                }));
+                setModal(null);
+                setToast?.({
+                  message: tEN(`Processed ${bales} bales from #${modal.load.lot} (${fmtKg(weight)})`, `Procesadas ${bales} pacas de #${modal.load.lot} (${fmtKg(weight)})`),
+                  kind: 'success'
+                });
               }
             }}
           />
@@ -3536,8 +3728,13 @@
             source={modal.source}
             zone={modal.zone}
             bay={modal.bay}
-            remaining={modal.source === 'bay' ? bayRemaining(modal.zone, modal.bay) : { bales: bufferBales, weight: bufferWeight, loads: 1 }}
-            avgWeight={modal.source === 'bay' ? avgBaleWeight(modal.bay) : (bufferBales === 0 ? 0 : bufferWeight / bufferBales)}
+            load={modal.load}
+            remaining={modal.source === 'load'
+              ? { bales: modal.accessibleBales, weight: Math.round(modal.accessibleBales * (modal.load.weight / modal.load.bales)), loads: 1 }
+              : { bales: bufferBales, weight: bufferWeight, loads: 1 }}
+            avgWeight={modal.source === 'load'
+              ? (modal.load.weight / modal.load.bales)
+              : (bufferBales === 0 ? 0 : bufferWeight / bufferBales)}
             lang={lang}
             onCancel={() => setModal(null)}
             onConfirm={({ bales, reason, weight }) => {
@@ -3547,7 +3744,6 @@
                 kind: 'success'
               });
               if (modal.source === 'buffer') {
-                // Same partial-decrement logic for reject (was also wiping the whole buffer)
                 setBuffer(prev => {
                   let toTake = bales;
                   return prev.map(it => {
