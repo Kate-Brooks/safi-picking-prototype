@@ -274,13 +274,12 @@
   // current loads vs capacity → "Empty" | "Capacity for N load" | "Full" chip.
   const YARD = [
     {
-      // Zone A - FIFO yard. Loads stored in arrival order; the "front" load
-      // (loads[0]) has up to 20 bales accessible. Subsequent loads are blocked
-      // until the front load is fully cleared.
+      // Zone A - no inventory rule. Loads can be selected and picked in any order
+      // (no LIFO/FIFO blocking). Used for plants that pick by quality/priority.
       id: 'A',
       name: 'Zone A',
       esName: 'Zone A',
-      inventoryRule: 'FIFO',
+      inventoryRule: 'NONE',
       bays: [
         {
           id: 'A1', name: 'Bay A1', esName: 'Bay A1', accessible: true,
@@ -426,11 +425,30 @@
   // - If a blocked load's blockers (all preceding loads in the bay) are also on
   //   the picking list, it becomes 'blocked-clearable-via-list' - still selectable
   //   by the SL because the FO will unblock it by clearing the list in order.
+  // Sequential-selection rule for LIFO bays during picking-list creation.
+  // A load is only selectable if every load ahead of it in the same bay is already
+  // in `selectionBales` (or it's the first load). FIFO and NONE bays are unrestricted
+  // for selection purposes.
+  const isLifoSelectable = (zone, bay, load, selectionBales) => {
+    if (!zone.inventoryRule || zone.inventoryRule !== 'LIFO') return true;
+    const idx = bay.loads.findIndex(l => l.id === load.id);
+    if (idx <= 0) return true;
+    for (let i = 0; i < idx; i++) {
+      const k = `${zone.id}|${bay.id}|${bay.loads[i].id}`;
+      if (selectionBales[k] == null) return false;
+    }
+    return true;
+  };
+
   const accessibilityOf = (zone, bay, load, pickingListLoadIds = null) => {
     const idx = bay.loads.findIndex(l => l.id === load.id);
     if (idx < 0) return { status: 'accessible', accessibleBales: load.bales, blockedBy: null, reason: '' };
     if (!bay.accessible) {
       return { status: 'blocked', accessibleBales: 0, blockedBy: null, reason: 'Bay blocked' };
+    }
+    // No inventory rule -> every load fully accessible, no blocking
+    if (!zone.inventoryRule || zone.inventoryRule === 'NONE') {
+      return { status: 'accessible', accessibleBales: load.bales, blockedBy: null, reason: '' };
     }
     if (idx === 0) {
       if (zone.inventoryRule === 'FIFO') {
@@ -1127,7 +1145,17 @@
             <Breadcrumbs zone={zone} bay={bay} />
             <div className="mt-2 flex items-center justify-between gap-6 flex-wrap">
               <div>
-                <h3 className="text-2xl font-bold text-neutral-100">{bayName(bay, lang)}</h3>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h3 className="text-2xl font-bold text-neutral-100">{bayName(bay, lang)}</h3>
+                  {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
+                    <span
+                      className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80"
+                      title={zone.inventoryRule === 'LIFO' ? 'Last in, first out' : 'First in, first out'}
+                    >
+                      {zone.inventoryRule}
+                    </span>
+                  )}
+                </div>
                 <div className="text-[13px] text-neutral-60 mt-1">
                   In {zoneName(zone, lang)} · {s.loads} {tr('loads', lang).toLowerCase()} · {fmtNum(s.bales)} {tr('bales', lang).toLowerCase()} · {fmtKg(s.weight)}
                 </div>
@@ -1190,8 +1218,10 @@
               <div className="divide-y divide-neutral-10">
                 {bay.loads.map(load => {
                   const key = `${zone.id}|${bay.id}|${load.id}`;
-                  const accessible = !isCreating || bay.accessible;
                   const access = accessibilityOf(zone, bay, load);
+                  const lifoOk = isLifoSelectable(zone, bay, load, selectionBales);
+                  const alreadySelected = selectionBales[key] != null;
+                  const accessible = !isCreating || (bay.accessible && (lifoOk || alreadySelected));
                   let onPickingList = false;
                   if (!isCreating && pickingList) {
                     const entry = pickingList.loads.find(l => l.loadId === load.id);
@@ -1206,7 +1236,7 @@
                       isCreating={isCreating}
                       accessible={accessible}
                       isAccessibleLoad={access.status === 'accessible'}
-                      isSelected={selectionBales[key] != null}
+                      isSelected={alreadySelected}
                       onToggle={() => toggleLoad(key)}
                       onPickingList={onPickingList}
                     />
@@ -2146,6 +2176,16 @@
                                 <div className="flex items-center gap-3 min-w-0">
                                   <div className="font-semibold text-neutral-100 flex items-center gap-2 flex-wrap">
                                     {bay.esName}
+                                    {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
+                                      <span
+                                        className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80"
+                                        title={zone.inventoryRule === 'LIFO'
+                                          ? 'Last in, first out - stacks picked top-down'
+                                          : 'First in, first out - oldest load picked first'}
+                                      >
+                                        {zone.inventoryRule}
+                                      </span>
+                                    )}
                                     {isCreating && !bay.accessible && (
                                       <span
                                         title="Blocked bays can’t be picked until the bays in front are cleared."
@@ -2186,12 +2226,15 @@
                                   {visibleLoads.map(load => {
                                     const key = `${zone.id}|${bay.id}|${load.id}`;
                                     const access = accessibilityOf(zone, bay, load);
+                                    const lifoOk = isLifoSelectable(zone, bay, load, selectionBales);
+                                    const alreadySelected = selectionBales[key] != null;
+                                    const selectableThis = !isCreating || (bay.accessible && (lifoOk || alreadySelected));
                                     return (
                                       <div key={load.id} className="border-b border-neutral-10/60 last:border-b-0">
                                         <LoadRow
                                           load={load}
                                           isCreating={isCreating}
-                                          accessible={!isCreating || bay.accessible}
+                                          accessible={selectableThis}
                                           isAccessibleLoad={access.status === 'accessible'}
                                           isSelected={selected.has(key)}
                                           onToggle={() => toggleLoad(key, bay.accessible)}
@@ -2252,6 +2295,16 @@
                                 <div className="min-w-0">
                                   <div className="font-medium text-neutral-100 flex items-center gap-2 flex-wrap">
                                     {bay.esName}
+                                    {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
+                                      <span
+                                        className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80"
+                                        title={zone.inventoryRule === 'LIFO'
+                                          ? 'Last in, first out - stacks picked top-down'
+                                          : 'First in, first out - oldest load picked first'}
+                                      >
+                                        {zone.inventoryRule}
+                                      </span>
+                                    )}
                                     {isCreating && !bay.accessible && (
                                       <span
                                         title="Blocked bays can’t be picked until the bays in front are cleared."
@@ -2293,12 +2346,15 @@
                                 {bay.loads.map(load => {
                                   const key = `${zone.id}|${bay.id}|${load.id}`;
                                   const access = accessibilityOf(zone, bay, load);
+                                  const lifoOk = isLifoSelectable(zone, bay, load, selectionBales);
+                                  const alreadySelected = selectionBales[key] != null;
+                                  const selectableThis = !isCreating || (bay.accessible && (lifoOk || alreadySelected));
                                   return (
                                     <LoadRow
                                       key={load.id}
                                       load={load}
                                       isCreating={isCreating}
-                                      accessible={!isCreating || bay.accessible}
+                                      accessible={selectableThis}
                                       isAccessibleLoad={access.status === 'accessible'}
                                       isSelected={selected.has(key)}
                                       onToggle={() => toggleLoad(key, bay.accessible)}
@@ -3428,6 +3484,30 @@
 
                 {open && (
                   <div className="border-t border-neutral-10 px-5 py-4 space-y-3">
+                    {/* LIFO pick-recommendation strip - explains the model + counts open picking points */}
+                    {zone.inventoryRule === 'LIFO' && (() => {
+                      const openBays = filteredBays.filter(b => b.accessible && b.loads.length > 0);
+                      if (openBays.length === 0) return null;
+                      const pickPoints = openBays.length;
+                      const sampleBales = openBays.reduce((min, b) => {
+                        const front = b.loads[0];
+                        return Math.min(min, front?.bales || 0);
+                      }, Infinity);
+                      return (
+                        <div className="rounded-lg bg-safi-50 border border-safi-200 px-3 py-2.5 flex items-start gap-2 text-[13px]">
+                          <Icon d={I.info} className="w-4 h-4 mt-0.5 shrink-0 text-safi-700" />
+                          <div className="text-neutral-80">
+                            <span className="font-semibold text-neutral-100">
+                              {tEN(`${pickPoints} picking ${pickPoints === 1 ? 'point' : 'points'} ready`, `${pickPoints} ${pickPoints === 1 ? 'punto de recogida listo' : 'puntos de recogida listos'}`)}
+                            </span>{' '}
+                            {tEN(
+                              `Last-in-first-out. Pick from the top load of any bay below - any of ${pickPoints} options is ready to go.`,
+                              `Último en entrar, primero en salir. Recoge del lote superior de cualquier fila - cualquiera de las ${pickPoints} opciones está lista.`
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {filteredBays.filter(b => b.loads.length > 0).map(bay => {
                       const rem = bayRemaining(zone, bay);
                       const isRecommended = bay.loads.some(l => recommendedLoads.has(l.id));
@@ -3446,6 +3526,14 @@
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-semibold text-neutral-100 text-base whitespace-nowrap">{tEN(`Bay ${bay.id}`, `Fila ${bay.id}`)}</span>
+                                {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
+                                  <span
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80 whitespace-nowrap"
+                                    title={zone.inventoryRule === 'LIFO' ? 'Last in, first out' : 'First in, first out'}
+                                  >
+                                    {zone.inventoryRule}
+                                  </span>
+                                )}
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-50 text-safi-700 text-[13px] font-medium whitespace-nowrap">
                                   {fmtNum(rem.bales)} {tEN('bales', 'pacas')}
                                 </span>
