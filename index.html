@@ -796,6 +796,49 @@
           <div className="flex flex-col gap-3">
             {yard.map(zone => {
               const z = zoneStats(zone);
+              // EXPERIMENT (R23): Zone C uses KPI-card metrics, no progress fill bar.
+              // Zone A / Zone B keep the original Metric2 row + bales-stored fill bar
+              // so the two treatments can be compared side by side.
+              const isKpiExperiment = zone.id === 'C';
+              if (isKpiExperiment) {
+                const kpis = [
+                  { label: tr('bays',   lang), value: fmtNum(z.bays)   },
+                  { label: tr('loads',  lang), value: fmtNum(z.loads)  },
+                  { label: tr('bales',  lang), value: fmtNum(z.bales)  },
+                  { label: tr('weight', lang), value: fmtKg(z.weight)  },
+                ];
+                return (
+                  <div
+                    key={zone.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => goZone(zone.id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goZone(zone.id); } }}
+                    className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition cursor-pointer hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
+                  >
+                    <div className="flex items-center gap-3 mb-3 flex-wrap">
+                      <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
+                      {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80">
+                          {zone.inventoryRule}
+                        </span>
+                      )}
+                    </div>
+                    {/* KPI cards - one per metric. Sit inside the zone card; clicks bubble up. */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {kpis.map(k => (
+                        <div
+                          key={k.label}
+                          className="rounded-lg border border-neutral-10 bg-neutral-5/60 px-4 py-3"
+                        >
+                          <div className="text-[13px] text-neutral-60">{k.label}</div>
+                          <div className="mt-1 text-2xl font-bold text-neutral-100 leading-tight">{k.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
               return (
                 // Entire card is the clickable zone target - clicking anywhere (including the
                 // bales-stored fill bar on the right) navigates into the zone. The "View top
