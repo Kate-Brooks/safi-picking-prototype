@@ -824,17 +824,16 @@
         </div>
       );
 
-      // Single KPI card - Figma-aligned styling. White bg, neutral-5 border, a
-      // subtle purple-tinted divider beneath the label row, and a 24px metric
-      // value below. The icon sits next to the label and inherits neutral-60.
+      // Single KPI card - notched-fieldset pattern per Figma 725:9342. The label
+      // and its icon float on the top border of the card, breaking the stroke so
+      // the header reads as a chip embedded in the outline. Tighter padding and
+      // a left-aligned value remove the empty space that the earlier layout had.
       const KpiCard = ({ icon, label, value }) => (
-        <div className="bg-white border border-neutral-5 rounded-lg p-3 flex flex-col gap-2">
-          <div
-            className="flex items-center gap-2 pb-1 border-b"
-            style={{ borderColor: 'rgba(99, 71, 255, 0.15)' }}
-          >
-            <Icon d={icon} className="w-4 h-4 text-neutral-60" strokeWidth={1.75} />
-            <span className="text-[13px] text-neutral-60 leading-snug truncate">{label}</span>
+        <div className="relative bg-white border border-neutral-10 rounded-md px-3.5 pt-3.5 pb-3">
+          {/* Floating header - sits on top of the border (white bg punches through the stroke). */}
+          <div className="absolute -top-2 left-3 bg-white px-1.5 flex items-center gap-1.5">
+            <Icon d={icon} className="w-3.5 h-3.5 text-neutral-60" strokeWidth={1.75} />
+            <span className="text-[13px] text-neutral-60 leading-none">{label}</span>
           </div>
           <div className="text-2xl font-medium text-neutral-100 leading-tight truncate" title={value}>
             {value}
