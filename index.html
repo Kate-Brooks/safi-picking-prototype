@@ -721,6 +721,10 @@
     const [focusBayId, setFocusBayId] = useState(null);
     // Per-bay "Show N more suppliers" expander
     const [showAllSuppliers, setShowAllSuppliers] = useState({});
+    // R24: yard-overview display mode - 'progress' (fill bar) or 'kpi' (KPI cards).
+    // Default is 'progress' to match the existing experience; the toggle in the
+    // overview header lets the user flip between the two.
+    const [overviewMode, setOverviewMode] = useState('progress');
     const bayRowRef = useRef(null);
 
     const goOverview = () => { setFocusBayId(null); setView({ level: 'overview' }); };
@@ -784,28 +788,79 @@
     };
 
     // ---- OVERVIEW: just zones - no Production / Unloading containers --------
-    // Each zone card shows headline metrics + a bales-stored fill bar.
-    // The whole card is the clickable zone target.
+    // R24: a KPI / Progress pill toggle in the top-right swaps the per-zone
+    // display between the original "Bales stored" fill bar and a row of four
+    // KPI cards (Bays / Loads / Bales / Weight) with subtle icons. KPI cards
+    // are styled per Figma 15679:67181 - white bg, neutral-5 border, a tinted
+    // purple divider under the title, 24px metric value. The grid uses the
+    // same column layout for every zone so cards line up vertically across
+    // Zone A / Zone B / Zone C for easy side-by-side scanning.
     const renderOverview = () => {
       const maxBales = Math.max(1, ...yard.map(z => zoneStats(z).bales));
+      const isKpiMode = overviewMode === 'kpi';
+
+      // Pill toggle - matches the styling of Buffer / No buffer and English / Español.
+      const ViewToggle = () => (
+        <div className="flex items-center gap-1 bg-slate-100 rounded-full p-1 text-[13px]">
+          {[
+            { id: 'progress', label: lang === 'es' ? 'Progreso' : 'Progress' },
+            { id: 'kpi',      label: 'KPI' },
+          ].map(opt => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setOverviewMode(opt.id)}
+              aria-pressed={overviewMode === opt.id}
+              className={
+                'px-3 py-1 rounded-full transition-colors ' +
+                (overviewMode === opt.id
+                  ? 'bg-white text-neutral-100 font-medium shadow-sm'
+                  : 'text-neutral-60 hover:text-neutral-100')
+              }
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      );
+
+      // Single KPI card - Figma-aligned styling. White bg, neutral-5 border, a
+      // subtle purple-tinted divider beneath the label row, and a 24px metric
+      // value below. The icon sits next to the label and inherits neutral-60.
+      const KpiCard = ({ icon, label, value }) => (
+        <div className="bg-white border border-neutral-5 rounded-lg p-3 flex flex-col gap-2">
+          <div
+            className="flex items-center gap-2 pb-1 border-b"
+            style={{ borderColor: 'rgba(99, 71, 255, 0.15)' }}
+          >
+            <Icon d={icon} className="w-4 h-4 text-neutral-60" strokeWidth={1.75} />
+            <span className="text-[13px] text-neutral-60 leading-snug truncate">{label}</span>
+          </div>
+          <div className="text-2xl font-medium text-neutral-100 leading-tight truncate" title={value}>
+            {value}
+          </div>
+        </div>
+      );
+
       return (
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
-          <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">
-            {tr('yardOverview', lang)} · {lang === 'es' ? 'vista superior' : 'top-down view'}
+          {/* Header row: title + KPI/Progress toggle */}
+          <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+            <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60">
+              {tr('yardOverview', lang)} · {lang === 'es' ? 'vista superior' : 'top-down view'}
+            </div>
+            <ViewToggle />
           </div>
+
           <div className="flex flex-col gap-3">
             {yard.map(zone => {
               const z = zoneStats(zone);
-              // EXPERIMENT (R23): Zone C uses KPI-card metrics, no progress fill bar.
-              // Zone A / Zone B keep the original Metric2 row + bales-stored fill bar
-              // so the two treatments can be compared side by side.
-              const isKpiExperiment = zone.id === 'C';
-              if (isKpiExperiment) {
+              if (isKpiMode) {
                 const kpis = [
-                  { label: tr('bays',   lang), value: fmtNum(z.bays)   },
-                  { label: tr('loads',  lang), value: fmtNum(z.loads)  },
-                  { label: tr('bales',  lang), value: fmtNum(z.bales)  },
-                  { label: tr('weight', lang), value: fmtKg(z.weight)  },
+                  { icon: I.bays,   label: tr('bays',   lang), value: fmtNum(z.bays)   },
+                  { icon: I.box,    label: tr('loads',  lang), value: fmtNum(z.loads)  },
+                  { icon: I.bales,  label: tr('bales',  lang), value: fmtNum(z.bales)  },
+                  { icon: I.weight, label: tr('weight', lang), value: fmtKg(z.weight)  },
                 ];
                 return (
                   <div
@@ -824,16 +879,11 @@
                         </span>
                       )}
                     </div>
-                    {/* KPI cards - one per metric. Sit inside the zone card; clicks bubble up. */}
+                    {/* KPI cards - identical 4-col grid for every zone so the columns
+                        line up vertically across Zones A / B / C. Drops to 2 cols on narrow widths. */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       {kpis.map(k => (
-                        <div
-                          key={k.label}
-                          className="rounded-lg border border-neutral-10 bg-neutral-5/60 px-4 py-3"
-                        >
-                          <div className="text-[13px] text-neutral-60">{k.label}</div>
-                          <div className="mt-1 text-2xl font-bold text-neutral-100 leading-tight">{k.value}</div>
-                        </div>
+                        <KpiCard key={k.label} icon={k.icon} label={k.label} value={k.value} />
                       ))}
                     </div>
                   </div>
@@ -841,8 +891,7 @@
               }
               return (
                 // Entire card is the clickable zone target - clicking anywhere (including the
-                // bales-stored fill bar on the right) navigates into the zone. The "View top
-                // suppliers" button inside calls stopPropagation so it doesn't double-trigger.
+                // bales-stored fill bar on the right) navigates into the zone.
                 <div
                   key={zone.id}
                   role="button"
@@ -1391,8 +1440,8 @@
   // ----------------------------------------------------------------------------
   // ICONS (inline SVG so the prototype works fully offline of the CDN if needed)
   // ----------------------------------------------------------------------------
-  const Icon = ({ d, className = 'w-5 h-5', stroke = 'currentColor' }) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+  const Icon = ({ d, className = 'w-5 h-5', stroke = 'currentColor', strokeWidth = 1.8 }) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
       {Array.isArray(d) ? d.map((p, i) => <path key={i} d={p} />) : <path d={d} />}
     </svg>
   );
@@ -1428,7 +1477,14 @@
     settings: ['M12 15a3 3 0 100-6 3 3 0 000 6z', 'M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8L4.2 7a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z'],
     info:     ['M12 8h.01', 'M11 12h1v4h1', 'M12 22a10 10 0 100-20 10 10 0 000 20z'],
     help:     ['M12 22a10 10 0 100-20 10 10 0 000 20z', 'M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3', 'M12 17h.01'],
-    ground:   ['M12 22s8-7 8-13a8 8 0 10-16 0c0 6 8 13 8 13z', 'M12 11a3 3 0 100-6 3 3 0 000 6z']
+    ground:   ['M12 22s8-7 8-13a8 8 0 10-16 0c0 6 8 13 8 13z', 'M12 11a3 3 0 100-6 3 3 0 000 6z'],
+    // KPI card icons - subtle line-based marks (R24).
+    // bays = 2x2 grid (warehouse floor plan).
+    // bales = rectangle wrapped with two horizontal straps.
+    // weight = scale with handle and pan.
+    bays:     ['M3 4h7v7H3z', 'M14 4h7v7h-7z', 'M3 14h7v7H3z', 'M14 14h7v7h-7z'],
+    bales:    ['M3 6h18v12H3z', 'M3 10h18', 'M3 14h18'],
+    weight:   ['M9 4h6', 'M12 4v3', 'M5 9h14l-2 11H7L5 9z']
   };
 
   // ----------------------------------------------------------------------------
