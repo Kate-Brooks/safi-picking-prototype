@@ -425,12 +425,13 @@
   // - If a blocked load's blockers (all preceding loads in the bay) are also on
   //   the picking list, it becomes 'blocked-clearable-via-list' - still selectable
   //   by the SL because the FO will unblock it by clearing the list in order.
-  // Sequential-selection rule for LIFO bays during picking-list creation.
-  // A load is only selectable if every load ahead of it in the same bay is already
-  // in `selectionBales` (or it's the first load). FIFO and NONE bays are unrestricted
-  // for selection purposes.
+  // R25: Sequential-selection rule applied to ALL zones during picking-list creation,
+  // not just LIFO. Within a bay, a load is only selectable if every load ahead of it
+  // is already in `selectionBales` (or it's the first load). Loads are stored in
+  // pick order, so this enforces a "front to back" selection regardless of the bay's
+  // inventory rule. The function name is kept for compatibility - the LIFO-only
+  // gate has been removed.
   const isLifoSelectable = (zone, bay, load, selectionBales) => {
-    if (!zone.inventoryRule || zone.inventoryRule !== 'LIFO') return true;
     const idx = bay.loads.findIndex(l => l.id === load.id);
     if (idx <= 0) return true;
     for (let i = 0; i < idx; i++) {
@@ -715,16 +716,18 @@
   //           single horizontal row, with a heat-mapped minimap above.
   // Bay view:  full load list (LoadRow re-used).
   // ============================================================================
-  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, lang = 'en', bayFilter, setSlMode }) {
+  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast }) {
     const [view, setView] = useState({ level: 'overview' });
     // Which bay tile (if any) should appear first + highlighted (from the filter or minimap stepper)
     const [focusBayId, setFocusBayId] = useState(null);
     // Per-bay "Show N more suppliers" expander
     const [showAllSuppliers, setShowAllSuppliers] = useState({});
-    // R24: yard-overview display mode - 'progress' (fill bar) or 'kpi' (KPI cards).
-    // Default is 'progress' to match the existing experience; the toggle in the
-    // overview header lets the user flip between the two.
+    // R24: yard-overview display mode - 'progress' (fill bar) | 'kpi' (KPI cards) | 'density' (R25 bale-density tiles).
+    // The toggle in the overview header lets the user flip between the three.
     const [overviewMode, setOverviewMode] = useState('progress');
+    // R25: reject modal state. Triggered from per-load Reject button in bay view.
+    // { zone, bay, load, accessibleBales } | null
+    const [rejectModal, setRejectModal] = useState(null);
     const bayRowRef = useRef(null);
 
     const goOverview = () => { setFocusBayId(null); setView({ level: 'overview' }); };
@@ -771,6 +774,25 @@
       </nav>
     );
 
+    // R25: DensityDots - row of blue squares where each square = 100 bales (rounded).
+    // Used in the yard-overview Density tab and on bay tiles as a lightweight
+    // density preview. `size` controls the tile dimensions:
+    //   - lg: 20px squares for zone overview
+    //   - sm: 8px squares for bay tiles (super lightweight per R25 spec)
+    const DensityDots = ({ bales, size = 'lg' }) => {
+      const count = bales > 0 ? Math.max(1, Math.round(bales / 100)) : 0;
+      if (count === 0) return null;
+      const tileCls = size === 'lg' ? 'w-5 h-5 rounded-[5px]' : 'w-2 h-2 rounded-[2px]';
+      const gapCls = size === 'lg' ? 'gap-1.5' : 'gap-1';
+      return (
+        <div className={'flex flex-wrap ' + gapCls} aria-hidden="true">
+          {Array.from({ length: count }).map((_, i) => (
+            <div key={i} className={tileCls + ' bg-sky-500'} />
+          ))}
+        </div>
+      );
+    };
+
     // Horizontal fill bar - accessible (numeric label always visible). Uses sky
     // tones so it's clearly distinct from the primary purple CTA.
     const FillBar = ({ value, max, suffix }) => {
@@ -788,16 +810,18 @@
     };
 
     // ---- OVERVIEW: just zones - no Production / Unloading containers --------
-    // R24: a KPI / Progress pill toggle in the top-right swaps the per-zone
-    // display between the original "Bales stored" fill bar and a row of four
-    // KPI cards (Bays / Loads / Bales / Weight) with subtle icons. KPI cards
-    // are styled per Figma 15679:67181 - white bg, neutral-5 border, a tinted
-    // purple divider under the title, 24px metric value. The grid uses the
-    // same column layout for every zone so cards line up vertically across
-    // Zone A / Zone B / Zone C for easy side-by-side scanning.
+    // R24/R25: a Progress / KPI / Density pill toggle in the top-right swaps the
+    // per-zone display between the original "Bales stored" fill bar, a row of
+    // four KPI cards, and (R25) a square-grid bale-density visualization. KPI
+    // cards are styled per Figma 15679:67181 - white bg, neutral-5 border, a
+    // tinted purple divider under the title, 24px metric value. Density tiles:
+    // each square = 100 bales (rounded). The grid uses the same column layout
+    // for every zone so cards line up vertically across Zone A / Zone B / Zone C
+    // for easy side-by-side scanning.
     const renderOverview = () => {
       const maxBales = Math.max(1, ...yard.map(z => zoneStats(z).bales));
       const isKpiMode = overviewMode === 'kpi';
+      const isDensityMode = overviewMode === 'density';
 
       // Pill toggle - matches the styling of Buffer / No buffer and English / Español.
       const ViewToggle = () => (
@@ -805,6 +829,7 @@
           {[
             { id: 'progress', label: lang === 'es' ? 'Progreso' : 'Progress' },
             { id: 'kpi',      label: 'KPI' },
+            { id: 'density',  label: lang === 'es' ? 'Densidad' : 'Density' },
           ].map(opt => (
             <button
               key={opt.id}
@@ -884,6 +909,49 @@
                       {kpis.map(k => (
                         <KpiCard key={k.label} icon={k.icon} label={k.label} value={k.value} />
                       ))}
+                    </div>
+                  </div>
+                );
+              }
+              if (isDensityMode) {
+                // R25: Density view. Each square = 100 bales (rounded). Big tiles per
+                // Figma screenshot 5 Frame 4552 / 4553 - blue (sky-500), 20px square,
+                // 4px gap, wraps. Label below shows precise count for the data-curious.
+                return (
+                  <div
+                    key={zone.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => goZone(zone.id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goZone(zone.id); } }}
+                    className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition cursor-pointer hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
+                  >
+                    <div className="flex items-center gap-3 mb-3 flex-wrap">
+                      <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
+                      {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80">
+                          {zone.inventoryRule}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-start gap-6 flex-wrap">
+                      {/* Left: compact bays / loads / bales / weight summary */}
+                      <div className="min-w-[260px] flex items-center gap-6 flex-wrap">
+                        <Metric2 label={tr('bays',  lang)} value={fmtNum(z.bays)} />
+                        <Metric2 label={tr('loads', lang)} value={fmtNum(z.loads)} />
+                        <Metric2 label={tr('bales', lang)} value={fmtNum(z.bales)} />
+                        <Metric2 label={tr('weight', lang)} value={fmtKg(z.weight)} />
+                      </div>
+                      {/* Right: density tiles */}
+                      <div className="flex-1 min-w-[260px]">
+                        <div className="text-[13px] text-neutral-60 mb-1.5">
+                          {lang === 'es' ? 'Pacas almacenadas' : 'Bales stored'}
+                        </div>
+                        <DensityDots bales={z.bales} size="lg" />
+                        <div className="mt-2 text-[13px] text-neutral-60">
+                          <span className="font-bold text-neutral-100">{fmtNum(z.bales)}</span> {tr('bales', lang).toLowerCase()}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1157,6 +1225,10 @@
                         <div className="h-1.5 bg-neutral-5 rounded-full overflow-hidden">
                           <div className="h-full bg-sky-500" style={{ width: `${Math.max(8, Math.min(100, (s.bales / maxBalesInZone) * 100))}%` }} />
                         </div>
+                        {/* R25: lightweight density preview - small sky-blue squares, each = 100 bales. */}
+                        <div className="mt-2">
+                          <DensityDots bales={s.bales} size="sm" />
+                        </div>
                       </div>
                     )}
                   </button>
@@ -1330,6 +1402,7 @@
                       isSelected={alreadySelected}
                       onToggle={() => toggleLoad(key)}
                       onPickingList={onPickingList}
+                      onReject={() => setRejectModal({ zone, bay, load, accessibleBales: access.accessibleBales })}
                     />
                   );
                 })}
@@ -1340,9 +1413,45 @@
       );
     };
 
-    if (view.level === 'zone') return renderZone();
-    if (view.level === 'bay') return renderBay();
-    return renderOverview();
+    const renderContent = () => {
+      if (view.level === 'zone') return renderZone();
+      if (view.level === 'bay') return renderBay();
+      return renderOverview();
+    };
+
+    return (
+      <>
+        {renderContent()}
+        {rejectModal && (
+          <RejectMaterialModal
+            source="load"
+            zone={rejectModal.zone}
+            bay={rejectModal.bay}
+            load={rejectModal.load}
+            remaining={{
+              bales: rejectModal.accessibleBales,
+              weight: Math.round(rejectModal.accessibleBales * (rejectModal.load.weight / rejectModal.load.bales)),
+              loads: 1
+            }}
+            avgWeight={rejectModal.load.weight / rejectModal.load.bales}
+            lang={lang}
+            pickerMode={pickerMode}
+            onCancel={() => setRejectModal(null)}
+            onConfirm={({ bales, reason, weight }) => {
+              setRejectModal(null);
+              setToast?.({
+                message: (lang === 'es'
+                  ? `Rechazadas ${bales} pacas de #${rejectModal.load.lot} (${reason}, ${fmtKg(weight)})`
+                  : `Rejected ${bales} bales from #${rejectModal.load.lot} (${reason}, ${fmtKg(weight)})`),
+                kind: 'success'
+              });
+              // NOTE prototype: YARD data is a const so the rejection isn't persisted.
+              // In production this would call an API and decrement load.bales + load.weight.
+            }}
+          />
+        )}
+      </>
+    );
   }
 
   // High-emphasis metric pair (label small, value large/bold) for the spatial view
@@ -1359,7 +1468,7 @@
   //   - Create mode: clicking toggles selection.
   //   - Three AI result chips inline next to the order ref. Shown only if analysed.
   //   - "On picking list" indicator when this load is on the active picking list (default mode only).
-  const LoadRow = ({ load, isCreating, accessible, isSelected, onToggle, onPickingList, isAccessibleLoad }) => {
+  const LoadRow = ({ load, isCreating, accessible, isSelected, onToggle, onPickingList, isAccessibleLoad, onReject }) => {
     const openDetails = (e) => {
       e.stopPropagation();
       // Conceptual placeholder - would normally navigate to a load details page.
@@ -1424,14 +1533,27 @@
             )}
           </div>
         </div>
-        {/* External-link icon - Primary/400, visible on hover */}
-        <button
-          onClick={openDetails}
-          aria-label={`View details for load ${load.lot}`}
-          className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-1.5 rounded text-safi-600 hover:bg-white shrink-0 mt-0.5"
-        >
-          <Icon d={I.external} className="w-4 h-4" />
-        </button>
+        {/* Actions cluster on the right - Reject (when offered) + External-link icon */}
+        <div className="flex items-center gap-1 shrink-0 mt-0.5">
+          {/* R25: warehouse-layout reject button. Only rendered in default mode when the parent supplies an onReject handler. */}
+          {!isCreating && onReject && isAccessibleLoad && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onReject(); }}
+              aria-label={`Reject bales from load ${load.lot}`}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded border border-red-300 text-red-700 text-[13px] font-medium hover:bg-red-50"
+            >
+              <Icon d={I.trash} className="w-3.5 h-3.5" />
+              Reject
+            </button>
+          )}
+          <button
+            onClick={openDetails}
+            aria-label={`View details for load ${load.lot}`}
+            className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-1.5 rounded text-safi-600 hover:bg-white"
+          >
+            <Icon d={I.external} className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     );
   };
@@ -1489,7 +1611,7 @@
   // ----------------------------------------------------------------------------
   // APP SHELL - top nav + sidebar
   // ----------------------------------------------------------------------------
-  function AppShell({ lang, setLang, bufferEnabled, setBufferEnabled, children }) {
+  function AppShell({ lang, setLang, pickerMode, setPickerMode, children }) {
     const NavItem = ({ icon, label, active }) => (
       <button
         className={
@@ -1535,32 +1657,34 @@
                 Español
               </button>
             </div>
-            {/* Buffer area plant setting - sibling style to the language switch */}
-            {typeof setBufferEnabled === 'function' && (
+            {/* Picker mode plant setting - sibling style to the language switch.
+                "Load-based" hides the buffer area and lets the FO process whole loads;
+                "Bale-based" surfaces the buffer plus per-bale process/reject modals. */}
+            {typeof setPickerMode === 'function' && (
               <div
                 className="flex items-center gap-1 bg-slate-100 rounded-full p-1 text-[13px]"
                 role="group"
-                aria-label="Buffer area"
+                aria-label="Picker mode"
               >
                 <button
-                  onClick={() => setBufferEnabled(true)}
+                  onClick={() => setPickerMode('load')}
                   className={
                     'px-3 py-1.5 rounded-full font-medium transition ' +
-                    (bufferEnabled ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
+                    (pickerMode === 'load' ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
                   }
-                  aria-pressed={bufferEnabled === true}
+                  aria-pressed={pickerMode === 'load'}
                 >
-                  {lang === 'es' ? 'Búfer' : 'Buffer'}
+                  {lang === 'es' ? 'Por lote' : 'Load-based'}
                 </button>
                 <button
-                  onClick={() => setBufferEnabled(false)}
+                  onClick={() => setPickerMode('bale')}
                   className={
                     'px-3 py-1.5 rounded-full font-medium transition ' +
-                    (!bufferEnabled ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
+                    (pickerMode === 'bale' ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
                   }
-                  aria-pressed={bufferEnabled === false}
+                  aria-pressed={pickerMode === 'bale'}
                 >
-                  {lang === 'es' ? 'Sin búfer' : 'No buffer'}
+                  {lang === 'es' ? 'Por paca' : 'Bale-based'}
                 </button>
               </div>
             )}
@@ -1650,10 +1774,12 @@
       return () => clearTimeout(t);
     }, [toast]);
 
-    // Buffer-enabled plant setting (separate from the per-session Hide/Show toggle on the
-    // buffer card). Disabling here removes buffer functionality entirely from Picker (load/bale).
+    // Picker mode plant setting - 'load' (default) | 'bale'.
     // Lives in the global header toggle next to the language switch.
-    const [bufferEnabled, setBufferEnabled] = useState(true);
+    // Load-based: FO processes whole loads, no buffer zone.
+    // Bale-based: FO processes one bale at a time, buffer zone visible, reject + process require weight.
+    const [pickerMode, setPickerMode] = useState('load');
+    const bufferEnabled = pickerMode === 'bale';
 
     // Loads remaining to pick (for Picker tab badge)
     const loadsRemaining = pickingList
@@ -1662,7 +1788,7 @@
 
     return (
       <LangContext.Provider value={lang}>
-      <AppShell lang={lang} setLang={setLang} bufferEnabled={bufferEnabled} setBufferEnabled={setBufferEnabled}>
+      <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode}>
         <div className="px-8 py-6">
           {/* Page heading swaps when SL enters Create picking list mode */}
           {slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout') ? (
@@ -1700,14 +1826,17 @@
             </div>
           )}
 
-          {/* Tabs - hidden during Create picking list to keep focus on the workflow */}
+          {/* Tabs - hidden during Create picking list to keep focus on the workflow.
+              R25: the original load-only Picker tab (id="picker") is no longer exposed
+              in the nav - its component (ForkliftPickerView) is left in the source so
+              we can reinstate it cheaply if needed. The merged tab now drives both
+              load-based and bale-based flows via the header Picker mode toggle. */}
           {!(slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout')) && (
             <div className="border-b border-neutral-10 mb-6 flex gap-6 text-[13px] overflow-x-auto">
               <Tab id="pw-v2"     label={lang === 'es' ? 'Almacén (lista vertical)' : 'Warehouse (vertical-list)'} tab={tab} setTab={setTab} />
               <Tab id="pw-layout" label={lang === 'es' ? 'Almacén (plano)' : 'Warehouse (layout)'} tab={tab} setTab={setTab} />
-              <Tab id="picker"    label={lang === 'es' ? 'Recolección' : 'Picker'}                                       tab={tab} setTab={setTab}
+              <Tab id="picker-merged" label={lang === 'es' ? 'Recolección' : 'Picker'}                                    tab={tab} setTab={setTab}
                    badge={pickingList ? loadsRemaining : null} />
-              <Tab id="picker-merged" label={lang === 'es' ? 'Recolección (lote/paca)' : 'Picker (load/bale)'}             tab={tab} setTab={setTab} />
               <Tab id="history"   label={lang === 'es' ? 'Historial' : 'History'}                                         tab={tab} setTab={setTab} />
               <Tab id="rejected"  label={lang === 'es' ? 'Pacas rechazadas' : 'Rejected bales'}                           tab={tab} setTab={setTab} />
             </div>
@@ -1720,7 +1849,8 @@
                                     slMode={slMode} setSlMode={setSlMode}
                                     windowActive={windowActive} setWindowActive={setWindowActive}
                                     setToast={setToast} processed={processed} lang={lang}
-                                    selectionBales={selectionBales} setSelectionBales={setSelectionBales} />}
+                                    selectionBales={selectionBales} setSelectionBales={setSelectionBales}
+                                    pickerMode={pickerMode} />}
           {tab === 'pw-layout' && <ShiftLeaderView
                                     layout="spatial"
                                     pickingList={pickingList} setPickingList={setPickingList}
@@ -1728,11 +1858,11 @@
                                     slMode={slMode} setSlMode={setSlMode}
                                     windowActive={windowActive} setWindowActive={setWindowActive}
                                     setToast={setToast} processed={processed} lang={lang}
-                                    selectionBales={selectionBales} setSelectionBales={setSelectionBales} />}
-          {tab === 'picker'  && <ForkliftPickerView pickingList={pickingList} processed={processed}
-                                  setProcessed={setProcessed} setPickingList={setPickingList} setRole={setRole} />}
+                                    selectionBales={selectionBales} setSelectionBales={setSelectionBales}
+                                    pickerMode={pickerMode} />}
+          {/* tab === 'picker' (original load-only Picker) is no longer routed - ForkliftPickerView retained in source */}
           {tab === 'picker-merged' && <ForkliftPickerMergedView pickingList={pickingList} processed={processed}
-                                  setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} />}
+                                  setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} />}
           {tab === 'history' && <HistoryView processed={processed} />}
           {tab === 'rejected' && <Placeholder title="Rejected bales" />}
         </div>
@@ -1924,7 +2054,7 @@
   // SHIFT LEADER VIEW - progressive disclosure + picking-list creation
   // ============================================================================
 
-  function ShiftLeaderView({ layout = 'accordion', pickingList, setPickingList, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales }) {
+  function ShiftLeaderView({ layout = 'accordion', pickingList, setPickingList, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load' }) {
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
@@ -2189,6 +2319,8 @@
               lang={lang}
               bayFilter={bayFilter}
               setSlMode={setSlMode}
+              pickerMode={pickerMode}
+              setToast={setToast}
             />
           ) : (
           /* Yard - Zones / Bays / Loads */
@@ -3127,7 +3259,7 @@
     );
   }
 
-  function ForkliftPickerMergedView({ pickingList, processed, setProcessed, lang, setToast, bufferEnabled = true }) {
+  function ForkliftPickerMergedView({ pickingList, processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load' }) {
     // All zones open by default so FO sees everything on landing.
     const initialOpen = useMemo(() => {
       const o = {}; YARD.forEach(z => { o[z.id] = true; }); return o;
@@ -3561,16 +3693,7 @@
                     <div className="text-left">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-neutral-100">{tEN(`Zone ${zone.id}`, `Zona ${zone.id}`)}</span>
-                        {zone.inventoryRule && (
-                          <span
-                            className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80"
-                            title={zone.inventoryRule === 'LIFO'
-                              ? tEN('Last in, first out - stacks picked top-down', 'Último en entrar, primero en salir - se recoge de arriba abajo')
-                              : tEN('First in, first out - oldest load picked first', 'Primero en entrar, primero en salir - se recoge primero el lote más antiguo')}
-                          >
-                            {zone.inventoryRule}
-                          </span>
-                        )}
+                        {/* R25: Zone-level inventory rule chip removed from Picker. The rule still drives accessibility but is no longer surfaced here. */}
                       </div>
                       <div className="text-[13px] text-neutral-60 mt-0.5">
                         {tEN(`${accessibleBays.length} bays · ${fmtNum(zoneLoads)} loads · ${fmtNum(zoneBales)} bales accessible`,
@@ -3624,14 +3747,7 @@
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-semibold text-neutral-100 text-base whitespace-nowrap">{tEN(`Bay ${bay.id}`, `Fila ${bay.id}`)}</span>
-                                {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
-                                  <span
-                                    className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80 whitespace-nowrap"
-                                    title={zone.inventoryRule === 'LIFO' ? 'Last in, first out' : 'First in, first out'}
-                                  >
-                                    {zone.inventoryRule}
-                                  </span>
-                                )}
+                                {/* R25: LIFO chip removed from picker bay headers. Inventory rule still drives behaviour but is no longer surfaced as a chip here. */}
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-50 text-safi-700 text-[13px] font-medium whitespace-nowrap">
                                   {fmtNum(rem.bales)} {tEN('bales', 'pacas')}
                                 </span>
@@ -3644,8 +3760,8 @@
                               </div>
                               {bay.accessible && bay.loads.length > 0 && (
                                 <div className="text-[13px] text-neutral-60 mt-1">
-                                  {tEN(`${rem.loads} ${rem.loads === 1 ? 'load' : 'loads'} · ${fmtKg(rem.weight)} total · pick from top first (${zone.inventoryRule || 'FIFO'})`,
-                                       `${rem.loads} ${rem.loads === 1 ? 'lote' : 'lotes'} · ${fmtKg(rem.weight)} total · recoger desde arriba (${zone.inventoryRule || 'FIFO'})`)}
+                                  {tEN(`${rem.loads} ${rem.loads === 1 ? 'load' : 'loads'} · ${fmtKg(rem.weight)} total`,
+                                       `${rem.loads} ${rem.loads === 1 ? 'lote' : 'lotes'} · ${fmtKg(rem.weight)} total`)}
                                 </div>
                               )}
                             </div>
@@ -3680,14 +3796,9 @@
                                           {tEN('On picking list', 'En lista de recolección')}
                                         </span>
                                       )}
-                                      {access.status === 'accessible' && (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[13px] font-medium whitespace-nowrap">
-                                          <Icon d={I.check} className="w-3.5 h-3.5" />
-                                          {access.accessibleBales < load.bales
-                                            ? tEN(`Accessible (${access.accessibleBales}/${load.bales} bales)`, `Accesible (${access.accessibleBales}/${load.bales} pacas)`)
-                                            : tEN(`Accessible (${load.bales} bales)`, `Accesible (${load.bales} pacas)`)}
-                                        </span>
-                                      )}
+                                      {/* R25: "Accessible (N bales)" chip removed. Accessibility is now implicit -
+                                          a load row sits in the accessible list because it's actionable. Split-load loads
+                                          (where access.accessibleBales < load.bales) still flag this in the Process modal. */}
                                       {access.status === 'blocked' && (
                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-10 text-neutral-80 text-[13px] font-medium whitespace-nowrap">
                                           <Icon d={I.lock} className="w-3.5 h-3.5" />
@@ -3842,8 +3953,8 @@
             splits={modal.source === 'load' && SPLIT_LOAD_DEMO[modal.load.lot]
               ? [{ load: modal.load, locations: SPLIT_LOAD_DEMO[modal.load.lot] }] : []}
             lang={lang}
-            weightMode={weightMode}
-            setWeightMode={setWeightMode}
+            pickerMode={pickerMode}
+            onPickingList={modal.source === 'load' && modal.load ? recommendedLoads.has(modal.load.id) : false}
             onCancel={() => setModal(null)}
             onConfirm={({ bales, weight }) => {
               if (modal.source === 'buffer') {
@@ -3897,6 +4008,7 @@
               ? (modal.load.weight / modal.load.bales)
               : (bufferBales === 0 ? 0 : bufferWeight / bufferBales)}
             lang={lang}
+            pickerMode={pickerMode}
             onCancel={() => setModal(null)}
             onConfirm={({ bales, reason, weight }) => {
               setModal(null);
@@ -4010,34 +4122,105 @@
     );
   }
 
+  // -------------------------------------------------------------------------
+  // FieldsetInput - notched-fieldset input. The label rides on top of the
+  // border (white bg punches through the stroke). Used by all picker modals.
+  // -------------------------------------------------------------------------
+  function FieldsetInput({ label, suffix, value, onChange, type = 'number', placeholder, min = 0, step = '1', max, required = false, focused = false, readOnly = false, children }) {
+    const borderCls = focused ? 'border-safi-600 ring-2 ring-safi-600/30' : 'border-neutral-10';
+    const labelCls = focused ? 'text-safi-700' : 'text-neutral-60';
+    return (
+      <div className={'relative bg-white border rounded-md ' + borderCls}>
+        <div className={'absolute -top-2 left-3 bg-white px-1.5 flex items-center text-[13px] font-medium leading-none ' + labelCls}>
+          {label}{required && <span className="ml-0.5">*</span>}
+        </div>
+        {children ? (
+          children
+        ) : (
+          <input
+            type={type}
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            readOnly={readOnly}
+            className={'w-full h-14 px-4 pr-12 bg-transparent text-2xl font-medium text-neutral-100 focus:outline-none ' + (readOnly ? 'cursor-default' : '')}
+          />
+        )}
+        {suffix && (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-neutral-60 pointer-events-none">
+            {suffix}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // R25: MoveToBufferModal - bale-based only (buffer is hidden in load-based).
+  // Layout per Figma screenshot 2: a row of quick-pick buttons (1 / 2 / 3) +
+  // a notched-fieldset "Number of bales" input. The buttons set the value.
+  // -------------------------------------------------------------------------
   function MoveToBufferModal({ zone, bay, remaining, avgWeight, splits, lang, onCancel, onConfirm }) {
-    const [bales, setBales] = useState(Math.min(remaining.bales, 3));
     const tEN = (en, es) => lang === 'es' ? es : en;
+    const [bales, setBales] = useState(1);
+    const clamp = (n) => Math.max(0, Math.min(remaining.bales, n));
     const estimatedWeight = Math.round(bales * avgWeight);
     return (
       <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
         <div className="bg-white rounded-xl shadow-xl w-full max-w-xl p-6" onClick={e => e.stopPropagation()}>
           <h3 className="font-bold text-lg text-neutral-100">
-            {tEN(`Move material to buffer`, `Mover material al búfer`)}
+            {tEN(`Move bales to buffer`, `Mover pacas al búfer`)}
           </h3>
           <p className="text-[13px] text-neutral-60 mt-1">
-            {tEN(`From Zone ${zone.id} · Bay ${bay.id}`, `Desde Zona ${zone.id} · Fila ${bay.id}`)} ·{' '}
-            <span className="font-medium">{fmtNum(remaining.bales)} {tEN('bales accessible', 'pacas accesibles')}</span> ·{' '}
-            {fmtKg(remaining.weight)}
+            {tEN('Select the amount of bales you are moving to buffer.',
+                 'Selecciona la cantidad de pacas que estás moviendo al búfer.')}
           </p>
 
-          <div className="mt-5 space-y-4">
-            <BaleStepper
-              value={bales}
-              setValue={setBales}
-              max={remaining.bales}
-              label={tEN('Number of bales to move', 'Número de pacas a mover')}
-              lang={lang}
-            />
-            <div className="text-[13px] text-neutral-60">
-              {tEN(`Estimated weight: ${fmtKg(estimatedWeight)} (avg ${Math.round(avgWeight)} kg/bale)`,
-                   `Peso estimado: ${fmtKg(estimatedWeight)} (prom. ${Math.round(avgWeight)} kg/paca)`)}
+          <div className="mt-5 flex items-stretch gap-3 flex-wrap">
+            {[1, 2, 3].filter(n => n <= remaining.bales).map(n => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setBales(n)}
+                aria-pressed={bales === n}
+                className={
+                  'w-20 h-20 rounded-lg border text-2xl font-medium transition flex items-center justify-center ' +
+                  (bales === n
+                    ? 'border-safi-600 bg-safi-50 text-safi-700'
+                    : 'border-neutral-10 text-neutral-100 hover:bg-neutral-5')
+                }
+              >
+                {n}
+              </button>
+            ))}
+            <div className="flex-1 min-w-[160px]">
+              <FieldsetInput
+                label={tEN('Number of bales', 'Número de pacas')}
+                value={bales || ''}
+                onChange={e => setBales(clamp(Number(e.target.value) || 0))}
+                min={0}
+                max={remaining.bales}
+                focused={false}
+              >
+                <input
+                  type="number"
+                  min={0}
+                  max={remaining.bales}
+                  value={bales || ''}
+                  onChange={e => setBales(clamp(Number(e.target.value) || 0))}
+                  className="w-full h-20 px-4 bg-transparent text-2xl font-medium text-neutral-100 focus:outline-none"
+                />
+              </FieldsetInput>
             </div>
+          </div>
+          <p className="text-[13px] text-neutral-60 mt-2">
+            {tEN(`Up to ${remaining.bales} bales available · ~${fmtKg(estimatedWeight)} at ${Math.round(avgWeight)} kg/bale`,
+                 `Hasta ${remaining.bales} pacas disponibles · ~${fmtKg(estimatedWeight)} a ${Math.round(avgWeight)} kg/paca`)}
+          </p>
+          <div className="mt-4">
             <SplitLoadBanner splits={splits} lang={lang} />
           </div>
 
@@ -4055,7 +4238,7 @@
                   : 'bg-safi-600 text-white hover:bg-safi-700')
               }
             >
-              {tEN('Move to buffer', 'Mover al búfer')}
+              {tEN('Save', 'Guardar')}
             </button>
           </div>
         </div>
@@ -4063,132 +4246,165 @@
     );
   }
 
-  function ProcessMaterialModal({ source, zone, bay, bufferItems, remaining, avgWeight, splits, lang, weightMode, setWeightMode, onCancel, onConfirm }) {
+  // -------------------------------------------------------------------------
+  // R25: ProcessMaterialModal - branches on pickerMode.
+  //
+  // load-based: FO picks N bales (default = all accessible bales). Layout per
+  //   screenshot 1 - [-] [Number of bales input] [+], helper text, and the
+  //   weight field is gone (system already knows the per-bale weight). Shows
+  //   split-load indicator + "on picking list" chip when relevant.
+  //
+  // bale-based: implicit 1 bale at a time. Single notched "Processed weight"
+  //   input is REQUIRED. Per screenshot 3. Buffer-sourced processing uses the
+  //   same flow (1 bale at a time, weight required).
+  // -------------------------------------------------------------------------
+  function ProcessMaterialModal({ source, zone, bay, load, bufferItems, remaining, avgWeight, splits, lang, pickerMode = 'load', onPickingList = false, onCancel, onConfirm }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const isBale = pickerMode === 'bale';
     const max = source === 'buffer'
       ? bufferItems.reduce((a, b) => a + b.bales, 0)
       : remaining.bales;
-    const totalWeight = source === 'buffer'
+    const accessibleWeight = source === 'buffer'
       ? bufferItems.reduce((a, b) => a + Math.round(b.bales * b.weightPerBale), 0)
       : remaining.weight;
-    const tEN = (en, es) => lang === 'es' ? es : en;
-    const [bales, setBales] = useState(Math.min(max, 1));
-    // Weight mode is hoisted to the parent so the FO's last choice (auto vs manual)
-    // persists across modal opens.
-    const mode = weightMode;
-    const setMode = setWeightMode;
-    const [manualWeight, setManualWeight] = useState('');
-    const assumedWeight = Math.round(bales * avgWeight);
-    const manualWeightNum = Number(manualWeight) || 0;
-    const finalWeight = mode === 'manual' ? manualWeightNum * bales : assumedWeight;
+
+    // Load-based: bale count selector, default = all accessible bales.
+    const [bales, setBales] = useState(isBale ? 1 : Math.max(1, max));
+    const clamp = (n) => Math.max(0, Math.min(max, n));
+    // Bale-based: required processed weight input.
+    const [processedWeight, setProcessedWeight] = useState('');
+    const pwNum = Number(processedWeight) || 0;
+
+    const titleEN = source === 'buffer'
+      ? 'Process bales from buffer'
+      : `Process bales from Bay ${bay?.id}`;
+    const titleES = source === 'buffer'
+      ? 'Procesar pacas del búfer'
+      : `Procesar pacas de Fila ${bay?.id}`;
+
+    const isSplit = splits && splits.length > 0;
+    const loadTotalWeight = load?.weight;
+    const loadTotalBales = load?.bales;
+
+    const canSubmit = isBale ? pwNum > 0 : (bales > 0);
 
     return (
       <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
         <div className="bg-white rounded-xl shadow-xl w-full max-w-xl p-6" onClick={e => e.stopPropagation()}>
-          <h3 className="font-bold text-lg text-neutral-100">
-            {tEN('Process material', 'Procesar material')}
-          </h3>
-          <p className="text-[13px] text-neutral-60 mt-1">
-            {source === 'buffer'
-              ? tEN(`From buffer · ${fmtNum(max)} bales · ${fmtKg(totalWeight)}`,
-                    `Desde búfer · ${fmtNum(max)} pacas · ${fmtKg(totalWeight)}`)
-              : tEN(`From Zone ${zone.id} · Bay ${bay.id} · ${fmtNum(max)} bales accessible · ${fmtKg(totalWeight)}`,
-                    `Desde Zona ${zone.id} · Fila ${bay.id} · ${fmtNum(max)} pacas accesibles · ${fmtKg(totalWeight)}`)}
-          </p>
+          <h3 className="font-bold text-lg text-neutral-100">{tEN(titleEN, titleES)}</h3>
 
-          <div className="mt-5 space-y-5">
-            <BaleStepper
-              value={bales}
-              setValue={setBales}
-              max={max}
-              label={tEN('Number of bales to process', 'Número de pacas a procesar')}
-              lang={lang}
-            />
-
-            {/* Weight mode */}
-            <div className="space-y-2">
-              <div className="text-[13px] font-medium text-neutral-80">{tEN('Weight', 'Peso')}</div>
-              <div className="space-y-2">
-                <label className={
-                  'flex items-start gap-3 p-3 rounded-lg border cursor-pointer ' +
-                  (mode === 'auto' ? 'border-safi-300 bg-safi-50' : 'border-neutral-10 hover:bg-neutral-5')
-                }>
-                  <input
-                    type="radio"
-                    name="weight-mode"
-                    checked={mode === 'auto'}
-                    onChange={() => setMode('auto')}
-                    className="mt-1 accent-safi-600"
-                  />
-                  <div className="flex-1">
-                    <div className="text-[13px] font-medium text-neutral-100">
-                      {tEN('Use average weight (recommended for whole/partial load)',
-                           'Usar peso promedio (recomendado para lote completo/parcial)')}
-                    </div>
-                    <div className="text-[13px] text-neutral-60 mt-0.5">
-                      {tEN(`Assumed ${fmtKg(assumedWeight)} (${Math.round(avgWeight)} kg/bale × ${bales} bales)`,
-                           `Asumido ${fmtKg(assumedWeight)} (${Math.round(avgWeight)} kg/paca × ${bales} pacas)`)}
-                    </div>
-                  </div>
-                </label>
-                <label className={
-                  'flex items-start gap-3 p-3 rounded-lg border cursor-pointer ' +
-                  (mode === 'manual' ? 'border-safi-300 bg-safi-50' : 'border-neutral-10 hover:bg-neutral-5')
-                }>
-                  <input
-                    type="radio"
-                    name="weight-mode"
-                    checked={mode === 'manual'}
-                    onChange={() => setMode('manual')}
-                    className="mt-1 accent-safi-600"
-                  />
-                  <div className="flex-1">
-                    <div className="text-[13px] font-medium text-neutral-100">
-                      {tEN('Enter weight per bale manually (recommended for bale-by-bale)',
-                           'Introducir peso por paca manualmente (recomendado paca por paca)')}
-                    </div>
-                    <div className="text-[13px] text-neutral-60 mt-0.5">
-                      {mode === 'manual'
-                        ? tEN(`Total: ${fmtKg(manualWeightNum * bales)}`, `Total: ${fmtKg(manualWeightNum * bales)}`)
-                        : tEN('Forklift operator scales the bale and enters the weight.',
-                              'El operador pesa la paca e introduce el peso.')}
-                    </div>
-                    {mode === 'manual' && (
-                      <div className="mt-2 flex items-center gap-2">
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.1"
-                          value={manualWeight}
-                          onChange={e => setManualWeight(e.target.value)}
-                          placeholder="0"
-                          className="w-32 h-11 px-3 border border-neutral-10 rounded-lg text-base font-medium bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
-                        />
-                        <span className="text-[13px] text-neutral-60">{tEN('kg per bale', 'kg por paca')}</span>
-                      </div>
-                    )}
-                  </div>
-                </label>
-              </div>
+          {/* Context strip - load total weight + on-picking-list indicator (load-based, bay source only) */}
+          {!isBale && load && (
+            <div className="mt-1 flex items-center gap-2 flex-wrap text-[13px] text-neutral-60">
+              <span>
+                {tEN(`Load #${load.lot} · ${fmtNum(loadTotalBales)} bales total · ${fmtKg(loadTotalWeight)}`,
+                     `Lote #${load.lot} · ${fmtNum(loadTotalBales)} pacas totales · ${fmtKg(loadTotalWeight)}`)}
+              </span>
+              {onPickingList && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-medium">
+                  <Icon d={I.check} className="w-3.5 h-3.5" />
+                  {tEN('On picking list', 'En lista de recolección')}
+                </span>
+              )}
+              {isSplit && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 text-[13px] font-medium">
+                  <Icon d={I.info} className="w-3.5 h-3.5" />
+                  {tEN(`${max} of ${loadTotalBales} bales here`, `${max} de ${loadTotalBales} pacas aquí`)}
+                </span>
+              )}
             </div>
+          )}
 
-            <SplitLoadBanner splits={splits} lang={lang} />
-          </div>
+          {/* Load-based: bale count picker [-] [input] [+] */}
+          {!isBale && (
+            <>
+              <div className="mt-5 flex items-stretch gap-3">
+                <button
+                  type="button"
+                  onClick={() => setBales(clamp(bales - 1))}
+                  className="w-20 h-20 rounded-lg border border-neutral-10 text-3xl font-semibold text-neutral-100 hover:bg-neutral-5"
+                  aria-label="Decrease"
+                >−</button>
+                <div className="flex-1 min-w-[160px]">
+                  <FieldsetInput
+                    label={tEN('Number of bales', 'Número de pacas')}
+                    required
+                    focused
+                  >
+                    <input
+                      type="number"
+                      min={0}
+                      max={max}
+                      value={bales}
+                      onChange={e => setBales(clamp(Number(e.target.value) || 0))}
+                      className="w-full h-20 px-4 bg-transparent text-3xl font-medium text-neutral-100 text-center focus:outline-none"
+                    />
+                  </FieldsetInput>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBales(clamp(bales + 1))}
+                  className="w-20 h-20 rounded-lg border border-neutral-10 text-3xl font-semibold text-neutral-100 hover:bg-neutral-5"
+                  aria-label="Increase"
+                >+</button>
+              </div>
+              <p className="text-[13px] text-neutral-60 text-center mt-2">
+                {tEN(`Pick up to ${max} bales from the top batch.`,
+                     `Recoge hasta ${max} pacas del lote superior.`)}
+              </p>
+              <div className="mt-4">
+                <SplitLoadBanner splits={splits} lang={lang} />
+              </div>
+            </>
+          )}
+
+          {/* Bale-based: required processed weight input */}
+          {isBale && (
+            <>
+              <p className="text-[13px] text-neutral-60 mt-1">
+                {source === 'buffer'
+                  ? tEN(`From buffer · 1 bale at a time`, `Desde búfer · 1 paca a la vez`)
+                  : tEN(`From Zone ${zone?.id} · Bay ${bay?.id} · 1 bale at a time`,
+                        `Desde Zona ${zone?.id} · Fila ${bay?.id} · 1 paca a la vez`)}
+              </p>
+              <div className="mt-5">
+                <FieldsetInput
+                  label={tEN('Processed weight', 'Peso procesado')}
+                  suffix="kg"
+                  value={processedWeight}
+                  onChange={e => setProcessedWeight(e.target.value)}
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  required
+                  focused
+                />
+              </div>
+            </>
+          )}
 
           <div className="mt-6 flex gap-2 justify-end">
             <button onClick={onCancel} className="px-4 py-2.5 rounded-lg border border-neutral-10 text-[13px] font-medium hover:bg-neutral-5 min-h-[44px]">
               {tEN('Cancel', 'Cancelar')}
             </button>
             <button
-              disabled={bales === 0 || (mode === 'manual' && manualWeightNum <= 0)}
-              onClick={() => onConfirm({ bales, weight: finalWeight })}
+              disabled={!canSubmit}
+              onClick={() => {
+                if (isBale) {
+                  onConfirm({ bales: 1, weight: pwNum });
+                } else {
+                  const weight = Math.round(bales * avgWeight);
+                  onConfirm({ bales, weight });
+                }
+              }}
               className={
                 'px-4 py-2.5 rounded-lg text-[13px] font-medium min-h-[44px] ' +
-                (bales === 0 || (mode === 'manual' && manualWeightNum <= 0)
+                (!canSubmit
                   ? 'bg-neutral-10 text-neutral-40 cursor-not-allowed'
                   : 'bg-safi-600 text-white hover:bg-safi-700')
               }
             >
-              {tEN('Process material', 'Procesar material')}
+              {tEN('Process bales', 'Procesar pacas')}
             </button>
           </div>
         </div>
@@ -4196,76 +4412,109 @@
     );
   }
 
-  function RejectMaterialModal({ source, zone, bay, remaining, avgWeight, lang, onCancel, onConfirm }) {
+  // -------------------------------------------------------------------------
+  // R25: RejectMaterialModal - branches on pickerMode.
+  //
+  // load-based: FO chooses N bales (whole load or partial). Reason required.
+  //   Weight is auto pro-rated (load.weight / load.bales) × bales — no input.
+  //
+  // bale-based: 1 bale only (max enforced). Reason required. Bale weight is
+  //   REQUIRED (no longer optional, per R25 spec).
+  // -------------------------------------------------------------------------
+  function RejectMaterialModal({ source, zone, bay, load, remaining, avgWeight, lang, pickerMode = 'load', onCancel, onConfirm }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
-    const max = remaining.bales;
-    const [bales, setBales] = useState(Math.min(max, 1));
+    const isBale = pickerMode === 'bale';
+    const maxAccessible = remaining.bales;
+    const max = isBale ? 1 : maxAccessible;
+    const [bales, setBales] = useState(isBale ? 1 : Math.min(max, 1));
     const [reason, setReason] = useState('');
     const [bWeight, setBWeight] = useState('');
+    const clamp = (n) => Math.max(0, Math.min(max, n));
     const reasons = lang === 'es'
       ? ['Contaminación', 'Material incorrecto', 'Daño por humedad', 'Otro']
       : ['Contamination', 'Wrong material', 'Moisture damage', 'Other'];
-    const assumedWeight = Math.round(bales * avgWeight);
+
+    const bWeightNum = Number(bWeight) || 0;
+    const proRatedWeight = Math.round(bales * avgWeight);
+    const finalWeight = isBale ? bWeightNum : proRatedWeight;
+
+    const titleEN = source === 'buffer'
+      ? 'Reject bales from buffer'
+      : `Reject bales from Bay ${bay?.id}`;
+    const titleES = source === 'buffer'
+      ? 'Rechazar pacas del búfer'
+      : `Rechazar pacas de Fila ${bay?.id}`;
+
+    const canSubmit = bales > 0 && !!reason && (!isBale || bWeightNum > 0);
+
     return (
       <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
         <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
-          <h3 className="font-bold text-lg text-neutral-100">
-            {tEN('Reject material', 'Rechazar material')}
-          </h3>
-          <p className="text-[13px] text-neutral-60 mt-1">
-            {source === 'buffer'
-              ? tEN(`From buffer · ${fmtNum(max)} bales`, `Desde búfer · ${fmtNum(max)} pacas`)
-              : tEN(`From Zone ${zone.id} · Bay ${bay.id} · ${fmtNum(max)} bales`,
-                    `Desde Zona ${zone.id} · Fila ${bay.id} · ${fmtNum(max)} pacas`)}
-          </p>
+          <h3 className="font-bold text-lg text-neutral-100">{tEN(titleEN, titleES)}</h3>
+          {load && (
+            <p className="text-[13px] text-neutral-60 mt-1">
+              {tEN(`Load #${load.lot} · ${fmtNum(load.bales)} bales total · ${fmtKg(load.weight)}`,
+                   `Lote #${load.lot} · ${fmtNum(load.bales)} pacas totales · ${fmtKg(load.weight)}`)}
+            </p>
+          )}
 
           <div className="mt-5 space-y-4">
-            <BaleStepper
-              value={bales}
-              setValue={setBales}
-              max={max}
-              label={tEN('Number of bales to reject', 'Número de pacas a rechazar')}
-              lang={lang}
-            />
+            {/* Number of bales - load-based gets a stepper, bale-based is read-only at 1 */}
             <div>
-              <label className="block text-[13px] font-medium text-neutral-80 mb-1.5">
-                {tEN('Reason', 'Motivo')}
-              </label>
-              <select
-                value={reason}
-                onChange={e => setReason(e.target.value)}
-                className="w-full h-11 px-3 border border-neutral-10 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+              <FieldsetInput
+                label={tEN('Number of bales', 'Número de pacas')}
+                required
+                focused
               >
-                <option value="">{tEN('Select a reason…', 'Selecciona un motivo…')}</option>
-                {reasons.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
+                <input
+                  type="number"
+                  min={isBale ? 1 : 0}
+                  max={max}
+                  value={bales}
+                  onChange={e => isBale ? null : setBales(clamp(Number(e.target.value) || 0))}
+                  readOnly={isBale}
+                  className={'w-full h-14 px-4 bg-transparent text-2xl font-medium text-neutral-100 focus:outline-none ' + (isBale ? 'cursor-default' : '')}
+                />
+              </FieldsetInput>
+              <p className="text-[13px] text-neutral-60 mt-1.5">
+                {isBale
+                  ? tEN('Max 1 (taken from the top batch).', 'Máximo 1 (tomada del lote superior).')
+                  : tEN(`Max ${maxAccessible} (taken from the top batch).`,
+                        `Máximo ${maxAccessible} (tomadas del lote superior).`)}
+              </p>
             </div>
-            {bales === 1 && (
+
+            <div>
+              <FieldsetInput label={tEN('Reason', 'Motivo')} required focused={!!reason}>
+                <select
+                  value={reason}
+                  onChange={e => setReason(e.target.value)}
+                  className="w-full h-14 px-4 bg-transparent text-base text-neutral-100 focus:outline-none appearance-none"
+                >
+                  <option value="">{tEN('Select a reason…', 'Selecciona un motivo…')}</option>
+                  {reasons.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </FieldsetInput>
+            </div>
+
+            {isBale ? (
               <div>
-                <label className="block text-[13px] font-medium text-neutral-80 mb-1.5">
-                  {tEN('Bale weight (optional)', 'Peso de la paca (opcional)')}
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.1"
-                    value={bWeight}
-                    onChange={e => setBWeight(e.target.value)}
-                    placeholder={tEN('e.g. 60', 'p. ej. 60')}
-                    className="w-32 h-11 px-3 border border-neutral-10 rounded-lg text-base font-medium bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
-                  />
-                  <span className="text-[13px] text-neutral-60">kg</span>
-                </div>
-                <p className="text-[13px] text-neutral-60 mt-1">
-                  {tEN('Only recorded when rejecting a single bale.', 'Solo se registra al rechazar una sola paca.')}
-                </p>
+                <FieldsetInput
+                  label={tEN('Bale weight', 'Peso de la paca')}
+                  suffix="kg"
+                  required
+                  value={bWeight}
+                  onChange={e => setBWeight(e.target.value)}
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  focused={bWeightNum > 0}
+                />
               </div>
-            )}
-            {bales > 1 && (
+            ) : (
               <div className="text-[13px] text-neutral-60">
-                {tEN(`Estimated weight: ${fmtKg(assumedWeight)} (avg ${Math.round(avgWeight)} kg/bale)`,
-                     `Peso estimado: ${fmtKg(assumedWeight)} (prom. ${Math.round(avgWeight)} kg/paca)`)}
+                {tEN(`Estimated weight: ${fmtKg(proRatedWeight)} (auto pro-rated from load total).`,
+                     `Peso estimado: ${fmtKg(proRatedWeight)} (calculado automáticamente).`)}
               </div>
             )}
           </div>
@@ -4275,11 +4524,11 @@
               {tEN('Cancel', 'Cancelar')}
             </button>
             <button
-              disabled={bales === 0 || !reason}
-              onClick={() => onConfirm({ bales, reason, weight: bWeight ? Number(bWeight) * bales : assumedWeight })}
+              disabled={!canSubmit}
+              onClick={() => onConfirm({ bales, reason, weight: finalWeight })}
               className={
                 'px-4 py-2.5 rounded-lg text-[13px] font-medium min-h-[44px] ' +
-                (bales === 0 || !reason
+                (!canSubmit
                   ? 'bg-neutral-10 text-neutral-40 cursor-not-allowed'
                   : 'bg-red-600 text-white hover:bg-red-700')
               }
