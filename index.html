@@ -777,18 +777,37 @@
     // R25: DensityDots - row of blue squares where each square = 100 bales (rounded).
     // Used in the yard-overview Density tab and on bay tiles as a lightweight
     // density preview. `size` controls the tile dimensions:
-    //   - lg: 20px squares for zone overview
-    //   - sm: 8px squares for bay tiles (super lightweight per R25 spec)
+    //   - lg: 20px squares for zone overview, wrapped in a Tooltip showing the
+    //         bale count this tile represents (R27).
+    //   - sm: 8px squares for bay tiles (super lightweight per R25 spec) - no
+    //         tooltip since they're too small to be useful interaction targets.
     const DensityDots = ({ bales, size = 'lg' }) => {
       const count = bales > 0 ? Math.max(1, Math.round(bales / 100)) : 0;
       if (count === 0) return null;
       const tileCls = size === 'lg' ? 'w-5 h-5 rounded-[5px]' : 'w-2 h-2 rounded-[2px]';
       const gapCls = size === 'lg' ? 'gap-1.5' : 'gap-1';
+      // Allocate bales across tiles. All tiles hold 100 except the last, which
+      // holds the remainder (or `bales` itself when count === 1).
+      const balesIn = (i) => (i === count - 1) ? (bales - 100 * i) : 100;
       return (
-        <div className={'flex flex-wrap ' + gapCls} aria-hidden="true">
-          {Array.from({ length: count }).map((_, i) => (
-            <div key={i} className={tileCls + ' bg-sky-500'} />
-          ))}
+        <div className={'flex flex-wrap ' + gapCls}>
+          {Array.from({ length: count }).map((_, i) => {
+            const n = balesIn(i);
+            const label = `${fmtNum(n)} ${n === 1 ? (lang === 'es' ? 'paca' : 'bale') : (lang === 'es' ? 'pacas' : 'bales')}`;
+            if (size !== 'lg') {
+              return <div key={i} className={tileCls + ' bg-sky-500'} aria-hidden="true" />;
+            }
+            return (
+              <Tooltip key={i} content={<span className="font-semibold text-neutral-100">{label}</span>} className="inline-block">
+                <div
+                  className={tileCls + ' bg-sky-500 cursor-default focus:outline-none focus:ring-2 focus:ring-safi-600 focus:ring-offset-1'}
+                  tabIndex={0}
+                  role="img"
+                  aria-label={label}
+                />
+              </Tooltip>
+            );
+          })}
         </div>
       );
     };
