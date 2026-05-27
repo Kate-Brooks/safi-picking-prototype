@@ -4435,7 +4435,9 @@
     const isBale = pickerMode === 'bale';
     const maxAccessible = remaining.bales;
     const max = isBale ? 1 : maxAccessible;
-    const [bales, setBales] = useState(isBale ? 1 : Math.min(max, 1));
+    // R28: defaults - load-based starts at the full load (max), bale-based starts at 0
+    // and the FO must explicitly set it to 1 before they can reject.
+    const [bales, setBales] = useState(isBale ? 0 : maxAccessible);
     const [reason, setReason] = useState('');
     const [bWeight, setBWeight] = useState('');
     const clamp = (n) => Math.max(0, Math.min(max, n));
@@ -4447,12 +4449,13 @@
     const proRatedWeight = Math.round(bales * avgWeight);
     const finalWeight = isBale ? bWeightNum : proRatedWeight;
 
+    // R28: title copy - "Reject material from Bay X" (was "bales") in both modes.
     const titleEN = source === 'buffer'
-      ? 'Reject bales from buffer'
-      : `Reject bales from Bay ${bay?.id}`;
+      ? 'Reject material from buffer'
+      : `Reject material from Bay ${bay?.id}`;
     const titleES = source === 'buffer'
-      ? 'Rechazar pacas del búfer'
-      : `Rechazar pacas de Fila ${bay?.id}`;
+      ? 'Rechazar material del búfer'
+      : `Rechazar material de Fila ${bay?.id}`;
 
     const canSubmit = bales > 0 && !!reason && (!isBale || bWeightNum > 0);
 
@@ -4477,12 +4480,11 @@
               >
                 <input
                   type="number"
-                  min={isBale ? 1 : 0}
+                  min={0}
                   max={max}
                   value={bales}
-                  onChange={e => isBale ? null : setBales(clamp(Number(e.target.value) || 0))}
-                  readOnly={isBale}
-                  className={'w-full h-14 px-4 bg-transparent text-2xl font-medium text-neutral-100 focus:outline-none ' + (isBale ? 'cursor-default' : '')}
+                  onChange={e => setBales(clamp(Number(e.target.value) || 0))}
+                  className="w-full h-14 px-4 bg-transparent text-2xl font-medium text-neutral-100 focus:outline-none"
                 />
               </FieldsetInput>
               <p className="text-[13px] text-neutral-60 mt-1.5">
