@@ -2003,7 +2003,12 @@
       endedAt:   '2026-05-20T15:14:00Z',
       balesProcessed: 6, loadsProcessed: 1, weightProcessed: 4880, actualInputPct: 67.3,
       specAverages: null,
-      recentItems: [],
+      recentItems: [
+        { id: 'pw1-b1', kind: 'bale', supplier: 'Plasti Trade Ltd.', lot: '93958712', weight: 605, processedBy: 'Paddy Corr',     at: '2026-05-20T15:10:00Z', note: null },
+        { id: 'pw1-b2', kind: 'bale', supplier: 'Plasti Trade Ltd.', lot: '93958712', weight: 588, processedBy: 'Paddy Corr',     at: '2026-05-20T14:55:00Z', note: 'Slight moisture' },
+        { id: 'pw1-b3', kind: 'bale', supplier: 'Duino Materials',   lot: '0928374',  weight: 612, processedBy: 'Mariana Suárez', at: '2026-05-20T13:42:00Z', note: null },
+        { id: 'pw1-l1', kind: 'load', supplier: 'Plasti Trade Ltd.', lot: '93958712', weight: 4880, processedBy: 'Paddy Corr',    at: '2026-05-20T15:14:00Z', note: null, bales: 6 },
+      ],
       mismatches: [],
       rejectedBales: [
         { id: 'r2', lot: '0928374', supplier: 'Duino Materials', sourceBay: 'Bay A', reason: 'Wrong material', weight: 180, at: '2026-05-08T15:41:00Z', rejectedBy: 'Kate Brooks' },
@@ -2016,7 +2021,13 @@
       endedAt:   '2026-05-12T11:24:00Z',
       balesProcessed: 4, loadsProcessed: 1, weightProcessed: 694, actualInputPct: 96.1,
       specAverages: { transparent: 96.1, light: 96.0, coloured: 2.3, contaminants: 0.1 },
-      recentItems: [], mismatches: [], rejectedBales: [],
+      recentItems: [
+        { id: 'pw2-b1', kind: 'bale', supplier: 'Aurora Recycling',  lot: 'AR04421',  weight: 178, processedBy: 'Paddy Corr',     at: '2026-05-12T11:20:00Z', note: null },
+        { id: 'pw2-b2', kind: 'bale', supplier: 'Aurora Recycling',  lot: 'AR04421',  weight: 172, processedBy: 'Paddy Corr',     at: '2026-05-12T10:08:00Z', note: null },
+        { id: 'pw2-b3', kind: 'bale', supplier: 'Aurora Recycling',  lot: 'AR04421',  weight: 170, processedBy: 'Mariana Suárez', at: '2026-05-12T09:42:00Z', note: null },
+        { id: 'pw2-l1', kind: 'load', supplier: 'Aurora Recycling',  lot: 'AR04421',  weight: 694, processedBy: 'Paddy Corr',     at: '2026-05-12T11:24:00Z', note: 'Clean batch', bales: 4 },
+      ],
+      mismatches: [], rejectedBales: [],
     },
     {
       id: 'pw-3',
@@ -2025,7 +2036,14 @@
       endedAt:   '2026-05-08T15:49:00Z',
       balesProcessed: 9, loadsProcessed: 2, weightProcessed: 1780, actualInputPct: 74.6,
       specAverages: null,
-      recentItems: [], mismatches: [], rejectedBales: [],
+      recentItems: [
+        { id: 'pw3-b1', kind: 'bale', supplier: 'Sevilla Pack',      lot: 'SP77821',  weight: 198, processedBy: 'Mariana Suárez', at: '2026-05-08T15:45:00Z', note: null },
+        { id: 'pw3-b2', kind: 'bale', supplier: 'Sevilla Pack',      lot: 'SP77821',  weight: 192, processedBy: 'Mariana Suárez', at: '2026-05-08T14:30:00Z', note: 'Mixed grade' },
+        { id: 'pw3-b3', kind: 'bale', supplier: 'Plasti Trade Ltd.', lot: '93958745', weight: 215, processedBy: 'Paddy Corr',     at: '2026-05-07T16:12:00Z', note: null },
+        { id: 'pw3-l1', kind: 'load', supplier: 'Sevilla Pack',      lot: 'SP77821',  weight: 980, processedBy: 'Mariana Suárez', at: '2026-05-08T15:49:00Z', note: null, bales: 5 },
+        { id: 'pw3-l2', kind: 'load', supplier: 'Plasti Trade Ltd.', lot: '93958745', weight: 800, processedBy: 'Paddy Corr',     at: '2026-05-07T16:30:00Z', note: null, bales: 4 },
+      ],
+      mismatches: [], rejectedBales: [],
     },
     {
       id: 'pw-4',
@@ -2034,7 +2052,11 @@
       endedAt:   '2026-04-30T12:43:00Z',
       balesProcessed: 1, loadsProcessed: 1, weightProcessed: 250, actualInputPct: 71.2,
       specAverages: { transparent: 71.2, light: 55.7, coloured: 17.4, contaminants: 0.6 },
-      recentItems: [], mismatches: [], rejectedBales: [],
+      recentItems: [
+        { id: 'pw4-b1', kind: 'bale', supplier: 'Trieste rPET Ltf',  lot: '0928401',  weight: 250, processedBy: 'Paddy Corr',     at: '2026-04-30T12:42:00Z', note: 'Off-spec colour' },
+        { id: 'pw4-l1', kind: 'load', supplier: 'Trieste rPET Ltf',  lot: '0928401',  weight: 250, processedBy: 'Paddy Corr',     at: '2026-04-30T12:43:00Z', note: null, bales: 1 },
+      ],
+      mismatches: [], rejectedBales: [],
     },
     {
       id: 'pw-5',
@@ -2043,7 +2065,14 @@
       endedAt:   '2026-04-30T11:29:00Z',
       balesProcessed: 11, loadsProcessed: 2, weightProcessed: 5500, actualInputPct: 75.2,
       specAverages: { transparent: 75.2, light: 68.0, coloured: 15.5, contaminants: 0.3 },
-      recentItems: [], mismatches: [], rejectedBales: [],
+      recentItems: [
+        { id: 'pw5-b1', kind: 'bale', supplier: 'Aurora Recycling',  lot: 'AR04450',  weight: 502, processedBy: 'Paddy Corr',     at: '2026-04-30T11:25:00Z', note: null },
+        { id: 'pw5-b2', kind: 'bale', supplier: 'Aurora Recycling',  lot: 'AR04450',  weight: 488, processedBy: 'Paddy Corr',     at: '2026-04-30T10:48:00Z', note: null },
+        { id: 'pw5-b3', kind: 'bale', supplier: 'Plasti Trade Ltd.', lot: '93958802', weight: 515, processedBy: 'Mariana Suárez', at: '2026-04-30T10:12:00Z', note: null },
+        { id: 'pw5-l1', kind: 'load', supplier: 'Aurora Recycling',  lot: 'AR04450',  weight: 3000, processedBy: 'Paddy Corr',    at: '2026-04-30T11:29:00Z', note: null, bales: 6 },
+        { id: 'pw5-l2', kind: 'load', supplier: 'Plasti Trade Ltd.', lot: '93958802', weight: 2500, processedBy: 'Mariana Suárez', at: '2026-04-30T10:30:00Z', note: null, bales: 5 },
+      ],
+      mismatches: [], rejectedBales: [],
     },
     {
       id: 'pw-6',
@@ -2052,7 +2081,11 @@
       endedAt:   '2026-04-30T09:44:00Z',
       balesProcessed: 1, loadsProcessed: 1, weightProcessed: 900, actualInputPct: 73.3,
       specAverages: { transparent: 73.3, light: 70.1, coloured: 17.8, contaminants: 0.4 },
-      recentItems: [], mismatches: [], rejectedBales: [],
+      recentItems: [
+        { id: 'pw6-b1', kind: 'bale', supplier: 'Sevilla Pack',      lot: 'SP77855',  weight: 900, processedBy: 'Mariana Suárez', at: '2026-04-30T09:40:00Z', note: null },
+        { id: 'pw6-l1', kind: 'load', supplier: 'Sevilla Pack',      lot: 'SP77855',  weight: 900, processedBy: 'Mariana Suárez', at: '2026-04-30T09:44:00Z', note: null, bales: 1 },
+      ],
+      mismatches: [], rejectedBales: [],
     },
     {
       id: 'pw-7',
@@ -2061,7 +2094,12 @@
       endedAt:   '2026-04-26T17:23:00Z',
       balesProcessed: 2, loadsProcessed: 1, weightProcessed: 12912, actualInputPct: 73.3,
       specAverages: { transparent: 73.3, light: 70.1, coloured: 17.8, contaminants: 0.4 },
-      recentItems: [], mismatches: [], rejectedBales: [],
+      recentItems: [
+        { id: 'pw7-b1', kind: 'bale', supplier: 'Duino Materials',   lot: 'BE83721',  weight: 6500, processedBy: 'Paddy Corr',    at: '2026-04-26T17:18:00Z', note: 'Large bale' },
+        { id: 'pw7-b2', kind: 'bale', supplier: 'Duino Materials',   lot: 'BE83721',  weight: 6412, processedBy: 'Paddy Corr',    at: '2026-04-26T16:42:00Z', note: null },
+        { id: 'pw7-l1', kind: 'load', supplier: 'Duino Materials',   lot: 'BE83721',  weight: 12912, processedBy: 'Paddy Corr',   at: '2026-04-26T17:23:00Z', note: null, bales: 2 },
+      ],
+      mismatches: [], rejectedBales: [],
     },
     {
       id: 'pw-8',
@@ -2070,16 +2108,59 @@
       endedAt:   '2026-04-10T10:12:00Z',
       balesProcessed: 2, loadsProcessed: 1, weightProcessed: 373, actualInputPct: 83.3,
       specAverages: { transparent: 83.3, light: 82.6, coloured: 1.2, contaminants: 10.9 },
-      recentItems: [], mismatches: [], rejectedBales: [],
+      recentItems: [
+        { id: 'pw8-b1', kind: 'bale', supplier: 'Aurora Recycling',  lot: 'AR04401',  weight: 186, processedBy: 'Mariana Suárez', at: '2026-04-10T10:08:00Z', note: null },
+        { id: 'pw8-b2', kind: 'bale', supplier: 'Aurora Recycling',  lot: 'AR04401',  weight: 187, processedBy: 'Mariana Suárez', at: '2026-04-10T09:42:00Z', note: 'High contaminants' },
+        { id: 'pw8-l1', kind: 'load', supplier: 'Aurora Recycling',  lot: 'AR04401',  weight: 373, processedBy: 'Mariana Suárez', at: '2026-04-10T10:12:00Z', note: null, bales: 2 },
+      ],
+      mismatches: [], rejectedBales: [],
     },
   ];
 
-  // R29: HistoryView - one row per production window (active first, then most-recent-first).
+  // R30: TablePagination - MUI-aligned footer with "1-N of M" + prev/next.
+  // Rows per page is fixed at 5 in this prototype; in production it would be a
+  // dropdown. Renders nothing when there's <= one page of data.
+  function TablePagination({ total, page, perPage = 5, onPage, lang = 'en' }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    if (total <= perPage) return null;
+    const totalPages = Math.max(1, Math.ceil(total / perPage));
+    const start = total === 0 ? 0 : page * perPage + 1;
+    const end = Math.min(total, (page + 1) * perPage);
+    return (
+      <div className="flex items-center justify-end gap-4 px-4 py-2.5 text-[13px] text-neutral-80 border-t border-neutral-10">
+        <div className="tabular-nums">
+          {start}-{end} {tEN('of', 'de')} {total}
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => onPage(Math.max(0, page - 1))}
+            disabled={page === 0}
+            aria-label={tEN('Previous page', 'Página anterior')}
+            className={'p-1.5 rounded-full ' + (page === 0 ? 'text-neutral-40 cursor-not-allowed' : 'text-neutral-100 hover:bg-neutral-5')}
+          >
+            <Icon d={I.arrowL} className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => onPage(Math.min(totalPages - 1, page + 1))}
+            disabled={page >= totalPages - 1}
+            aria-label={tEN('Next page', 'Página siguiente')}
+            className={'p-1.5 rounded-full ' + (page >= totalPages - 1 ? 'text-neutral-40 cursor-not-allowed' : 'text-neutral-100 hover:bg-neutral-5')}
+          >
+            <Icon d={I.arrowR} className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // R29/R30: HistoryView - one row per production window (active first, then most-recent-first).
   // Supplier filter sits above; clicking a row opens the side drawer with per-window detail.
   function HistoryView({ processed, pickerMode = 'load', lang = 'en' }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
     const [supplierQuery, setSupplierQuery] = useState('');
     const [selectedWindow, setSelectedWindow] = useState(null);
+    const [page, setPage] = useState(0);
+    const perPage = 5;
     const isBale = pickerMode === 'bale';
 
     // Filter by supplier - matches against any supplier in recentItems / mismatches / rejectedBales.
@@ -2101,6 +2182,10 @@
       return new Date(b.startedAt) - new Date(a.startedAt);
     });
     const visibleWindows = orderedWindows.filter(matchesSupplier);
+    const pagedWindows = visibleWindows.slice(page * perPage, (page + 1) * perPage);
+
+    // Reset to first page whenever the filter changes
+    useEffect(() => { setPage(0); }, [supplierQuery]);
 
     const active = orderedWindows.find(w => w.endedAt === null);
     const activeAlerts = active
@@ -2108,12 +2193,13 @@
       : { mismatches: 0, rejected: 0 };
     const hasActiveAlert = activeAlerts.mismatches + activeAlerts.rejected > 0;
 
+    // R30: single-line date range with hyphen separator. Active window reads "X - ongoing".
     const fmtDateRange = (started, ended) => {
       const fmt = (d) => new Date(d).toLocaleString('en-GB', {
         day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
       });
-      if (!ended) return { line1: `${fmt(started)} - ${tEN('ongoing', 'en curso')}` };
-      return { line1: fmt(started), line2: fmt(ended) };
+      if (!ended) return `${fmt(started)} - ${tEN('ongoing', 'en curso')}`;
+      return `${fmt(started)} - ${fmt(ended)}`;
     };
 
     return (
@@ -2171,22 +2257,38 @@
             <h3 className="font-bold text-neutral-100 text-lg">{tEN('Previous production windows', 'Ventanas de producción anteriores')}</h3>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-neutral-5">
-                <tr className="text-left text-[13px] font-semibold uppercase tracking-wide text-neutral-60">
-                  <th className="px-5 py-3">{tEN('Time period', 'Período')}</th>
-                  <th className="px-5 py-3">{tEN('Material', 'Material')}</th>
-                  <th className="px-5 py-3">{isBale ? tEN('Bales processed', 'Pacas procesadas') : tEN('Loads processed', 'Lotes procesados')}</th>
-                  <th className="px-5 py-3">{tEN('Weight processed', 'Peso procesado')}</th>
-                  <th className="px-5 py-3">{tEN('Actual input', 'Entrada real')}</th>
-                  <th className="px-5 py-3">{tEN('Spec averages', 'Promedios de espec.')}</th>
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col className="w-[300px]" />
+                <col className="w-[160px]" />
+                <col className="w-[160px]" />
+                <col className="w-[140px]" />
+                <col className="w-[120px]" />
+                <col />
+              </colgroup>
+              <thead>
+                <tr className="text-left text-[13px] font-medium text-neutral-60 border-b border-neutral-10">
+                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Time period', 'Período')}</th>
+                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Material', 'Material')}</th>
+                  <th className="px-5 py-3 whitespace-nowrap font-medium">{isBale ? tEN('Bales processed', 'Pacas procesadas') : tEN('Loads processed', 'Lotes procesados')}</th>
+                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Weight processed', 'Peso procesado')}</th>
+                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Actual input', 'Entrada real')}</th>
+                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Spec averages', 'Promedios')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-10">
-                {visibleWindows.map(w => {
+                {pagedWindows.map(w => {
                   const range = fmtDateRange(w.startedAt, w.endedAt);
                   const isActive = w.endedAt === null;
                   const counted = isBale ? w.balesProcessed : w.loadsProcessed;
+                  const issuesText = [
+                    w.rejectedBales.length > 0 && tEN(
+                      `${w.rejectedBales.length} rejected`,
+                      `${w.rejectedBales.length} rechazadas`),
+                    w.mismatches.length > 0 && tEN(
+                      `${w.mismatches.length} mismatch${w.mismatches.length === 1 ? '' : 'es'}`,
+                      `${w.mismatches.length} discrepancia${w.mismatches.length === 1 ? '' : 's'}`),
+                  ].filter(Boolean).join(' · ');
                   return (
                     <tr
                       key={w.id}
@@ -2195,13 +2297,8 @@
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedWindow(w); } }}
                       className="hover:bg-safi-50/50 cursor-pointer focus:outline-none focus:bg-safi-50"
                     >
-                      <td className="px-5 py-3 align-top">
-                        <div className="text-[13px] text-neutral-100 leading-snug">
-                          {range.line1}
-                        </div>
-                        {range.line2 && (
-                          <div className="text-[13px] text-neutral-100 leading-snug">{range.line2}</div>
-                        )}
+                      <td className="px-5 py-3 align-top text-[13px] text-neutral-100">
+                        <div className="leading-snug">{range}</div>
                         {isActive && (
                           <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[13px] font-medium">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -2209,11 +2306,19 @@
                           </div>
                         )}
                       </td>
-                      <td className="px-5 py-3 text-neutral-100">{w.material}</td>
-                      <td className="px-5 py-3 text-neutral-100">{fmtNum(counted)}</td>
-                      <td className="px-5 py-3 text-neutral-100">{fmtKg(w.weightProcessed)}</td>
-                      <td className="px-5 py-3 text-neutral-100">{w.actualInputPct.toFixed(1)}%</td>
-                      <td className="px-5 py-3">
+                      <td className="px-5 py-3 text-neutral-100 align-top">{w.material}</td>
+                      <td className="px-5 py-3 align-top">
+                        <div className="text-neutral-100">{fmtNum(counted)}</div>
+                        {issuesText && (
+                          <div className="mt-0.5 inline-flex items-center gap-1 text-[13px] text-amber-800">
+                            <Icon d={I.errorCircle} className="w-3.5 h-3.5 text-amber-700" />
+                            {issuesText}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-5 py-3 text-neutral-100 align-top whitespace-nowrap">{fmtKg(w.weightProcessed)}</td>
+                      <td className="px-5 py-3 text-neutral-100 align-top">{w.actualInputPct.toFixed(1)}%</td>
+                      <td className="px-5 py-3 align-top">
                         {w.specAverages ? (
                           <div className="flex items-center gap-1 flex-wrap">
                             {Object.entries(w.specAverages).map(([k, v]) => (
@@ -2241,6 +2346,7 @@
               </tbody>
             </table>
           </div>
+          <TablePagination total={visibleWindows.length} page={page} perPage={perPage} onPage={setPage} lang={lang} />
         </div>
 
         {/* Right-side drawer */}
@@ -2257,20 +2363,35 @@
     );
   }
 
-  // R29: ProductionWindowDrawer - right-slide-in panel showing per-window detail.
-  // Three sections: time period summary, recent processed items (bales or loads
-  // per pickerMode), identified mismatches (visually emphasised), rejected bales
-  // (with linked order ref + storage location columns).
+  // R29/R30: ProductionWindowDrawer - right-slide-in panel showing per-window detail.
+  // Sections: time period summary, recent processed items (bales or loads per
+  // pickerMode), identified mismatches (visually emphasised - rendered ONLY when
+  // there are any), rejected bales (rendered ONLY when there are any). Tables use
+  // MUI-aligned styling (sentence-case headers) and merge processed-by + timestamp
+  // into a single column. Pagination provided by the shared TablePagination.
   function ProductionWindowDrawer({ window: pw, pickerMode, lang, onClose, fmtDateRange }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
     const isBale = pickerMode === 'bale';
     const isActive = pw.endedAt === null;
-    const range = fmtDateRange(pw.startedAt, pw.endedAt);
     const fmtAt = (d) => new Date(d).toLocaleString('en-GB', {
       day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
     });
 
     const processedItems = pw.recentItems.filter(i => isBale ? i.kind === 'bale' : i.kind === 'load');
+
+    // Per-table pagination state (5 rows each).
+    const [pageProcessed, setPageProcessed] = useState(0);
+    const [pageMismatch,  setPageMismatch]  = useState(0);
+    const [pageReject,    setPageReject]    = useState(0);
+    const perPage = 5;
+    const slice = (arr, page) => arr.slice(page * perPage, (page + 1) * perPage);
+
+    const ByLine = ({ name, at }) => (
+      <div>
+        <div className="text-neutral-100">{name}</div>
+        <div className="text-[13px] text-neutral-60">{fmtAt(at)}</div>
+      </div>
+    );
 
     return (
       <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
@@ -2279,16 +2400,16 @@
           role="dialog"
           aria-label={tEN('Production window detail', 'Detalle de ventana de producción')}
           onClick={e => e.stopPropagation()}
-          className="relative bg-white w-full max-w-[720px] h-full overflow-y-auto shadow-2xl"
+          className="relative bg-white w-full max-w-[820px] h-full overflow-y-auto shadow-2xl"
         >
           {/* Header */}
           <div className="sticky top-0 bg-white border-b border-neutral-10 px-6 py-4 flex items-start justify-between gap-3 z-10">
             <div className="min-w-0">
-              <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60">
+              <div className="text-[13px] font-medium text-neutral-60">
                 {tEN('Production window', 'Ventana de producción')}
               </div>
               <div className="mt-0.5 text-xl font-bold text-neutral-100 leading-tight">
-                {range.line1}{range.line2 ? ` - ${range.line2}` : ''}
+                {fmtDateRange(pw.startedAt, pw.endedAt)}
               </div>
               <div className="mt-1 flex items-center gap-3 flex-wrap text-[13px] text-neutral-60">
                 <span>{pw.material}</span>
@@ -2318,7 +2439,7 @@
           <div className="px-6 py-5 space-y-6">
             {/* Recent processed */}
             <section>
-              <h4 className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-2">
+              <h4 className="text-base font-bold text-neutral-100 mb-2">
                 {isBale ? tEN('Recent processed bales', 'Pacas procesadas recientes') : tEN('Recent processed loads', 'Lotes procesados recientes')}
               </h4>
               {processedItems.length === 0 ? (
@@ -2328,59 +2449,60 @@
               ) : (
                 <div className="rounded-lg border border-neutral-10 overflow-hidden">
                   <table className="w-full text-[13px]">
-                    <thead className="bg-neutral-5">
-                      <tr className="text-left font-semibold uppercase tracking-wide text-neutral-60">
-                        <th className="px-3 py-2.5">{isBale ? tEN('Recent processed bales', 'Pacas procesadas') : tEN('Recent processed loads', 'Lotes procesados')}</th>
-                        <th className="px-3 py-2.5">{tEN('Processed by', 'Procesado por')}</th>
-                        <th className="px-3 py-2.5">{isBale ? tEN('Bale weight', 'Peso de la paca') : tEN('Load weight', 'Peso del lote')}</th>
-                        <th className="px-3 py-2.5">{tEN('Processed at', 'Procesado el')}</th>
-                        <th className="px-3 py-2.5">{tEN('Note', 'Nota')}</th>
+                    <thead>
+                      <tr className="text-left text-[13px] font-medium text-neutral-60 border-b border-neutral-10">
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Supplier · order ref', 'Proveedor · ref. de pedido')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{isBale ? tEN('Bale weight', 'Peso de la paca') : tEN('Load weight', 'Peso del lote')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Processed by', 'Procesado por')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Note', 'Nota')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-10">
-                      {processedItems.map(it => (
+                      {slice(processedItems, pageProcessed).map(it => (
                         <tr key={it.id}>
-                          <td className="px-3 py-2.5 text-neutral-100">{it.supplier} <span className="text-neutral-60">#{it.lot}</span></td>
-                          <td className="px-3 py-2.5 text-neutral-100">{it.processedBy}</td>
-                          <td className="px-3 py-2.5 text-neutral-100">{fmtKg(it.weight)}</td>
-                          <td className="px-3 py-2.5 text-neutral-100">{fmtAt(it.at)}</td>
+                          <td className="px-3 py-2.5">
+                            <div className="text-neutral-100">{it.supplier}</div>
+                            <a
+                              href="#"
+                              onClick={(e) => e.preventDefault()}
+                              className="text-safi-700 hover:underline font-medium text-[13px]"
+                            >#{it.lot}</a>
+                          </td>
+                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{fmtKg(it.weight)}</td>
+                          <td className="px-3 py-2.5"><ByLine name={it.processedBy} at={it.at} /></td>
                           <td className="px-3 py-2.5 text-neutral-60">{it.note || '-'}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  <TablePagination total={processedItems.length} page={pageProcessed} perPage={perPage} onPage={setPageProcessed} lang={lang} />
                 </div>
               )}
             </section>
 
-            {/* Identified mismatches - prominent treatment */}
-            <section>
-              <div className="flex items-center gap-2 mb-2">
-                <Icon d={I.errorCircle} className="w-4 h-4 text-amber-700" />
-                <h4 className="text-[13px] font-semibold uppercase tracking-wide text-amber-900">
-                  {tEN('Identified weight mismatches', 'Discrepancias de peso identificadas')}
-                </h4>
-              </div>
-              {pw.mismatches.length === 0 ? (
-                <div className="rounded-lg border border-neutral-10 px-4 py-6 text-center text-[13px] text-neutral-60">
-                  {tEN('No mismatches identified for this window.', 'No se identificaron discrepancias para esta ventana.')}
+            {/* Identified mismatches - rendered ONLY when there are any */}
+            {pw.mismatches.length > 0 && (
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <Icon d={I.errorCircle} className="w-4 h-4 text-amber-700" />
+                  <h4 className="text-base font-bold text-amber-900">
+                    {tEN('Identified weight mismatches', 'Discrepancias de peso identificadas')}
+                  </h4>
                 </div>
-              ) : (
                 <div className="rounded-lg border-2 border-amber-200 bg-amber-50/30 overflow-hidden">
                   <table className="w-full text-[13px]">
-                    <thead className="bg-amber-50">
-                      <tr className="text-left font-semibold uppercase tracking-wide text-amber-900">
-                        <th className="px-3 py-2.5">{tEN('Load order reference', 'Ref. del lote')}</th>
-                        <th className="px-3 py-2.5">{tEN('Total received', 'Total recibido')}</th>
-                        <th className="px-3 py-2.5">{tEN('Processed weight', 'Peso procesado')}</th>
-                        <th className="px-3 py-2.5">{tEN('Weight loss', 'Pérdida de peso')}</th>
-                        <th className="px-3 py-2.5">{tEN('Loss %', 'Pérdida %')}</th>
-                        <th className="px-3 py-2.5">{tEN('Processed by', 'Procesado por')}</th>
-                        <th className="px-3 py-2.5">{tEN('Identified at', 'Identificado el')}</th>
+                    <thead>
+                      <tr className="text-left text-[13px] font-medium text-amber-900 border-b border-amber-200">
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Order reference', 'Ref. de pedido')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Total received', 'Total recibido')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Processed weight', 'Peso procesado')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Weight loss', 'Pérdida de peso')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Loss %', 'Pérdida %')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Identified by', 'Identificado por')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-amber-100">
-                      {pw.mismatches.map(m => (
+                      {slice(pw.mismatches, pageMismatch).map(m => (
                         <tr key={m.id}>
                           <td className="px-3 py-2.5">
                             <a
@@ -2390,45 +2512,40 @@
                             >#{m.lot}</a>
                             <div className="text-neutral-60">{m.supplier}</div>
                           </td>
-                          <td className="px-3 py-2.5 text-neutral-100">{fmtKg(m.totalReceived)}</td>
-                          <td className="px-3 py-2.5 text-neutral-100">{fmtKg(m.processedWeight)}</td>
-                          <td className="px-3 py-2.5 text-neutral-100 font-semibold">{fmtKg(m.weightLoss)}</td>
-                          <td className="px-3 py-2.5 text-amber-900 font-bold">{m.lossPct.toFixed(1)}%</td>
-                          <td className="px-3 py-2.5 text-neutral-100">{m.processedBy}</td>
-                          <td className="px-3 py-2.5 text-neutral-100">{fmtAt(m.at)}</td>
+                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{fmtKg(m.totalReceived)}</td>
+                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{fmtKg(m.processedWeight)}</td>
+                          <td className="px-3 py-2.5 text-neutral-100 font-semibold whitespace-nowrap">{fmtKg(m.weightLoss)}</td>
+                          <td className="px-3 py-2.5 text-amber-900 font-bold whitespace-nowrap">{m.lossPct.toFixed(1)}%</td>
+                          <td className="px-3 py-2.5"><ByLine name={m.processedBy} at={m.at} /></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  <TablePagination total={pw.mismatches.length} page={pageMismatch} perPage={perPage} onPage={setPageMismatch} lang={lang} />
                 </div>
-              )}
-            </section>
+              </section>
+            )}
 
-            {/* Rejected bales */}
-            <section>
-              <h4 className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-2">
-                {tEN('Rejected bales', 'Pacas rechazadas')}
-              </h4>
-              {pw.rejectedBales.length === 0 ? (
-                <div className="rounded-lg border border-neutral-10 px-4 py-6 text-center text-[13px] text-neutral-60">
-                  {tEN('No bales were rejected during this window.', 'No se rechazaron pacas durante esta ventana.')}
-                </div>
-              ) : (
+            {/* Rejected bales - rendered ONLY when there are any */}
+            {pw.rejectedBales.length > 0 && (
+              <section>
+                <h4 className="text-base font-bold text-neutral-100 mb-2">
+                  {tEN('Rejected bales', 'Pacas rechazadas')}
+                </h4>
                 <div className="rounded-lg border border-neutral-10 overflow-hidden">
                   <table className="w-full text-[13px]">
-                    <thead className="bg-neutral-5">
-                      <tr className="text-left font-semibold uppercase tracking-wide text-neutral-60">
-                        <th className="px-3 py-2.5">{tEN('Load order reference', 'Ref. del lote')}</th>
-                        <th className="px-3 py-2.5">{tEN('Supplier', 'Proveedor')}</th>
-                        <th className="px-3 py-2.5">{tEN('Storage location', 'Ubicación')}</th>
-                        <th className="px-3 py-2.5">{tEN('Reason', 'Motivo')}</th>
-                        <th className="px-3 py-2.5">{tEN('Weight', 'Peso')}</th>
-                        <th className="px-3 py-2.5">{tEN('Rejected at', 'Rechazado el')}</th>
-                        <th className="px-3 py-2.5">{tEN('Rejected by', 'Rechazado por')}</th>
+                    <thead>
+                      <tr className="text-left text-[13px] font-medium text-neutral-60 border-b border-neutral-10">
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Order reference', 'Ref. de pedido')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Supplier', 'Proveedor')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Storage location', 'Ubicación')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Reason', 'Motivo')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Weight', 'Peso')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Rejected by', 'Rechazado por')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-10">
-                      {pw.rejectedBales.map(r => (
+                      {slice(pw.rejectedBales, pageReject).map(r => (
                         <tr key={r.id}>
                           <td className="px-3 py-2.5">
                             <a
@@ -2442,22 +2559,22 @@
                             </a>
                           </td>
                           <td className="px-3 py-2.5 text-neutral-100">{r.supplier}</td>
-                          <td className="px-3 py-2.5 text-neutral-100">{r.sourceBay}</td>
+                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{r.sourceBay}</td>
                           <td className="px-3 py-2.5">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 text-[13px] font-medium">
                               {r.reason}
                             </span>
                           </td>
-                          <td className="px-3 py-2.5 text-neutral-100">{fmtKg(r.weight)}</td>
-                          <td className="px-3 py-2.5 text-neutral-100">{fmtAt(r.at)}</td>
-                          <td className="px-3 py-2.5 text-neutral-100">{r.rejectedBy}</td>
+                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{fmtKg(r.weight)}</td>
+                          <td className="px-3 py-2.5"><ByLine name={r.rejectedBy} at={r.at} /></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  <TablePagination total={pw.rejectedBales.length} page={pageReject} perPage={perPage} onPage={setPageReject} lang={lang} />
                 </div>
-              )}
-            </section>
+              </section>
+            )}
           </div>
         </aside>
       </div>
