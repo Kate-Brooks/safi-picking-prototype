@@ -425,13 +425,16 @@
   // - If a blocked load's blockers (all preceding loads in the bay) are also on
   //   the picking list, it becomes 'blocked-clearable-via-list' - still selectable
   //   by the SL because the FO will unblock it by clearing the list in order.
-  // R25: Sequential-selection rule applied to ALL zones during picking-list creation,
-  // not just LIFO. Within a bay, a load is only selectable if every load ahead of it
-  // is already in `selectionBales` (or it's the first load). Loads are stored in
-  // pick order, so this enforces a "front to back" selection regardless of the bay's
-  // inventory rule. The function name is kept for compatibility - the LIFO-only
-  // gate has been removed.
-  const isLifoSelectable = (zone, bay, load, selectionBales) => {
+  // R25/R31: Sequential-selection rule during picking-list creation.
+  // Bale-based mode (default): a load is only selectable if every load ahead of
+  //   it in the same bay is already in `selectionBales` (or it's the first load).
+  //   Loads are stored in pick order so this enforces front-to-back picking.
+  // Load-based mode (R31): no sequential constraint - loads in a bay can be
+  //   selected in any order. The forklift picks whole loads so positional
+  //   accessibility isn't a per-bale concern.
+  // The function name is kept for compatibility.
+  const isLifoSelectable = (zone, bay, load, selectionBales, pickerMode = 'load') => {
+    if (pickerMode === 'load') return true;
     const idx = bay.loads.findIndex(l => l.id === load.id);
     if (idx <= 0) return true;
     for (let i = 0; i < idx; i++) {
@@ -1067,35 +1070,60 @@
             </div>
           )}
 
-          {/* Minimap - heat-mapped by quality + selected step highlighting */}
+          {/* Minimap - heat-mapped by quality + selected step highlighting.
+              R31: empty bays render with a diagonal striped pattern so the SL can
+              spot empties at a glance, both in default mode and during picking-list
+              creation. Added "Empty bay" legend item. */}
           {zone.bays.length > 8 && (
             <div className="mb-3 px-3 py-2 rounded-md bg-neutral-5 border border-neutral-10">
               <div className="flex items-end gap-0.5 h-12 w-full" role="navigation" aria-label="Bay minimap - heat-mapped by average load quality">
                 {zone.bays.map((b) => {
                   const s = bayStats(b);
-                  const pct = maxBalesInZone > 0 ? Math.max(8, (s.bales / maxBalesInZone) * 100) : 8;
+                  // Empty bays render at minimum height so the striped pattern is visible
+                  // (rather than collapsing to a sliver invisible to the SL).
+                  const isEmpty = s.bales === 0 || b.loads.length === 0;
+                  const pct = isEmpty
+                    ? 24
+                    : (maxBalesInZone > 0 ? Math.max(8, (s.bales / maxBalesInZone) * 100) : 8);
                   const q = bayQuality(b);
                   const isFocus = focusBayId === b.id;
                   const tipContent = (
                     <div>
                       <div className="font-bold text-neutral-100">{bayName(b, lang)}</div>
                       <ul className="mt-1.5 space-y-0.5 text-[13px] text-neutral-80">
-                        <li>{tr('loads', lang)}: <span className="font-semibold text-neutral-100">{s.loads}</span></li>
-                        <li>{tr('bales', lang)}: <span className="font-semibold text-neutral-100">{fmtNum(s.bales)}</span></li>
+                        {isEmpty ? (
+                          <li className="text-neutral-80">{lang === 'es' ? 'Fila vacía' : 'Empty bay'}</li>
+                        ) : (
+                          <>
+                            <li>{tr('loads', lang)}: <span className="font-semibold text-neutral-100">{s.loads}</span></li>
+                            <li>{tr('bales', lang)}: <span className="font-semibold text-neutral-100">{fmtNum(s.bales)}</span></li>
+                          </>
+                        )}
                       </ul>
                     </div>
                   );
+                  // Empty bay style: light grey background with diagonal stripes.
+                  // Filled bay style: solid quality colour.
+                  const tileStyle = isEmpty
+                    ? {
+                        height: `${pct}%`,
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #d4d4d8',
+                        backgroundImage:
+                          'repeating-linear-gradient(135deg, transparent, transparent 3px, #d4d4d8 3px, #d4d4d8 4px)'
+                      }
+                    : { height: `${pct}%`, backgroundColor: q.color };
                   return (
                     <Tooltip key={b.id} content={tipContent} className="flex-1 flex items-end h-full">
                       <button
                         onClick={() => scrollToBay(b.id)}
-                        aria-label={`Jump to ${bayName(b, lang)} - ${q.label}`}
+                        aria-label={`Jump to ${bayName(b, lang)} - ${isEmpty ? (lang === 'es' ? 'Fila vacía' : 'Empty bay') : q.label}`}
                         aria-pressed={isFocus}
                         className={
                           'w-full rounded-t transition-opacity hover:opacity-80 ' +
                           (isFocus ? 'outline outline-2 outline-safi-600 outline-offset-1 relative z-10' : '')
                         }
-                        style={{ height: `${pct}%`, backgroundColor: q.color }}
+                        style={tileStyle}
                       />
                     </Tooltip>
                   );
@@ -1118,6 +1146,15 @@
                 <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#F59E0B' }} />{lang === 'es' ? 'Mixto' : 'Mixed'}</span>
                 <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#EF4444' }} />{lang === 'es' ? 'Por debajo de especificación' : 'Below spec'}</span>
                 <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#D4D4D8' }} />{lang === 'es' ? 'No analizado' : 'Not analysed'}</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="w-3 h-3 rounded-sm border border-neutral-40"
+                    style={{
+                      backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 1.5px, #d4d4d8 1.5px, #d4d4d8 2.5px)'
+                    }}
+                  />
+                  {lang === 'es' ? 'Fila vacía' : 'Empty bay'}
+                </span>
               </div>
             </div>
           )}
@@ -1401,7 +1438,7 @@
                 {bay.loads.map(load => {
                   const key = `${zone.id}|${bay.id}|${load.id}`;
                   const access = accessibilityOf(zone, bay, load);
-                  const lifoOk = isLifoSelectable(zone, bay, load, selectionBales);
+                  const lifoOk = isLifoSelectable(zone, bay, load, selectionBales, pickerMode);
                   const alreadySelected = selectionBales[key] != null;
                   const accessible = !isCreating || (bay.accessible && (lifoOk || alreadySelected));
                   let onPickingList = false;
@@ -2188,8 +2225,11 @@
     useEffect(() => { setPage(0); }, [supplierQuery]);
 
     const active = orderedWindows.find(w => w.endedAt === null);
+    // R31: load-based processing doesn't weigh material, so mismatches don't apply.
+    // Suppress them everywhere on the History tab when in load-based mode.
+    const showMismatches = pickerMode === 'bale';
     const activeAlerts = active
-      ? { mismatches: active.mismatches.length, rejected: active.rejectedBales.length }
+      ? { mismatches: showMismatches ? active.mismatches.length : 0, rejected: active.rejectedBales.length }
       : { mismatches: 0, rejected: 0 };
     const hasActiveAlert = activeAlerts.mismatches + activeAlerts.rejected > 0;
 
@@ -2285,7 +2325,7 @@
                     w.rejectedBales.length > 0 && tEN(
                       `${w.rejectedBales.length} rejected`,
                       `${w.rejectedBales.length} rechazadas`),
-                    w.mismatches.length > 0 && tEN(
+                    showMismatches && w.mismatches.length > 0 && tEN(
                       `${w.mismatches.length} mismatch${w.mismatches.length === 1 ? '' : 'es'}`,
                       `${w.mismatches.length} discrepancia${w.mismatches.length === 1 ? '' : 's'}`),
                   ].filter(Boolean).join(' · ');
@@ -2480,8 +2520,9 @@
               )}
             </section>
 
-            {/* Identified mismatches - rendered ONLY when there are any */}
-            {pw.mismatches.length > 0 && (
+            {/* Identified mismatches - rendered ONLY when there are any AND we're in bale-based mode.
+                Load-based processing doesn't weigh material so the mismatch concept doesn't apply. */}
+            {!isBale ? null : pw.mismatches.length > 0 && (
               <section>
                 <div className="flex items-center gap-2 mb-2">
                   <Icon d={I.errorCircle} className="w-4 h-4 text-amber-700" />
@@ -2999,7 +3040,7 @@
                                   {visibleLoads.map(load => {
                                     const key = `${zone.id}|${bay.id}|${load.id}`;
                                     const access = accessibilityOf(zone, bay, load);
-                                    const lifoOk = isLifoSelectable(zone, bay, load, selectionBales);
+                                    const lifoOk = isLifoSelectable(zone, bay, load, selectionBales, pickerMode);
                                     const alreadySelected = selectionBales[key] != null;
                                     const selectableThis = !isCreating || (bay.accessible && (lifoOk || alreadySelected));
                                     return (
@@ -3119,7 +3160,7 @@
                                 {bay.loads.map(load => {
                                   const key = `${zone.id}|${bay.id}|${load.id}`;
                                   const access = accessibilityOf(zone, bay, load);
-                                  const lifoOk = isLifoSelectable(zone, bay, load, selectionBales);
+                                  const lifoOk = isLifoSelectable(zone, bay, load, selectionBales, pickerMode);
                                   const alreadySelected = selectionBales[key] != null;
                                   const selectableThis = !isCreating || (bay.accessible && (lifoOk || alreadySelected));
                                   return (
@@ -4001,8 +4042,10 @@
 
     return (
       <div className="space-y-4">
-        {/* R26: Picking list summary - rendered ABOVE the buffer in bale-based mode. */}
-        {pickingList && pickingListSummary && (
+        {/* R26/R31: Picking list summary - rendered ABOVE the buffer in bale-based mode.
+            In load-based mode the FO works whole loads, so the summary card is hidden -
+            picking-list bays are still highlighted in the main list below for context. */}
+        {pickerMode === 'bale' && pickingList && pickingListSummary && (
           <div className="rounded-xl bg-white border border-safi-200 overflow-hidden">
             <button
               onClick={() => setSummaryOpen(v => !v)}
