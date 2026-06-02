@@ -719,7 +719,7 @@
   //           single horizontal row, with a heat-mapped minimap above.
   // Bay view:  full load list (LoadRow re-used).
   // ============================================================================
-  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast }) {
+  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Plant 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast }) {
     const [view, setView] = useState({ level: 'overview' });
     // Which bay tile (if any) should appear first + highlighted (from the filter or minimap stepper)
     const [focusBayId, setFocusBayId] = useState(null);
@@ -1440,13 +1440,20 @@
                   const access = accessibilityOf(zone, bay, load);
                   const lifoOk = isLifoSelectable(zone, bay, load, selectionBales, pickerMode);
                   const alreadySelected = selectionBales[key] != null;
-                  const accessible = !isCreating || (bay.accessible && (lifoOk || alreadySelected));
+                  // R33: a load already claimed by the OTHER production line is locked out
+                  // when the SL is creating/editing this line's list.
+                  const claimOwner = loadClaimMap[load.id] || null;
+                  const lockedByOtherLine = isCreating && claimOwner && claimOwner !== creationLine ? claimOwner : false;
+                  const accessible = !isCreating || (bay.accessible && (lifoOk || alreadySelected)) && !lockedByOtherLine;
                   let onPickingList = false;
-                  if (!isCreating && pickingList) {
-                    const entry = pickingList.loads.find(l => l.loadId === load.id);
+                  let claimedByLine = null;
+                  if (!isCreating && claimOwner) {
+                    claimedByLine = claimOwner;
+                    const owningList = pickingLists.find(pl => pl.productionLine === claimOwner);
+                    const entry = owningList?.loads.find(l => l.loadId === load.id);
                     if (entry) onPickingList = entry.bales != null && entry.bales < load.bales
-                      ? { partial: true, bales: entry.bales }
-                      : true;
+                      ? { partial: true, bales: entry.bales, productionLine: claimOwner }
+                      : { partial: false, productionLine: claimOwner };
                   }
                   return (
                     <LoadRow
@@ -1458,6 +1465,8 @@
                       isSelected={alreadySelected}
                       onToggle={() => toggleLoad(key)}
                       onPickingList={onPickingList}
+                      claimedByLine={claimedByLine}
+                      lockedByOtherLine={lockedByOtherLine}
                       onReject={() => setRejectModal({ zone, bay, load, accessibleBales: access.accessibleBales })}
                     />
                   );
@@ -1524,7 +1533,7 @@
   //   - Create mode: clicking toggles selection.
   //   - Three AI result chips inline next to the order ref. Shown only if analysed.
   //   - "On picking list" indicator when this load is on the active picking list (default mode only).
-  const LoadRow = ({ load, isCreating, accessible, isSelected, onToggle, onPickingList, isAccessibleLoad, onReject }) => {
+  const LoadRow = ({ load, isCreating, accessible, isSelected, onToggle, onPickingList, isAccessibleLoad, onReject, claimedByLine = null, lockedByOtherLine = false }) => {
     const openDetails = (e) => {
       e.stopPropagation();
       // Conceptual placeholder - would normally navigate to a load details page.
@@ -1574,12 +1583,26 @@
           <div className="text-[13px] text-neutral-60 mt-1 flex items-center gap-2 flex-wrap">
             <span>{fmtNum(load.bales)} bales · {fmtKg(load.weight)}</span>
             {/* R26: "Accessible to FO" chip removed globally - accessibility is now implicit from the row context. */}
-            {onPickingList && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium bg-safi-100 text-safi-700">
-                <Icon d={I.list} className="w-3 h-3" />
-                {typeof onPickingList === 'object' && onPickingList.partial
-                  ? `On picking list (${onPickingList.bales}/${load.bales} bales)`
-                  : 'On picking list'}
+            {onPickingList && (() => {
+              // R33: chip surfaces which plant claimed this load. Plant 1 = sky tones, Plant 2 = amber.
+              const plant = claimedByLine || (typeof onPickingList === 'object' ? onPickingList.productionLine : null);
+              const chipCls = plant === 'Plant 2'
+                ? 'bg-amber-50 text-amber-900 ring-1 ring-amber-200'
+                : 'bg-safi-100 text-safi-700';
+              const baseText = typeof onPickingList === 'object' && onPickingList.partial
+                ? `On picking list (${onPickingList.bales}/${load.bales} bales)`
+                : 'On picking list';
+              return (
+                <span className={'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium ' + chipCls}>
+                  <Icon d={I.list} className="w-3 h-3" />
+                  {baseText}{plant ? ` · ${plant}` : ''}
+                </span>
+              );
+            })()}
+            {lockedByOtherLine && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium bg-neutral-10 text-neutral-80">
+                <Icon d={I.lock} className="w-3 h-3" />
+                Claimed by {lockedByOtherLine}
               </span>
             )}
           </div>
@@ -1790,9 +1813,34 @@
     // Tabs - accordion variant removed. Sticky is the default.
     const [tab, setTab] = useState('pw-v2');
 
-    // Picking list state (lifted to the page so both tabs share it)
-    // Shape: { id, name, createdAt, loads: [{zoneId, bayId, loadId}], note }
-    const [pickingList, setPickingList] = useState(null);
+    // R33: Picking list state - one list per production line. Up to 2 plants.
+    // Shape: [{ id, name, createdAt, productionLine, loads: [{zoneId, bayId, loadId, bales}], note }]
+    const [pickingLists, setPickingLists] = useState([]);
+    // Which production line the SL is currently building / editing in create mode.
+    // Defaults to the first line that doesn't already have a list.
+    const [creationLine, setCreationLine] = useState('Plant 1');
+
+    // Helpers - kept light so the rest of the prototype can stay close to its
+    // original single-list shape where it doesn't need multi-line awareness.
+    const getListByLine = (line) => pickingLists.find(l => l.productionLine === line) || null;
+    const upsertList = (line, list) => {
+      setPickingLists(prev => {
+        const i = prev.findIndex(l => l.productionLine === line);
+        if (list === null || list === undefined) {
+          return i >= 0 ? prev.filter((_, j) => j !== i) : prev;
+        }
+        const withLine = { ...list, productionLine: line };
+        if (i >= 0) { const next = [...prev]; next[i] = withLine; return next; }
+        return [...prev, withLine];
+      });
+    };
+    // Map loadId -> productionLine (the plant that has claimed this load).
+    // Used for "load on picking list" chip + selection-claim validation.
+    const loadClaimMap = (() => {
+      const m = {};
+      pickingLists.forEach(pl => pl.loads.forEach(({ loadId }) => { m[loadId] = pl.productionLine; }));
+      return m;
+    })();
 
     // Processed load IDs (FO marks these as processed in the Picker tab)
     const [processed, setProcessed] = useState({}); // { loadId: { bales, weight, at } }
@@ -1832,10 +1880,11 @@
     const [pickerMode, setPickerMode] = useState('load');
     const bufferEnabled = pickerMode === 'bale';
 
-    // Loads remaining to pick (for Picker tab badge)
-    const loadsRemaining = pickingList
-      ? pickingList.loads.filter(({ loadId }) => !processed[loadId]).length
-      : 0;
+    // Loads remaining to pick (for Picker tab badge) - summed across both lines.
+    const loadsRemaining = pickingLists.reduce(
+      (acc, pl) => acc + pl.loads.filter(({ loadId }) => !processed[loadId]).length, 0
+    );
+    const hasAnyList = pickingLists.length > 0;
 
     return (
       <LangContext.Provider value={lang}>
@@ -1887,7 +1936,7 @@
               <Tab id="pw-v2"     label={lang === 'es' ? 'Almacén (lista vertical)' : 'Warehouse (vertical-list)'} tab={tab} setTab={setTab} />
               <Tab id="pw-layout" label={lang === 'es' ? 'Almacén (plano)' : 'Warehouse (layout)'} tab={tab} setTab={setTab} />
               <Tab id="picker-merged" label={lang === 'es' ? 'Recolección' : 'Picker'}                                    tab={tab} setTab={setTab}
-                   badge={pickingList ? loadsRemaining : null} />
+                   badge={hasAnyList ? loadsRemaining : null} />
               <Tab id="history"   label={lang === 'es' ? 'Historial' : 'History'}                                         tab={tab} setTab={setTab} />
               {/* R29: "Rejected bales" tab removed - rejections now surface inside the History drawer for the relevant production window. */}
             </div>
@@ -1895,7 +1944,9 @@
 
           {tab === 'pw-v2'     && <ShiftLeaderView
                                     layout="sticky"
-                                    pickingList={pickingList} setPickingList={setPickingList}
+                                    pickingLists={pickingLists} upsertList={upsertList}
+                                    creationLine={creationLine} setCreationLine={setCreationLine}
+                                    loadClaimMap={loadClaimMap}
                                     setTab={setTab} setRole={setRole}
                                     slMode={slMode} setSlMode={setSlMode}
                                     windowActive={windowActive} setWindowActive={setWindowActive}
@@ -1904,7 +1955,9 @@
                                     pickerMode={pickerMode} />}
           {tab === 'pw-layout' && <ShiftLeaderView
                                     layout="spatial"
-                                    pickingList={pickingList} setPickingList={setPickingList}
+                                    pickingLists={pickingLists} upsertList={upsertList}
+                                    creationLine={creationLine} setCreationLine={setCreationLine}
+                                    loadClaimMap={loadClaimMap}
                                     setTab={setTab} setRole={setRole}
                                     slMode={slMode} setSlMode={setSlMode}
                                     windowActive={windowActive} setWindowActive={setWindowActive}
@@ -1912,7 +1965,7 @@
                                     selectionBales={selectionBales} setSelectionBales={setSelectionBales}
                                     pickerMode={pickerMode} />}
           {/* tab === 'picker' (original load-only Picker) is no longer routed - ForkliftPickerView retained in source */}
-          {tab === 'picker-merged' && <ForkliftPickerMergedView pickingList={pickingList} processed={processed}
+          {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={pickingLists} processed={processed}
                                   setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} />}
           {tab === 'history' && <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} />}
         </div>
@@ -2638,10 +2691,21 @@
   // SHIFT LEADER VIEW - progressive disclosure + picking-list creation
   // ============================================================================
 
-  function ShiftLeaderView({ layout = 'accordion', pickingList, setPickingList, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load' }) {
+  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Plant 1', setCreationLine, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load' }) {
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
+    // R33: derive a single "active list" for the legacy logic that expects one
+    // pickingList - this is whichever list belongs to the production line the SL
+    // is currently building (in create mode) or just the first list (display mode).
+    const pickingList = pickingLists.find(pl => pl.productionLine === creationLine) || (isCreating ? null : pickingLists[0] || null);
+    const setPickingList = (list) => upsertList?.(creationLine, list);
+    // For selection-claim validation - loads claimed by *other* lines than the
+    // one we're currently building are locked out of selection.
+    const claimedByOtherLine = (loadId) => {
+      const owner = loadClaimMap[loadId];
+      return owner && owner !== creationLine;
+    };
     // Filter out fully processed loads - they live in History now.
     const visibleYard = useMemo(() => YARD.map(zone => ({
       ...zone,
@@ -2773,25 +2837,27 @@
 
     const confirmList = () => {
       const previousSelection = { ...selectionBales };
+      const previousList = pickingLists.find(pl => pl.productionLine === creationLine) || null;
       const list = {
         id: 'pl-' + Date.now(),
-        name: `Shift picking list - ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`,
+        productionLine: creationLine,
+        name: `${creationLine} picking list - ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`,
         createdAt: new Date().toISOString(),
         loads: Object.entries(selectionBales).map(([k, bales]) => {
           const [zoneId, bayId, loadId] = k.split('|');
           return { zoneId, bayId, loadId, bales };
         })
       };
-      setPickingList(list);
+      upsertList?.(creationLine, list);
       setSelectionBales({});
       setSlMode('default');
       // Scroll to top so the user sees the tabs + Picker tab badge
       window.scrollTo({ top: 0, behavior: 'smooth' });
       setToast({
-        message: `Picking list sent to the forklift team. ${list.loads.length} load${list.loads.length === 1 ? '' : 's'} ready to pick.`,
+        message: `${creationLine} picking list sent to the forklift team. ${list.loads.length} load${list.loads.length === 1 ? '' : 's'} ready to pick.`,
         kind: 'success',
         onUndo: () => {
-          setPickingList(null);
+          upsertList?.(creationLine, previousList);
           setSelectionBales(previousSelection);
           setSlMode('create');
         }
@@ -2803,30 +2869,33 @@
         {/* Active production window - hidden during Create picking list */}
         {!isCreating && <ActiveProductionWindow active={windowActive} />}
 
-        {/* Existing-list banner - blue info style with Edit / destructive Clear */}
-        {!isCreating && pickingList && (
+        {/* R33: Existing-list banner - stacks one row per production line that
+            has an active list. Each row has its own Edit + Clear actions. */}
+        {!isCreating && pickingLists.length > 0 && (
           <ActivePickingListAlert
-            pickingList={pickingList}
-            onEdit={() => {
-              // Pre-populate the create workflow with the active list but DO NOT
-              // clear pickingList yet - so if the SL cancels mid-edit, the existing
-              // active picking list is still in place.
+            pickingLists={pickingLists}
+            onEdit={(line) => {
+              const list = pickingLists.find(pl => pl.productionLine === line);
+              if (!list) return;
               const next = {};
-              pickingList.loads.forEach(l => {
+              list.loads.forEach(l => {
                 next[`${l.zoneId}|${l.bayId}|${l.loadId}`] = l.bales != null ? l.bales : findLoadByKey(`${l.zoneId}|${l.bayId}|${l.loadId}`)?.bales ?? 0;
               });
               setSelectionBales(next);
+              setCreationLine?.(line);
               setSlMode('create');
             }}
-            onClear={() => {
-              const previous = pickingList;
-              setPickingList(null);
+            onClear={(line) => {
+              const previous = pickingLists.find(pl => pl.productionLine === line);
+              if (!previous) return;
+              upsertList?.(line, null);
               setToast({
-                message: 'Picking list cleared.',
+                message: `${line} picking list cleared.`,
                 kind: 'success',
-                onUndo: () => setPickingList(previous)
+                onUndo: () => upsertList?.(line, previous)
               });
             }}
+            lang={lang}
           />
         )}
 
@@ -2878,9 +2947,14 @@
             </div>
             <ZoneBayFilter value={bayFilter} onChange={setBayFilter} yard={visibleYard} lang={lang} />
             <div className="flex-1" />
-            {!isCreating && !pickingList && (
+            {!isCreating && pickingLists.length < 2 && (
               <button
-                onClick={() => setSlMode('create')}
+                onClick={() => {
+                  // R33: default the create flow to the first line that doesn't already have a list.
+                  const nextLine = ['Plant 1', 'Plant 2'].find(line => !pickingLists.some(pl => pl.productionLine === line)) || 'Plant 1';
+                  setCreationLine?.(nextLine);
+                  setSlMode('create');
+                }}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded bg-safi-600 text-white text-sm font-medium hover:bg-safi-700 shadow-sm"
               >
                 <Icon d={I.plus} className="w-4 h-4" />
@@ -2900,6 +2974,9 @@
               selectionBales={selectionBales}
               setSelectionBales={setSelectionBales}
               pickingList={pickingList}
+              pickingLists={pickingLists}
+              loadClaimMap={loadClaimMap}
+              creationLine={creationLine}
               lang={lang}
               bayFilter={bayFilter}
               setSlMode={setSlMode}
@@ -3042,7 +3119,20 @@
                                     const access = accessibilityOf(zone, bay, load);
                                     const lifoOk = isLifoSelectable(zone, bay, load, selectionBales, pickerMode);
                                     const alreadySelected = selectionBales[key] != null;
-                                    const selectableThis = !isCreating || (bay.accessible && (lifoOk || alreadySelected));
+                                    // R33: lock loads claimed by the other production line while creating this list.
+                                    const claimOwner = loadClaimMap[load.id] || null;
+                                    const lockedByOtherLine = isCreating && claimOwner && claimOwner !== creationLine ? claimOwner : false;
+                                    const selectableThis = !isCreating || ((bay.accessible && (lifoOk || alreadySelected)) && !lockedByOtherLine);
+                                    let onPickingListChip = false;
+                                    let claimedByLine = null;
+                                    if (!isCreating && claimOwner) {
+                                      claimedByLine = claimOwner;
+                                      const owningList = pickingLists.find(pl => pl.productionLine === claimOwner);
+                                      const entry = owningList?.loads.find(l => l.loadId === load.id);
+                                      if (entry) onPickingListChip = entry.bales != null && entry.bales < load.bales
+                                        ? { partial: true, bales: entry.bales, productionLine: claimOwner }
+                                        : { partial: false, productionLine: claimOwner };
+                                    }
                                     return (
                                       <div key={load.id} className="border-b border-neutral-10/60 last:border-b-0">
                                         <LoadRow
@@ -3052,14 +3142,9 @@
                                           isAccessibleLoad={access.status === 'accessible'}
                                           isSelected={selected.has(key)}
                                           onToggle={() => toggleLoad(key, bay.accessible)}
-                                          onPickingList={(() => {
-                                            if (isCreating || !pickingList) return false;
-                                            const entry = pickingList.loads.find(l => l.loadId === load.id);
-                                            if (!entry) return false;
-                                            return entry.bales != null && entry.bales < load.bales
-                                              ? { partial: true, bales: entry.bales }
-                                              : true;
-                                          })()}
+                                          onPickingList={onPickingListChip}
+                                          claimedByLine={claimedByLine}
+                                          lockedByOtherLine={lockedByOtherLine}
                                         />
                                       </div>
                                     );
@@ -3162,7 +3247,21 @@
                                   const access = accessibilityOf(zone, bay, load);
                                   const lifoOk = isLifoSelectable(zone, bay, load, selectionBales, pickerMode);
                                   const alreadySelected = selectionBales[key] != null;
-                                  const selectableThis = !isCreating || (bay.accessible && (lifoOk || alreadySelected));
+                                  // R33: lock loads claimed by the other production line while creating this list.
+                                  const claimOwner = loadClaimMap[load.id] || null;
+                                  const lockedByOtherLine = isCreating && claimOwner && claimOwner !== creationLine ? claimOwner : false;
+                                  const selectableThis = !isCreating || ((bay.accessible && (lifoOk || alreadySelected)) && !lockedByOtherLine);
+                                  // R33: in default mode, mark loads claimed by any line so the chip shows the plant
+                                  let onPickingListChip = false;
+                                  let claimedByLine = null;
+                                  if (!isCreating && claimOwner) {
+                                    claimedByLine = claimOwner;
+                                    const owningList = pickingLists.find(pl => pl.productionLine === claimOwner);
+                                    const entry = owningList?.loads.find(l => l.loadId === load.id);
+                                    if (entry) onPickingListChip = entry.bales != null && entry.bales < load.bales
+                                      ? { partial: true, bales: entry.bales, productionLine: claimOwner }
+                                      : { partial: false, productionLine: claimOwner };
+                                  }
                                   return (
                                     <LoadRow
                                       key={load.id}
@@ -3172,7 +3271,9 @@
                                       isAccessibleLoad={access.status === 'accessible'}
                                       isSelected={selected.has(key)}
                                       onToggle={() => toggleLoad(key, bay.accessible)}
-                                      onPickingList={!isCreating && pickingList && pickingList.loads.some(l => l.loadId === load.id)}
+                                      onPickingList={onPickingListChip}
+                                      claimedByLine={claimedByLine}
+                                      lockedByOtherLine={lockedByOtherLine}
                                     />
                                   );
                                 })}
@@ -3229,6 +3330,22 @@
               )}
 
               <div className="p-5 space-y-4 flex-1 overflow-y-auto scrollbar-thin min-h-0">
+                {/* R33: Production line selector - the SL picks which plant this list feeds.
+                    Disables the option whose list already exists for another in-flight build. */}
+                <div>
+                  <label className="block text-[13px] font-semibold text-neutral-80 mb-1.5">
+                    {lang === 'es' ? 'Línea de producción' : 'Production line'}
+                  </label>
+                  <select
+                    value={creationLine}
+                    onChange={e => setCreationLine?.(e.target.value)}
+                    className="w-full h-11 px-3 border border-neutral-10 rounded-lg text-sm text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                  >
+                    {['Plant 1', 'Plant 2'].map(line => (
+                      <option key={line} value={line}>{line}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="grid grid-cols-3 gap-3">
                   <Metric label="Loads"  value={fmtNum(summary.loadCount)} />
                   <Metric label="Bales"  value={fmtNum(summary.totalBales)} />
@@ -3370,61 +3487,72 @@
     </div>
   );
 
-  // Blue info alert shown when a picking list has been sent.
-  function ActivePickingListAlert({ pickingList, onEdit, onClear }) {
-    const [confirmingClear, setConfirmingClear] = useState(false);
+  // R33: Blue info alert. Single sky-blue card with one row per active picking list.
+  // When two lines have lists, the rows are stacked inside the same container with
+  // their own Edit / Clear actions.
+  function ActivePickingListAlert({ pickingLists, onEdit, onClear, lang = 'en' }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const [confirmingClear, setConfirmingClear] = useState(null); // line | null
     return (
       <>
-        <div className="mt-6 bg-sky-50 border border-sky-200 rounded-xl px-5 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <Icon d={I.info} className="w-5 h-5 text-sky-700 mt-0.5" />
-            <div>
-              <div className="font-bold text-sky-900">Picking list is active</div>
-              <p className="text-sm text-sky-800 mt-0.5">
-                {pickingList.loads.length} loads sent to the forklift team. Edit the list to change it, or clear it to start a new one.
-              </p>
+        <div className="mt-6 bg-sky-50 border border-sky-200 rounded-xl px-5 py-4 divide-y divide-sky-200">
+          {pickingLists.map((pl, idx) => (
+            <div
+              key={pl.productionLine}
+              className={'flex items-center justify-between gap-4 ' + (idx > 0 ? 'pt-3' : '') + (idx < pickingLists.length - 1 ? ' pb-3' : '')}
+            >
+              <div className="flex items-start gap-3">
+                <Icon d={I.info} className="w-5 h-5 text-sky-700 mt-0.5" />
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-sky-900">{tEN(`${pl.productionLine} picking list is active`, `Lista de ${pl.productionLine} activa`)}</span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-sky-300 text-[13px] font-semibold text-sky-900">
+                      {pl.productionLine}
+                    </span>
+                  </div>
+                  <p className="text-sm text-sky-800 mt-0.5">
+                    {tEN(
+                      `${pl.loads.length} loads sent to the forklift team. Edit to change, or clear to start a new one.`,
+                      `${pl.loads.length} lotes enviados. Edita para cambiar o borra para empezar otra.`)}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => onEdit(pl.productionLine)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-sky-300 bg-white text-sm font-medium text-sky-900 hover:bg-sky-50"
+                >
+                  <Icon d={I.edit} className="w-4 h-4" />
+                  {tEN('Edit list', 'Editar lista')}
+                </button>
+                <button
+                  onClick={() => setConfirmingClear(pl.productionLine)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-rose-300 bg-white text-sm font-medium text-rose-700 hover:bg-rose-50"
+                >
+                  {tEN('Clear list', 'Borrar lista')}
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onEdit}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-sky-300 bg-white text-sm font-medium text-sky-900 hover:bg-sky-50"
-            >
-              <Icon d={I.edit} className="w-4 h-4" />
-              Edit list
-            </button>
-            <button
-              onClick={() => setConfirmingClear(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-rose-300 bg-white text-sm font-medium text-rose-700 hover:bg-rose-50"
-            >
-              Clear current list
-            </button>
-          </div>
+          ))}
         </div>
 
         {confirmingClear && (
           <div
             className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-            onClick={() => setConfirmingClear(false)}
+            onClick={() => setConfirmingClear(null)}
           >
             <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-              <h3 className="font-bold text-lg text-neutral-100">Clear current list</h3>
-              <p className="text-sm text-neutral-60 mt-2">
-                Are you sure? This action cannot be undone.
-              </p>
+              <h3 className="font-bold text-lg text-neutral-100">{tEN(`Clear ${confirmingClear} list`, `Borrar lista de ${confirmingClear}`)}</h3>
+              <p className="text-sm text-neutral-60 mt-2">{tEN('Are you sure? This action cannot be undone.', '¿Estás seguro? Esta acción no se puede deshacer.')}</p>
               <div className="mt-6 flex items-center gap-2 justify-end">
                 <button
-                  onClick={() => setConfirmingClear(false)}
+                  onClick={() => setConfirmingClear(null)}
                   className="px-4 py-2 rounded border border-neutral-10 text-neutral-80 font-medium hover:bg-neutral-5"
-                >
-                  Cancel
-                </button>
+                >{tEN('Cancel', 'Cancelar')}</button>
                 <button
-                  onClick={() => { setConfirmingClear(false); onClear(); }}
+                  onClick={() => { const line = confirmingClear; setConfirmingClear(null); onClear(line); }}
                   className="px-4 py-2 rounded bg-rose-600 text-white font-medium hover:bg-rose-700"
-                >
-                  Clear
-                </button>
+                >{tEN('Clear', 'Borrar')}</button>
               </div>
             </div>
           </div>
@@ -3843,7 +3971,18 @@
     );
   }
 
-  function ForkliftPickerMergedView({ pickingList, processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load' }) {
+  function ForkliftPickerMergedView({ pickingLists = [], processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load' }) {
+    // R33: FO chooses which production line's picking list to work against.
+    // Defaults to the first line that has a list; if none, Plant 1.
+    const [currentLine, setCurrentLine] = useState(() => pickingLists[0]?.productionLine || 'Plant 1');
+    // Reset to first available line if the selection drops away (e.g. list cleared).
+    useEffect(() => {
+      if (pickingLists.length > 0 && !pickingLists.some(pl => pl.productionLine === currentLine)) {
+        setCurrentLine(pickingLists[0].productionLine);
+      }
+    }, [pickingLists]);
+    // Derive the single active list for the legacy logic below.
+    const pickingList = pickingLists.find(pl => pl.productionLine === currentLine) || null;
     // All zones open by default so FO sees everything on landing.
     const initialOpen = useMemo(() => {
       const o = {}; YARD.forEach(z => { o[z.id] = true; }); return o;
@@ -4201,6 +4340,23 @@
 
         {/* Filter row - Bay + Material multi-select + picking-list toggle */}
         <div className="flex flex-wrap items-center gap-3">
+          {/* R33: Production line filter - lets the FO switch between Plant 1 / Plant 2 lists. */}
+          {pickingLists.length > 0 && (
+            <div className="bg-white border border-neutral-10 rounded-lg px-3 py-2 min-h-[52px] flex items-center gap-2">
+              <div className="text-[13px] text-neutral-60">{tEN('Production line', 'Línea de producción')}</div>
+              <select
+                value={currentLine}
+                onChange={e => setCurrentLine(e.target.value)}
+                className="text-[15px] font-medium text-neutral-100 bg-transparent border-0 focus:outline-none focus:ring-0 cursor-pointer pr-1"
+              >
+                {pickingLists.map(pl => (
+                  <option key={pl.productionLine} value={pl.productionLine}>
+                    {pl.productionLine} ({pl.loads.filter(l => !processed[l.loadId]).length})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <PickerFilterDropdown
             label={tEN('Bays', 'Filas')}
             value={bayFilter}
