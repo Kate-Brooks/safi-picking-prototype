@@ -767,21 +767,15 @@
       }
       return { kind: 'partial' };
     };
-    // Small reusable chip renderer for the bay-claim states.
+    // R38: bay-claim chip matches the load-level "On picking list" chip styling -
+    // grey bg + lock icon. Copy collapses to "On picking list" regardless of state
+    // since the per-load chip already carries the (line, shift) detail.
     const BayClaimChip = ({ summary }) => {
       if (!summary) return null;
-      const text = summary.kind === 'all-same'
-        ? `All loads on ${summary.label} picking list`
-        : summary.kind === 'all-mixed'
-          ? 'All loads on existing picking lists'
-          : 'Some loads on existing picking lists';
-      const cls = summary.kind === 'all-same' || summary.kind === 'all-mixed'
-        ? 'bg-amber-50 text-amber-900 ring-1 ring-amber-200'
-        : 'bg-amber-50/70 text-amber-900 ring-1 ring-amber-200';
       return (
-        <span className={'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium ' + cls}>
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium bg-neutral-10 text-neutral-80 whitespace-nowrap">
           <Icon d={I.lock} className="w-3 h-3" />
-          {text}
+          On picking list
         </span>
       );
     };
@@ -1281,8 +1275,6 @@
                         {bay.id}
                       </span>
                       <div className="flex items-center gap-2 shrink-0">
-                        {/* R37: bay-claim chip during create/edit. */}
-                        <BayClaimChip summary={bayClaimSummary(bay)} />
                         {blocked && (
                           <span
                             title={lang === 'es' ? 'Bloqueada por la fila de delante' : 'Blocked by the bay in front'}
@@ -1307,6 +1299,15 @@
                         )}
                       </div>
                     </div>
+                    {/* R38: bay claim chip on its own row so it doesn't crowd the bay name. */}
+                    {(() => {
+                      const summary = bayClaimSummary(bay);
+                      return summary ? (
+                        <div className="mt-2">
+                          <BayClaimChip summary={summary} />
+                        </div>
+                      ) : null;
+                    })()}
                     {/* Metrics on one line for density */}
                     <div className="mt-2 grid grid-cols-3 gap-2 text-[13px]">
                       <div>
@@ -2794,17 +2795,13 @@
       }
       return { kind: 'partial' };
     };
+    // R38: matches load-level chip styling - grey + lock + "On picking list".
     const BayClaimChip = ({ summary }) => {
       if (!summary) return null;
-      const text = summary.kind === 'all-same'
-        ? `All loads on ${summary.label} picking list`
-        : summary.kind === 'all-mixed'
-          ? 'All loads on existing picking lists'
-          : 'Some loads on existing picking lists';
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium bg-amber-50 text-amber-900 ring-1 ring-amber-200 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[13px] font-medium bg-neutral-10 text-neutral-80 whitespace-nowrap">
           <Icon d={I.lock} className="w-3 h-3" />
-          {text}
+          On picking list
         </span>
       );
     };
