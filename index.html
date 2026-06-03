@@ -108,6 +108,16 @@
   // Helper: build a load object.
   // results === null → load has not been AI-analysed yet, no chips shown.
   // results: { transparentPET, colouredPET, contaminants } each as percentages summing to ~100.
+  // description: optional free-text note left by an operator (R34 - surfaced in row view).
+  const LOAD_DESCRIPTIONS = {
+    'LOT-A001': 'Caps still on some bales, double-check at the line.',
+    'LOT-A003': 'High moisture in 2 bales - flag for QC.',
+    'LOT-A006': 'Mixed batch from 2 trailers, separated by colour.',
+    'LOT-B-L321': 'Operator note: handle gently, soft strapping.',
+    'LOT-B-L987': 'Damaged bale wrap on one unit.',
+    'LOT-C001': 'Priority - customer waiting on this lot.',
+    'LOT-C004': 'Contaminants flagged on intake - second look needed.',
+  };
   const L = (supplier, lot, weight, bales, results = null) => ({
     id: lot,
     supplier,
@@ -116,6 +126,7 @@
     bales,
     material: materialFor(lot),
     results,
+    description: LOAD_DESCRIPTIONS[lot] || null,
     processedAt: null
   });
 
@@ -1580,6 +1591,13 @@
             <span className="text-neutral-40 text-sm">#{load.lot}</span>
             <AIResultChips load={load} />
           </div>
+          {/* R34: operator description surfaced when present. Sometimes carries critical handling notes. */}
+          {load.description && (
+            <div className="text-[13px] text-amber-900 bg-amber-50/50 border border-amber-200/60 rounded px-2 py-1 mt-1 inline-flex items-start gap-1.5 max-w-full">
+              <Icon d={I.info} className="w-3.5 h-3.5 mt-0.5 text-amber-700 shrink-0" />
+              <span className="break-words">{load.description}</span>
+            </div>
+          )}
           <div className="text-[13px] text-neutral-60 mt-1 flex items-center gap-2 flex-wrap">
             <span>{fmtNum(load.bales)} bales · {fmtKg(load.weight)}</span>
             {/* R26: "Accessible to FO" chip removed globally - accessibility is now implicit from the row context. */}
@@ -1685,7 +1703,7 @@
   // ----------------------------------------------------------------------------
   // APP SHELL - top nav + sidebar
   // ----------------------------------------------------------------------------
-  function AppShell({ lang, setLang, pickerMode, setPickerMode, children }) {
+  function AppShell({ lang, setLang, pickerMode, setPickerMode, currentSite, setCurrentSite, children }) {
     const NavItem = ({ icon, label, active }) => (
       <button
         className={
@@ -1731,6 +1749,28 @@
                 Español
               </button>
             </div>
+            {/* R34: Site switcher (Apan 1 / Apan 2). Picking lists are site-scoped. */}
+            {typeof setCurrentSite === 'function' && (
+              <div
+                className="flex items-center gap-1 bg-slate-100 rounded-full p-1 text-[13px]"
+                role="group"
+                aria-label="Site"
+              >
+                {['Apan 1', 'Apan 2'].map(site => (
+                  <button
+                    key={site}
+                    onClick={() => setCurrentSite(site)}
+                    className={
+                      'px-3 py-1.5 rounded-full font-medium transition ' +
+                      (currentSite === site ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
+                    }
+                    aria-pressed={currentSite === site}
+                  >
+                    {site}
+                  </button>
+                ))}
+              </div>
+            )}
             {/* Picker mode plant setting - sibling style to the language switch.
                 "Load-based" hides the buffer area and lets the FO process whole loads;
                 "Bale-based" surfaces the buffer plus per-bale process/reject modals. */}
@@ -1813,32 +1853,41 @@
     // Tabs - accordion variant removed. Sticky is the default.
     const [tab, setTab] = useState('pw-v2');
 
-    // R33: Picking list state - one list per production line. Up to 2 plants.
-    // Shape: [{ id, name, createdAt, productionLine, loads: [{zoneId, bayId, loadId, bales}], note }]
+    // R33/R34: Picking list state - one list per shift. R34 expands the model to
+    // 3 shifts per production window per site (Apan 1 / Apan 2). Lists carry
+    // site + shift + createdBy + date metadata for the visit-notes spec.
+    // Shape: [{ id, name, createdAt, productionLine (shift), site, createdBy, loads, note }]
     const [pickingLists, setPickingLists] = useState([]);
-    // Which production line the SL is currently building / editing in create mode.
-    // Defaults to the first line that doesn't already have a list.
-    const [creationLine, setCreationLine] = useState('Plant 1');
+    // R34: Current site - SL works one site at a time. Picking lists are site-scoped.
+    const [currentSite, setCurrentSite] = useState('Apan 1');
+    // Which shift the SL is currently building / editing in create mode.
+    // Defaults to the first shift that doesn't already have a list in the current site.
+    const [creationLine, setCreationLine] = useState('Shift 1');
+    // Mock current user - in production this comes from auth.
+    const currentUser = 'Kate Brooks';
 
     // Helpers - kept light so the rest of the prototype can stay close to its
     // original single-list shape where it doesn't need multi-line awareness.
-    const getListByLine = (line) => pickingLists.find(l => l.productionLine === line) || null;
+    // R34: lists are site-scoped. Helpers and downstream views see only the
+    // current site's lists; switching site swaps the visible set.
+    const siteLists = pickingLists.filter(pl => (pl.site || 'Apan 1') === currentSite);
+    const getListByLine = (line) => siteLists.find(l => l.productionLine === line) || null;
     const upsertList = (line, list) => {
       setPickingLists(prev => {
-        const i = prev.findIndex(l => l.productionLine === line);
+        const i = prev.findIndex(l => l.productionLine === line && (l.site || 'Apan 1') === currentSite);
         if (list === null || list === undefined) {
           return i >= 0 ? prev.filter((_, j) => j !== i) : prev;
         }
-        const withLine = { ...list, productionLine: line };
-        if (i >= 0) { const next = [...prev]; next[i] = withLine; return next; }
-        return [...prev, withLine];
+        const withMeta = { ...list, productionLine: line, site: currentSite };
+        if (i >= 0) { const next = [...prev]; next[i] = withMeta; return next; }
+        return [...prev, withMeta];
       });
     };
-    // Map loadId -> productionLine (the plant that has claimed this load).
+    // Map loadId -> shift (the shift that has claimed this load, in current site).
     // Used for "load on picking list" chip + selection-claim validation.
     const loadClaimMap = (() => {
       const m = {};
-      pickingLists.forEach(pl => pl.loads.forEach(({ loadId }) => { m[loadId] = pl.productionLine; }));
+      siteLists.forEach(pl => pl.loads.forEach(({ loadId }) => { m[loadId] = pl.productionLine; }));
       return m;
     })();
 
@@ -1880,15 +1929,15 @@
     const [pickerMode, setPickerMode] = useState('load');
     const bufferEnabled = pickerMode === 'bale';
 
-    // Loads remaining to pick (for Picker tab badge) - summed across both lines.
-    const loadsRemaining = pickingLists.reduce(
+    // Loads remaining to pick (for Picker tab badge) - summed across all shifts in current site.
+    const loadsRemaining = siteLists.reduce(
       (acc, pl) => acc + pl.loads.filter(({ loadId }) => !processed[loadId]).length, 0
     );
-    const hasAnyList = pickingLists.length > 0;
+    const hasAnyList = siteLists.length > 0;
 
     return (
       <LangContext.Provider value={lang}>
-      <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode}>
+      <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode} currentSite={currentSite} setCurrentSite={setCurrentSite}>
         <div className="px-8 py-6">
           {/* Page heading swaps when SL enters Create picking list mode */}
           {slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout') ? (
@@ -1944,7 +1993,7 @@
 
           {tab === 'pw-v2'     && <ShiftLeaderView
                                     layout="sticky"
-                                    pickingLists={pickingLists} upsertList={upsertList}
+                                    pickingLists={siteLists} upsertList={upsertList}
                                     creationLine={creationLine} setCreationLine={setCreationLine}
                                     loadClaimMap={loadClaimMap}
                                     setTab={setTab} setRole={setRole}
@@ -1955,7 +2004,7 @@
                                     pickerMode={pickerMode} />}
           {tab === 'pw-layout' && <ShiftLeaderView
                                     layout="spatial"
-                                    pickingLists={pickingLists} upsertList={upsertList}
+                                    pickingLists={siteLists} upsertList={upsertList}
                                     creationLine={creationLine} setCreationLine={setCreationLine}
                                     loadClaimMap={loadClaimMap}
                                     setTab={setTab} setRole={setRole}
@@ -1965,7 +2014,7 @@
                                     selectionBales={selectionBales} setSelectionBales={setSelectionBales}
                                     pickerMode={pickerMode} />}
           {/* tab === 'picker' (original load-only Picker) is no longer routed - ForkliftPickerView retained in source */}
-          {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={pickingLists} processed={processed}
+          {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={siteLists} processed={processed}
                                   setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} />}
           {tab === 'history' && <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} />}
         </div>
@@ -2587,7 +2636,7 @@
                   <table className="w-full text-[13px]">
                     <thead>
                       <tr className="text-left text-[13px] font-medium text-amber-900 border-b border-amber-200">
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Order reference', 'Ref. de pedido')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Order reference', 'Lote')}</th>
                         <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Total received', 'Total recibido')}</th>
                         <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Processed weight', 'Peso procesado')}</th>
                         <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Weight loss', 'Pérdida de peso')}</th>
@@ -2630,7 +2679,7 @@
                   <table className="w-full text-[13px]">
                     <thead>
                       <tr className="text-left text-[13px] font-medium text-neutral-60 border-b border-neutral-10">
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Order reference', 'Ref. de pedido')}</th>
+                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Order reference', 'Lote')}</th>
                         <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Supplier', 'Proveedor')}</th>
                         <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Storage location', 'Ubicación')}</th>
                         <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Reason', 'Motivo')}</th>
@@ -2843,6 +2892,8 @@
         productionLine: creationLine,
         name: `${creationLine} picking list - ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`,
         createdAt: new Date().toISOString(),
+        // R34: visit-notes spec - each list carries who created it.
+        createdBy: 'Kate Brooks',
         loads: Object.entries(selectionBales).map(([k, bales]) => {
           const [zoneId, bayId, loadId] = k.split('|');
           return { zoneId, bayId, loadId, bales };
@@ -2947,11 +2998,11 @@
             </div>
             <ZoneBayFilter value={bayFilter} onChange={setBayFilter} yard={visibleYard} lang={lang} />
             <div className="flex-1" />
-            {!isCreating && pickingLists.length < 2 && (
+            {!isCreating && pickingLists.length < 3 && (
               <button
                 onClick={() => {
-                  // R33: default the create flow to the first line that doesn't already have a list.
-                  const nextLine = ['Plant 1', 'Plant 2'].find(line => !pickingLists.some(pl => pl.productionLine === line)) || 'Plant 1';
+                  // R33/R34: default the create flow to the first shift that doesn't already have a list.
+                  const nextLine = ['Shift 1', 'Shift 2', 'Shift 3'].find(s => !pickingLists.some(pl => pl.productionLine === s)) || 'Shift 1';
                   setCreationLine?.(nextLine);
                   setSlMode('create');
                 }}
@@ -3330,19 +3381,19 @@
               )}
 
               <div className="p-5 space-y-4 flex-1 overflow-y-auto scrollbar-thin min-h-0">
-                {/* R33: Production line selector - the SL picks which plant this list feeds.
-                    Disables the option whose list already exists for another in-flight build. */}
+                {/* R33/R34: Shift selector - the SL picks which shift this list feeds.
+                    Up to 3 shifts per production window per site. */}
                 <div>
                   <label className="block text-[13px] font-semibold text-neutral-80 mb-1.5">
-                    {lang === 'es' ? 'Línea de producción' : 'Production line'}
+                    {lang === 'es' ? 'Turno' : 'Shift'}
                   </label>
                   <select
                     value={creationLine}
                     onChange={e => setCreationLine?.(e.target.value)}
                     className="w-full h-11 px-3 border border-neutral-10 rounded-lg text-sm text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
                   >
-                    {['Plant 1', 'Plant 2'].map(line => (
-                      <option key={line} value={line}>{line}</option>
+                    {['Shift 1', 'Shift 2', 'Shift 3'].map(shift => (
+                      <option key={shift} value={shift}>{shift}</option>
                     ))}
                   </select>
                 </div>
@@ -3496,7 +3547,12 @@
     return (
       <>
         <div className="mt-6 bg-sky-50 border border-sky-200 rounded-xl px-5 py-4 divide-y divide-sky-200">
-          {pickingLists.map((pl, idx) => (
+          {pickingLists.map((pl, idx) => {
+            const createdDate = pl.createdAt ? new Date(pl.createdAt) : null;
+            const dateStr = createdDate
+              ? createdDate.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+              : null;
+            return (
             <div
               key={pl.productionLine}
               className={'flex items-center justify-between gap-4 ' + (idx > 0 ? 'pt-3' : '') + (idx < pickingLists.length - 1 ? ' pb-3' : '')}
@@ -3514,6 +3570,10 @@
                     {tEN(
                       `${pl.loads.length} loads sent to the forklift team. Edit to change, or clear to start a new one.`,
                       `${pl.loads.length} lotes enviados. Edita para cambiar o borra para empezar otra.`)}
+                  </p>
+                  {/* R34: shift / date / created-by metadata */}
+                  <p className="text-[13px] text-sky-700 mt-0.5">
+                    {[dateStr, pl.createdBy && (tEN(`by ${pl.createdBy}`, `por ${pl.createdBy}`))].filter(Boolean).join(' · ')}
                   </p>
                 </div>
               </div>
@@ -3533,7 +3593,8 @@
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {confirmingClear && (
@@ -4021,6 +4082,17 @@
       return s;
     }, [pickingList]);
 
+    // R34: per-loadId, the bale count the SL actually scheduled. When the SL picks
+    // a partial load (e.g. 5 of 25 bales), this carries the 5 so the FO processes
+    // only the partial portion instead of the full load.
+    const scheduledBalesByLoad = useMemo(() => {
+      const m = {};
+      pickingList?.loads.forEach(l => {
+        if (l.bales != null) m[l.loadId] = l.bales;
+      });
+      return m;
+    }, [pickingList]);
+
     // Picking-list bay lookup - set of "zoneId|bayId" keys that contain at least one
     // picking-list item. Used for the "Show only picking list" filter and the badge.
     const pickingListBays = useMemo(() => {
@@ -4029,20 +4101,26 @@
       return s;
     }, [pickingList]);
 
-    // Picking-list summary - grouped by zone/bay with bale + load counts
+    // Picking-list summary - grouped by zone/bay with bale + load counts.
+    // R34: respects the SL's partial-pick choice. If an entry has bales:5 against a
+    // 25-bale load, the summary counts 5 bales and the pro-rated weight.
     const pickingListSummary = useMemo(() => {
       if (!pickingList) return null;
       const byBay = {};
-      pickingList.loads.forEach(({ zoneId, bayId, loadId }) => {
+      pickingList.loads.forEach(({ zoneId, bayId, loadId, bales: scheduledBales }) => {
         const zone = YARD.find(z => z.id === zoneId);
         const bay = zone?.bays.find(b => b.id === bayId);
         const load = bay?.loads.find(l => l.id === loadId);
         if (!load) return;
+        const effectiveBales = scheduledBales != null ? scheduledBales : load.bales;
+        const effectiveWeight = scheduledBales != null
+          ? Math.round((scheduledBales / load.bales) * load.weight)
+          : load.weight;
         const key = `${zoneId}|${bayId}`;
         if (!byBay[key]) byBay[key] = { zoneId, bayId, loads: [], bales: 0, weight: 0 };
-        byBay[key].loads.push(load);
-        byBay[key].bales += load.bales;
-        byBay[key].weight += load.weight;
+        byBay[key].loads.push({ ...load, bales: effectiveBales, weight: effectiveWeight, fullBales: load.bales });
+        byBay[key].bales += effectiveBales;
+        byBay[key].weight += effectiveWeight;
       });
       const items = Object.values(byBay);
       const totalLoads = items.reduce((a, b) => a + b.loads.length, 0);
@@ -4519,18 +4597,28 @@
 
                             const renderRow = ({ load, access }) => {
                               const onList = recommendedLoads.has(load.id);
-                              const canAct = access.status === 'accessible' && access.accessibleBales > 0;
+                              // R34: when the SL sent a partial pick (e.g. 5 of 25 bales) the FO should
+                              // process only that portion, not the full load. Clamp to accessibleBales
+                              // because the bay's inventory rule may further restrict reachable bales.
+                              const scheduledBales = scheduledBalesByLoad[load.id];
+                              const actBales = onList && scheduledBales != null
+                                ? Math.min(scheduledBales, access.accessibleBales)
+                                : access.accessibleBales;
+                              const partialPick = onList && scheduledBales != null && scheduledBales < load.bales;
+                              const canAct = access.status === 'accessible' && actBales > 0;
                               const bgCls = canAct ? 'bg-white' : 'bg-neutral-5/60';
                               return (
                                 <li key={load.id} className={'px-3 sm:px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2 ' + bgCls}>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
                                       <span className="text-[13px] font-medium text-neutral-100">{load.supplier}</span>
-                                      <span className="text-[13px] text-neutral-60">{tEN('Order ref', 'Ref. pedido')} <span className="font-mono">#{load.lot}</span></span>
+                                      <span className="text-[13px] text-neutral-60">{tEN('Order ref', 'Lote')} <span className="font-mono">#{load.lot}</span></span>
                                       {onList && (
                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[13px] font-medium whitespace-nowrap">
                                           <Icon d={I.list} className="w-3.5 h-3.5" />
-                                          {tEN('On picking list', 'En lista de recolección')}
+                                          {partialPick
+                                            ? tEN(`On picking list (${scheduledBales}/${load.bales} bales)`, `En lista (${scheduledBales}/${load.bales} pacas)`)
+                                            : tEN('On picking list', 'En lista de recolección')}
                                         </span>
                                       )}
                                       {/* R25: "Accessible (N bales)" chip removed. Accessibility is now implicit -
@@ -4556,7 +4644,7 @@
                                   <div className="flex gap-1.5 flex-wrap shrink-0 w-full sm:w-auto">
                                     <button
                                       disabled={!canAct}
-                                      onClick={() => setModal({ type: 'reject', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
+                                      onClick={() => setModal({ type: 'reject', source: 'load', zone, bay, load, accessibleBales: actBales })}
                                       className={
                                         'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
                                         (canAct
@@ -4570,7 +4658,7 @@
                                     {bufferVisible && (
                                       <button
                                         disabled={!canAct}
-                                        onClick={() => setModal({ type: 'move', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
+                                        onClick={() => setModal({ type: 'move', source: 'load', zone, bay, load, accessibleBales: actBales })}
                                         className={
                                           'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
                                           (canAct
@@ -4582,9 +4670,19 @@
                                         {tEN('Buffer', 'Búfer')}
                                       </button>
                                     )}
+                                    {/* R34: Remove-from-picking-list - only available when load is on the list. */}
+                                    {onList && (
+                                      <button
+                                        onClick={() => setModal({ type: 'remove-from-list', source: 'load', zone, bay, load })}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-10 text-neutral-100 text-[13px] font-medium min-h-[40px] whitespace-nowrap hover:bg-neutral-5"
+                                      >
+                                        <Icon d={I.close} className="w-4 h-4" />
+                                        {tEN('Remove from list', 'Quitar de la lista')}
+                                      </button>
+                                    )}
                                     <button
                                       disabled={!canAct}
-                                      onClick={() => setModal({ type: 'process', source: 'load', zone, bay, load, accessibleBales: access.accessibleBales })}
+                                      onClick={() => setModal({ type: 'process', source: 'load', zone, bay, load, accessibleBales: actBales })}
                                       className={
                                         'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium min-h-[40px] whitespace-nowrap ' +
                                         (canAct
@@ -4764,6 +4862,27 @@
                   }).filter(it => it.bales > 0);
                 });
               }
+            }}
+          />
+        )}
+
+        {modal?.type === 'remove-from-list' && (
+          <RemoveFromListModal
+            zone={modal.zone}
+            bay={modal.bay}
+            load={modal.load}
+            lang={lang}
+            onCancel={() => setModal(null)}
+            onConfirm={({ reason }) => {
+              setModal(null);
+              setToast?.({
+                message: tEN(
+                  `Removed #${modal.load.lot} from the picking list (${reason}).`,
+                  `Quitada #${modal.load.lot} de la lista (${reason}).`),
+                kind: 'success'
+              });
+              // NOTE prototype: in production this would call an API to remove
+              // the load from the picking list. State here is owned by the page.
             }}
           />
         )}
@@ -5273,6 +5392,75 @@
               }
             >
               {tEN('Reject', 'Rechazar')}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // R34: RemoveFromListModal - SL/FO removes a load from the active picking
+  // list with a reason. Reason dropdown is required. The actual list mutation
+  // happens in the parent's onConfirm.
+  // -------------------------------------------------------------------------
+  function RemoveFromListModal({ zone, bay, load, lang, onCancel, onConfirm }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const [reason, setReason] = useState('');
+    const reasons = lang === 'es'
+      ? ['Avería del montacargas - no se pudo recoger',
+         'Fila inaccesible',
+         'Material no necesario en este turno',
+         'Sustituido por otro lote',
+         'Otro']
+      : ['Forklift breakdown - couldn\'t finish picking',
+         'Bay inaccessible',
+         'Material not needed this shift',
+         'Replaced with another load',
+         'Other'];
+    const canSubmit = !!reason;
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <h3 className="font-bold text-lg text-neutral-100">
+            {tEN('Remove from picking list', 'Quitar de la lista de recolección')}
+          </h3>
+          <p className="text-[13px] text-neutral-60 mt-1">
+            {load && tEN(
+              `Load #${load.lot} · ${load.supplier} · Bay ${bay?.id}`,
+              `Lote #${load.lot} · ${load.supplier} · Fila ${bay?.id}`)}
+          </p>
+          <div className="mt-5">
+            <FieldsetInput label={tEN('Reason', 'Motivo')} required focused={!!reason}>
+              <select
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                className="w-full h-14 px-4 bg-transparent text-base text-neutral-100 focus:outline-none appearance-none"
+              >
+                <option value="">{tEN('Select a reason…', 'Selecciona un motivo…')}</option>
+                {reasons.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </FieldsetInput>
+            <p className="text-[13px] text-neutral-60 mt-2">
+              {tEN('The load stays in the yard - it is just dropped from this picking list.',
+                   'El lote permanece en el patio - solo se quita de esta lista de recolección.')}
+            </p>
+          </div>
+          <div className="mt-6 flex gap-2 justify-end">
+            <button onClick={onCancel} className="px-4 py-2.5 rounded-lg border border-neutral-10 text-[13px] font-medium hover:bg-neutral-5 min-h-[44px]">
+              {tEN('Cancel', 'Cancelar')}
+            </button>
+            <button
+              disabled={!canSubmit}
+              onClick={() => onConfirm({ reason })}
+              className={
+                'px-4 py-2.5 rounded-lg text-[13px] font-medium min-h-[44px] ' +
+                (!canSubmit
+                  ? 'bg-neutral-10 text-neutral-40 cursor-not-allowed'
+                  : 'bg-safi-600 text-white hover:bg-safi-700')
+              }
+            >
+              {tEN('Remove from list', 'Quitar de la lista')}
             </button>
           </div>
         </div>
