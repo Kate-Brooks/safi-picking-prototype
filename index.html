@@ -730,7 +730,7 @@
   //           single horizontal row, with a heat-mapped minimap above.
   // Bay view:  full load list (LoadRow re-used).
   // ============================================================================
-  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', currentProductionLine = 'Apan 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast }) {
+  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast }) {
     const [view, setView] = useState({ level: 'overview' });
     // Which bay tile (if any) should appear first + highlighted (from the filter or minimap stepper)
     const [focusBayId, setFocusBayId] = useState(null);
@@ -1460,7 +1460,7 @@
                   const accessible = !isCreating || ((bay.accessible && (lifoOk || alreadySelected)) && !lockedByOther);
                   let onPickingList = false;
                   let claimLabel = null;
-                  if (!isCreating && claimOwner && claimOwner.productionLine === currentProductionLine) {
+                  if (!isCreating && claimOwner) {
                     claimLabel = `${claimOwner.productionLine} · ${claimOwner.shift}`;
                     const owningList = pickingLists.find(pl => pl.productionLine === claimOwner.productionLine && pl.shift === claimOwner.shift);
                     const entry = owningList?.loads.find(l => l.loadId === load.id);
@@ -1707,7 +1707,7 @@
   // ----------------------------------------------------------------------------
   // APP SHELL - top nav + sidebar
   // ----------------------------------------------------------------------------
-  function AppShell({ lang, setLang, pickerMode, setPickerMode, currentProductionLine, setCurrentProductionLine, children }) {
+  function AppShell({ lang, setLang, pickerMode, setPickerMode, children }) {
     const NavItem = ({ icon, label, active }) => (
       <button
         className={
@@ -1753,30 +1753,8 @@
                 Español
               </button>
             </div>
-            {/* R35: Production line switcher (Apan 1 / Apan 2).
-                Picking lists are line-scoped; switching swaps the warehouse alert + Picker. */}
-            {typeof setCurrentProductionLine === 'function' && (
-              <div
-                className="flex items-center gap-1 bg-slate-100 rounded-full p-1 text-[13px]"
-                role="group"
-                aria-label="Production line"
-              >
-                {['Apan 1', 'Apan 2'].map(line => (
-                  <button
-                    key={line}
-                    onClick={() => setCurrentProductionLine(line)}
-                    className={
-                      'px-3 py-1.5 rounded-full font-medium transition inline-flex items-center gap-1.5 ' +
-                      (currentProductionLine === line ? 'bg-white shadow text-safi-700' : 'text-slate-600 hover:text-slate-900')
-                    }
-                    aria-pressed={currentProductionLine === line}
-                  >
-                    <Icon d={I.factory} className="w-3.5 h-3.5" />
-                    {line}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* R36: Production line switcher removed from header. Picker has a per-list
+                filter dropdown; warehouse alert shows all active lists in an accordion. */}
             {/* Picker mode plant setting - sibling style to the language switch.
                 "Load-based" hides the buffer area and lets the FO process whole loads;
                 "Bale-based" surfaces the buffer plus per-bale process/reject modals. */}
@@ -1859,28 +1837,21 @@
     // Tabs - accordion variant removed. Sticky is the default.
     const [tab, setTab] = useState('pw-v2');
 
-    // R35: Picking list state - identified by (productionLine, shift).
-    // Apan 1 / Apan 2 are PRODUCTION LINES (not sites). Each line can have multiple
-    // picking lists, typically one per shift. Up to 6 unique slots (2 lines * 3 shifts).
+    // R35/R36: Picking list state - identified by (productionLine, shift).
+    // Apan 1 / Apan 2 are PRODUCTION LINES. Each line can have multiple picking
+    // lists, typically one per shift. Up to 6 unique slots (2 lines * 3 shifts).
+    // R36: removed the header line switcher - all lists are visible everywhere
+    // and the Picker has its own per-list filter dropdown.
     // Shape: [{ id, name, createdAt, productionLine, shift, createdBy, loads, note }]
     const [pickingLists, setPickingLists] = useState([]);
-    // R35: Current production line - the header switcher controls which line's
-    // picking lists are visible in the warehouse + Picker tabs. The create form
-    // defaults to this line but can be changed in the dropdown.
-    const [currentProductionLine, setCurrentProductionLine] = useState('Apan 1');
     // Which (productionLine, shift) the SL is currently building / editing.
     const [creationLine, setCreationLine] = useState('Apan 1');
     const [creationShift, setCreationShift] = useState('Shift 1');
     // Mock current user - in production this comes from auth.
     const currentUser = 'Kate Brooks';
 
-    // R35: Helpers for the multi-(line, shift) picking-list model.
-    // currentLineLists = picking lists for the production line currently shown
-    // in the header (warehouse alert + Picker tab work on this slice).
-    const currentLineLists = pickingLists.filter(pl => pl.productionLine === currentProductionLine);
-    // upsertList accepts a composite key (line, shift) string for compatibility
-    // with the existing ActivePickingListAlert that expects a single "line" arg.
-    // We encode as "line||shift" internally.
+    // R35/R36: Helpers for the multi-(line, shift) picking-list model.
+    // upsertList accepts a composite key (line, shift) string.
     const KEY = (line, shift) => `${line}||${shift}`;
     const parseKey = (k) => { const [line, shift] = k.split('||'); return { line, shift }; };
     const upsertList = (key, list) => {
@@ -1895,9 +1866,9 @@
         return [...prev, withMeta];
       });
     };
-    // Map loadId -> { productionLine, shift } across ALL picking lists (both lines).
-    // A load can only be on ONE picking list cross-line. Used for "claimed" chips
-    // + selection-claim validation when creating/editing another list.
+    // Map loadId -> { productionLine, shift } across ALL picking lists.
+    // A load can only be on ONE picking list. Used for "claimed" chips +
+    // selection-claim validation when creating/editing another list.
     const loadClaimMap = (() => {
       const m = {};
       pickingLists.forEach(pl => pl.loads.forEach(({ loadId }) => {
@@ -1944,15 +1915,15 @@
     const [pickerMode, setPickerMode] = useState('load');
     const bufferEnabled = pickerMode === 'bale';
 
-    // Loads remaining to pick (for Picker tab badge) - summed across all shifts in current line.
-    const loadsRemaining = currentLineLists.reduce(
+    // Loads remaining to pick (for Picker tab badge) - summed across ALL lists.
+    const loadsRemaining = pickingLists.reduce(
       (acc, pl) => acc + pl.loads.filter(({ loadId }) => !processed[loadId]).length, 0
     );
-    const hasAnyList = currentLineLists.length > 0;
+    const hasAnyList = pickingLists.length > 0;
 
     return (
       <LangContext.Provider value={lang}>
-      <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode} currentProductionLine={currentProductionLine} setCurrentProductionLine={setCurrentProductionLine}>
+      <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode}>
         <div className="px-8 py-6">
           {/* Page heading swaps when SL enters Create picking list mode */}
           {slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout') ? (
@@ -2008,8 +1979,7 @@
 
           {tab === 'pw-v2'     && <ShiftLeaderView
                                     layout="sticky"
-                                    pickingLists={currentLineLists} allPickingLists={pickingLists} upsertList={upsertList} loadClaimMap={loadClaimMap}
-                                    currentProductionLine={currentProductionLine}
+                                    pickingLists={pickingLists} upsertList={upsertList} loadClaimMap={loadClaimMap}
                                     creationLine={creationLine} setCreationLine={setCreationLine}
                                     creationShift={creationShift} setCreationShift={setCreationShift}
                                     loadClaimMap={loadClaimMap}
@@ -2021,8 +1991,7 @@
                                     pickerMode={pickerMode} />}
           {tab === 'pw-layout' && <ShiftLeaderView
                                     layout="spatial"
-                                    pickingLists={currentLineLists} allPickingLists={pickingLists} upsertList={upsertList} loadClaimMap={loadClaimMap}
-                                    currentProductionLine={currentProductionLine}
+                                    pickingLists={pickingLists} upsertList={upsertList} loadClaimMap={loadClaimMap}
                                     creationLine={creationLine} setCreationLine={setCreationLine}
                                     creationShift={creationShift} setCreationShift={setCreationShift}
                                     loadClaimMap={loadClaimMap}
@@ -2033,7 +2002,7 @@
                                     selectionBales={selectionBales} setSelectionBales={setSelectionBales}
                                     pickerMode={pickerMode} />}
           {/* tab === 'picker' (original load-only Picker) is no longer routed - ForkliftPickerView retained in source */}
-          {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={currentLineLists} currentProductionLine={currentProductionLine} processed={processed}
+          {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={pickingLists} processed={processed}
                                   setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} />}
           {tab === 'history' && <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} />}
         </div>
@@ -2759,7 +2728,7 @@
   // SHIFT LEADER VIEW - progressive disclosure + picking-list creation
   // ============================================================================
 
-  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], allPickingLists = pickingLists, upsertList, currentProductionLine = 'Apan 1', creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load' }) {
+  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load' }) {
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
@@ -3023,13 +2992,14 @@
             </div>
             <ZoneBayFilter value={bayFilter} onChange={setBayFilter} yard={visibleYard} lang={lang} />
             <div className="flex-1" />
-            {!isCreating && pickingLists.length < 3 && (
+            {!isCreating && pickingLists.length < 6 && (
               <button
                 onClick={() => {
-                  // R35: default the create flow to the current header line + first empty shift on that line.
-                  const nextShift = ['Shift 1', 'Shift 2', 'Shift 3'].find(s => !pickingLists.some(pl => pl.shift === s)) || 'Shift 1';
-                  setCreationLine?.(currentProductionLine);
-                  setCreationShift?.(nextShift);
+                  // R36: default to the first (line, shift) combo that doesn't already have a list.
+                  const combos = ['Apan 1', 'Apan 2'].flatMap(line => ['Shift 1', 'Shift 2', 'Shift 3'].map(shift => ({ line, shift })));
+                  const open = combos.find(c => !pickingLists.some(pl => pl.productionLine === c.line && pl.shift === c.shift)) || combos[0];
+                  setCreationLine?.(open.line);
+                  setCreationShift?.(open.shift);
                   setSlMode('create');
                 }}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded bg-safi-600 text-white text-sm font-medium hover:bg-safi-700 shadow-sm"
@@ -3055,7 +3025,6 @@
               loadClaimMap={loadClaimMap}
               creationLine={creationLine}
               creationShift={creationShift}
-              currentProductionLine={currentProductionLine}
               lang={lang}
               bayFilter={bayFilter}
               setSlMode={setSlMode}
@@ -3207,7 +3176,7 @@
                                     let onPickingListChip = false;
                                     let claimedByLine = null;
                                     // Only show claim chip when on the line the warehouse is filtered to.
-                                    if (!isCreating && claimOwner && claimOwner.productionLine === currentProductionLine) {
+                                    if (!isCreating && claimOwner) {
                                       claimedByLine = `${claimOwner.productionLine} · ${claimOwner.shift}`;
                                       const owningList = pickingLists.find(pl => pl.productionLine === claimOwner.productionLine && pl.shift === claimOwner.shift);
                                       const entry = owningList?.loads.find(l => l.loadId === load.id);
@@ -3338,7 +3307,7 @@
                                   let onPickingListChip = false;
                                   let claimedByLine = null;
                                   // Only chip loads that belong to the currently-viewed line.
-                                  if (!isCreating && claimOwner && claimOwner.productionLine === currentProductionLine) {
+                                  if (!isCreating && claimOwner) {
                                     claimedByLine = `${claimOwner.productionLine} · ${claimOwner.shift}`;
                                     const owningList = pickingLists.find(pl => pl.productionLine === claimOwner.productionLine && pl.shift === claimOwner.shift);
                                     const entry = owningList?.loads.find(l => l.loadId === load.id);
@@ -3586,62 +3555,82 @@
     </div>
   );
 
-  // R33/R35: Blue info alert. One row per (line, shift) picking list in the current line.
+  // R36: Active picking lists accordion. Header "Active picking lists (N)" + chevron.
+  // Expanded body shows each picking list as a row with line + shift identity, total
+  // loads sent to the picker team, who created + when, and per-row Edit / Clear actions.
   function ActivePickingListAlert({ pickingLists, onEdit, onClear, lang = 'en' }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
+    const [open, setOpen] = useState(true);
     const [confirmingClear, setConfirmingClear] = useState(null); // { line, shift } | null
     return (
       <>
-        <div className="mt-6 bg-sky-50 border border-sky-200 rounded-xl px-5 py-4 divide-y divide-sky-200">
-          {pickingLists.map((pl, idx) => {
-            const createdDate = pl.createdAt ? new Date(pl.createdAt) : null;
-            const dateStr = createdDate
-              ? createdDate.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
-              : null;
-            const label = `${pl.productionLine} · ${pl.shift}`;
-            return (
-            <div
-              key={`${pl.productionLine}-${pl.shift}`}
-              className={'flex items-center justify-between gap-4 ' + (idx > 0 ? 'pt-3' : '') + (idx < pickingLists.length - 1 ? ' pb-3' : '')}
-            >
-              <div className="flex items-start gap-3">
-                <Icon d={I.info} className="w-5 h-5 text-sky-700 mt-0.5" />
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-sky-900">{tEN(`${label} picking list is active`, `Lista ${label} activa`)}</span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-sky-300 text-[13px] font-semibold text-sky-900">
-                      {pl.shift}
-                    </span>
-                  </div>
-                  <p className="text-sm text-sky-800 mt-0.5">
-                    {tEN(
-                      `${pl.loads.length} loads sent to the forklift team. Edit to change, or clear to start a new one.`,
-                      `${pl.loads.length} lotes enviados. Edita para cambiar o borra para empezar otra.`)}
-                  </p>
-                  {/* R34: shift / date / created-by metadata */}
-                  <p className="text-[13px] text-sky-700 mt-0.5">
-                    {[dateStr, pl.createdBy && (tEN(`by ${pl.createdBy}`, `por ${pl.createdBy}`))].filter(Boolean).join(' · ')}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => onEdit(pl.productionLine, pl.shift)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-sky-300 bg-white text-sm font-medium text-sky-900 hover:bg-sky-50"
-                >
-                  <Icon d={I.edit} className="w-4 h-4" />
-                  {tEN('Edit list', 'Editar lista')}
-                </button>
-                <button
-                  onClick={() => setConfirmingClear({ line: pl.productionLine, shift: pl.shift })}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-rose-300 bg-white text-sm font-medium text-rose-700 hover:bg-rose-50"
-                >
-                  {tEN('Clear list', 'Borrar lista')}
-                </button>
-              </div>
+        <div className="mt-6 bg-white border border-neutral-10 rounded-xl overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setOpen(v => !v)}
+            aria-expanded={open}
+            className="w-full px-5 py-4 flex items-center justify-between gap-3 hover:bg-neutral-5/50 transition-colors"
+          >
+            <div className="flex items-center gap-2.5">
+              <Icon d={I.list} className="w-5 h-5 text-safi-700" />
+              <span className="font-bold text-neutral-100 text-base">
+                {tEN(`Active picking lists (${pickingLists.length})`, `Listas de recolección activas (${pickingLists.length})`)}
+              </span>
             </div>
-            );
-          })}
+            <Icon d={open ? I.chevron : I.chevronR} className="w-5 h-5 text-neutral-60" />
+          </button>
+          {open && (
+            <div className="divide-y divide-neutral-10">
+              {pickingLists.map((pl) => {
+                const createdDate = pl.createdAt ? new Date(pl.createdAt) : null;
+                const dateStr = createdDate
+                  ? createdDate.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+                  : null;
+                return (
+                  <div
+                    key={`${pl.productionLine}-${pl.shift}`}
+                    className="px-5 py-4 flex items-center justify-between gap-4 flex-wrap"
+                  >
+                    <div className="flex-1 min-w-[280px]">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Icon d={I.factory} className="w-4 h-4 text-safi-700" />
+                        <span className="font-bold text-neutral-100">{pl.productionLine}</span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-50 border border-safi-200 text-[13px] font-semibold text-safi-700">
+                          {pl.shift}
+                        </span>
+                      </div>
+                      <p className="text-[13px] text-neutral-80 mt-1">
+                        {tEN(
+                          `${pl.loads.length} loads sent to the picker team`,
+                          `${pl.loads.length} lotes enviados al equipo de recolección`)}
+                      </p>
+                      <p className="text-[13px] text-neutral-60 mt-0.5">
+                        {[
+                          pl.createdBy && tEN(`Created by ${pl.createdBy}`, `Creada por ${pl.createdBy}`),
+                          dateStr,
+                        ].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => onEdit(pl.productionLine, pl.shift)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-neutral-10 bg-white text-sm font-medium text-neutral-100 hover:bg-neutral-5"
+                      >
+                        <Icon d={I.edit} className="w-4 h-4" />
+                        {tEN('Edit list', 'Editar lista')}
+                      </button>
+                      <button
+                        onClick={() => setConfirmingClear({ line: pl.productionLine, shift: pl.shift })}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-rose-300 bg-white text-sm font-medium text-rose-700 hover:bg-rose-50"
+                      >
+                        {tEN('Clear list', 'Borrar lista')}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {confirmingClear && (
@@ -4171,18 +4160,17 @@
     w.document.close();
   }
 
-  function ForkliftPickerMergedView({ pickingLists = [], currentProductionLine = 'Apan 1', processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load' }) {
-    // R35: FO works on one (productionLine, shift) at a time. The header chooses
-    // the production line; this internal state chooses the shift within that line.
-    // Defaults to the first shift that has a list for the current line, else Shift 1.
-    const [currentShift, setCurrentShift] = useState(() => pickingLists[0]?.shift || 'Shift 1');
+  function ForkliftPickerMergedView({ pickingLists = [], processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load' }) {
+    // R36: FO selects a single picking list via a "Production line" dropdown
+    // showing the (line, shift) combinations that have lists. Default to first available.
+    const [pickingListId, setPickingListId] = useState(() => pickingLists[0]?.id || null);
     useEffect(() => {
-      if (pickingLists.length > 0 && !pickingLists.some(pl => pl.shift === currentShift)) {
-        setCurrentShift(pickingLists[0].shift);
+      if (pickingLists.length > 0 && !pickingLists.some(pl => pl.id === pickingListId)) {
+        setPickingListId(pickingLists[0].id);
       }
     }, [pickingLists]);
     // Derive the single active list for the legacy logic below.
-    const pickingList = pickingLists.find(pl => pl.shift === currentShift) || null;
+    const pickingList = pickingLists.find(pl => pl.id === pickingListId) || null;
     // All zones open by default so FO sees everything on landing.
     const initialOpen = useMemo(() => {
       const o = {}; YARD.forEach(z => { o[z.id] = true; }); return o;
@@ -4555,34 +4543,29 @@
           </div>
         ))}
 
-        {/* R35: Production line chip + shift switcher row.
-            Shows the current line (from header) + per-shift list selector. */}
-        {pickingLists.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-safi-600 text-white text-[13px] font-semibold">
-              <Icon d={I.factory} className="w-3.5 h-3.5" />
-              {currentProductionLine}
-            </span>
-            {pickingLists.map(pl => (
-              <button
-                key={pl.shift}
-                onClick={() => setCurrentShift(pl.shift)}
-                className={
-                  'px-3 py-1.5 rounded-full text-[13px] font-semibold ' +
-                  (currentShift === pl.shift
-                    ? 'bg-neutral-100 text-white'
-                    : 'bg-white border border-neutral-10 text-neutral-80 hover:bg-neutral-5')
-                }
-                aria-pressed={currentShift === pl.shift}
-              >
-                {pl.shift}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Filter row - Bay + Material multi-select + picking-list toggle */}
+        {/* Filter row - R36: Production line dropdown sits LEFT of Bays + Material.
+            Single-select picking list filter (Apan 1 - Shift 1, Apan 1 - Shift 2, ...).
+            Filters the visible loads to ONLY those on the selected picking list. */}
         <div className="flex flex-wrap items-center gap-3">
+          {pickingLists.length > 0 && (
+            <div className="bg-white border border-neutral-10 rounded-lg px-3 py-2 min-h-[52px] flex items-center gap-2 min-w-[200px]">
+              <Icon d={I.factory} className="w-4 h-4 text-neutral-60 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] text-neutral-60 leading-none">{tEN('Production line', 'Línea de producción')}</div>
+                <select
+                  value={pickingListId || ''}
+                  onChange={e => setPickingListId(e.target.value)}
+                  className="text-[15px] font-medium text-neutral-100 bg-transparent border-0 focus:outline-none focus:ring-0 cursor-pointer pr-1 mt-0.5 w-full"
+                >
+                  {pickingLists.map(pl => (
+                    <option key={pl.id} value={pl.id}>
+                      {pl.productionLine} - {pl.shift} ({pl.loads.filter(l => !processed[l.loadId]).length})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
           <PickerFilterDropdown
             label={tEN('Bays', 'Filas')}
             value={bayFilter}
