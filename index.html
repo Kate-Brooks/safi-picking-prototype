@@ -3589,39 +3589,41 @@
                 return (
                   <div
                     key={`${pl.productionLine}-${pl.shift}`}
-                    className="px-5 py-4 flex items-center justify-between gap-4 flex-wrap"
+                    className="px-5 py-3 flex items-center justify-between gap-4 flex-wrap"
                   >
-                    <div className="flex-1 min-w-[280px]">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Icon d={I.factory} className="w-4 h-4 text-safi-700" />
-                        <span className="font-bold text-neutral-100">{pl.productionLine}</span>
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-50 border border-safi-200 text-[13px] font-semibold text-safi-700">
-                          {pl.shift}
-                        </span>
-                      </div>
-                      <p className="text-[13px] text-neutral-80 mt-1">
+                    {/* R36b: single-line layout - identity / counts / metadata all inline,
+                        wraps on narrow widths. */}
+                    <div className="flex-1 min-w-[280px] flex items-center gap-2 flex-wrap text-[13px]">
+                      <Icon d={I.factory} className="w-4 h-4 text-safi-700 shrink-0" />
+                      <span className="font-bold text-neutral-100">{pl.productionLine}</span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-safi-50 border border-safi-200 font-semibold text-safi-700">
+                        {pl.shift}
+                      </span>
+                      <span className="text-neutral-40">·</span>
+                      <span className="text-neutral-80">
                         {tEN(
                           `${pl.loads.length} loads sent to the picker team`,
                           `${pl.loads.length} lotes enviados al equipo de recolección`)}
-                      </p>
-                      <p className="text-[13px] text-neutral-60 mt-0.5">
+                      </span>
+                      {(pl.createdBy || dateStr) && <span className="text-neutral-40">·</span>}
+                      <span className="text-neutral-60">
                         {[
                           pl.createdBy && tEN(`Created by ${pl.createdBy}`, `Creada por ${pl.createdBy}`),
                           dateStr,
                         ].filter(Boolean).join(' · ')}
-                      </p>
+                      </span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => onEdit(pl.productionLine, pl.shift)}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-neutral-10 bg-white text-sm font-medium text-neutral-100 hover:bg-neutral-5"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
                       >
-                        <Icon d={I.edit} className="w-4 h-4" />
+                        <Icon d={I.edit} className="w-3.5 h-3.5" />
                         {tEN('Edit list', 'Editar lista')}
                       </button>
                       <button
                         onClick={() => setConfirmingClear({ line: pl.productionLine, shift: pl.shift })}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-rose-300 bg-white text-sm font-medium text-rose-700 hover:bg-rose-50"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-rose-300 bg-white text-[13px] font-medium text-rose-700 hover:bg-rose-50"
                       >
                         {tEN('Clear list', 'Borrar lista')}
                       </button>
