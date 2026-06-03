@@ -4079,18 +4079,110 @@
     );
   }
 
-  function ForkliftPickerMergedView({ pickingLists = [], processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load' }) {
-    // R33: FO chooses which production line's picking list to work against.
-    // Defaults to the first line that has a list; if none, Plant 1.
-    const [currentLine, setCurrentLine] = useState(() => pickingLists[0]?.productionLine || 'Plant 1');
-    // Reset to first available line if the selection drops away (e.g. list cleared).
+  // R35: Open a printable picking-list page in a new window. Matches the reference
+  // layout from the visit notes: Safi logo + title header, info bar (Site, Shift,
+  // Material, Date), summary, and table of loads with a checkbox column.
+  function printPickingList(pl) {
+    if (!pl) return;
+    // Resolve full load detail from YARD for the order ref + material + weight.
+    const rows = pl.loads.map(({ zoneId, bayId, loadId, bales: scheduledBales }) => {
+      const zone = YARD.find(z => z.id === zoneId);
+      const bay = zone?.bays.find(b => b.id === bayId);
+      const load = bay?.loads.find(l => l.id === loadId);
+      if (!load) return null;
+      const bales = scheduledBales != null ? scheduledBales : load.bales;
+      const weightKg = scheduledBales != null
+        ? Math.round((scheduledBales / load.bales) * load.weight)
+        : load.weight;
+      return {
+        zoneName: zone.name, bayId: bay.id,
+        supplier: load.supplier, lot: load.lot, material: load.material,
+        bales, weightT: (weightKg / 1000).toFixed(1)
+      };
+    }).filter(Boolean);
+    const totalBales = rows.reduce((a, r) => a + r.bales, 0);
+    const totalWeightT = (rows.reduce((a, r) => a + Number(r.weightT), 0)).toFixed(1);
+    const materials = Array.from(new Set(rows.map(r => r.material))).join(', ');
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Picking List</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0d0c1d; margin: 32px; }
+  .doc-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+  .brand { color: #6347FF; font-weight: 700; font-size: 22px; margin: 0; }
+  .title { font-weight: 700; font-size: 28px; margin: 4px 0 0; }
+  .meta { text-align: right; color: #4a4a55; font-size: 14px; }
+  .info-bar { border: 1px solid #d6d6dc; border-radius: 8px; padding: 16px 20px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+  .info-bar .label { font-size: 13px; color: #6e6d77; margin: 0 0 4px; }
+  .info-bar .value { font-size: 16px; font-weight: 700; margin: 0; }
+  .summary { display: flex; gap: 32px; margin-bottom: 20px; }
+  .summary .stat .num { font-size: 28px; font-weight: 700; line-height: 1; }
+  .summary .stat .lbl { font-size: 14px; color: #4a4a55; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { font-size: 14px; font-weight: 600; text-align: left; padding: 10px 12px; border: 1px solid #d6d6dc; background: #fafafa; }
+  thead th.tick { text-align: center; width: 36px; }
+  tbody td { font-size: 14px; padding: 10px 12px; border: 1px solid #d6d6dc; }
+  tbody td.tick { text-align: center; }
+  tbody td.tick:before { content: ''; display: inline-block; width: 14px; height: 14px; border: 1px solid #6e6d77; }
+  @media print { body { margin: 16mm; } }
+</style></head>
+<body>
+  <div class="doc-header">
+    <div>
+      <p class="brand">Safi</p>
+      <h1 class="title">Picking List</h1>
+    </div>
+    <div class="meta">
+      <div>${dateStr}</div>
+      <div>${timeStr}</div>
+    </div>
+  </div>
+  <div class="info-bar">
+    <div><p class="label">Site</p><p class="value">${pl.productionLine || ''}</p></div>
+    <div><p class="label">Shift</p><p class="value">${pl.shift || ''}</p></div>
+    <div><p class="label">Material</p><p class="value">${materials || '-'}</p></div>
+    <div><p class="label">Date</p><p class="value">${dateStr}</p></div>
+  </div>
+  <div class="summary">
+    <div class="stat"><div class="num">${rows.length}</div><div class="lbl">Loads</div></div>
+    <div class="stat"><div class="num">${totalBales}</div><div class="lbl">Bales</div></div>
+    <div class="stat"><div class="num">${totalWeightT}t</div><div class="lbl">Weight</div></div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Zone</th><th>Bay</th><th>Supplier</th><th>Lot</th><th>Material</th><th>Bales</th><th>Weight</th><th class="tick">&#10003;</th>
+    </tr></thead>
+    <tbody>
+      ${rows.map(r => `<tr>
+        <td>${r.zoneName}</td><td>${r.bayId}</td><td>${r.supplier}</td><td>${r.lot}</td><td>${r.material}</td><td>${r.bales}</td><td>${r.weightT}t</td><td class="tick"></td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+  <script>
+    window.onload = () => { setTimeout(() => { window.print(); }, 100); };
+  <\/script>
+</body></html>`;
+    const w = window.open('', '_blank', 'width=900,height=1100');
+    if (!w) return;
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  }
+
+  function ForkliftPickerMergedView({ pickingLists = [], currentProductionLine = 'Apan 1', processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load' }) {
+    // R35: FO works on one (productionLine, shift) at a time. The header chooses
+    // the production line; this internal state chooses the shift within that line.
+    // Defaults to the first shift that has a list for the current line, else Shift 1.
+    const [currentShift, setCurrentShift] = useState(() => pickingLists[0]?.shift || 'Shift 1');
     useEffect(() => {
-      if (pickingLists.length > 0 && !pickingLists.some(pl => pl.productionLine === currentLine)) {
-        setCurrentLine(pickingLists[0].productionLine);
+      if (pickingLists.length > 0 && !pickingLists.some(pl => pl.shift === currentShift)) {
+        setCurrentShift(pickingLists[0].shift);
       }
     }, [pickingLists]);
     // Derive the single active list for the legacy logic below.
-    const pickingList = pickingLists.find(pl => pl.productionLine === currentLine) || null;
+    const pickingList = pickingLists.find(pl => pl.shift === currentShift) || null;
     // All zones open by default so FO sees everything on landing.
     const initialOpen = useMemo(() => {
       const o = {}; YARD.forEach(z => { o[z.id] = true; }); return o;
@@ -4463,25 +4555,34 @@
           </div>
         ))}
 
+        {/* R35: Production line chip + shift switcher row.
+            Shows the current line (from header) + per-shift list selector. */}
+        {pickingLists.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-safi-600 text-white text-[13px] font-semibold">
+              <Icon d={I.factory} className="w-3.5 h-3.5" />
+              {currentProductionLine}
+            </span>
+            {pickingLists.map(pl => (
+              <button
+                key={pl.shift}
+                onClick={() => setCurrentShift(pl.shift)}
+                className={
+                  'px-3 py-1.5 rounded-full text-[13px] font-semibold ' +
+                  (currentShift === pl.shift
+                    ? 'bg-neutral-100 text-white'
+                    : 'bg-white border border-neutral-10 text-neutral-80 hover:bg-neutral-5')
+                }
+                aria-pressed={currentShift === pl.shift}
+              >
+                {pl.shift}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Filter row - Bay + Material multi-select + picking-list toggle */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* R33: Production line filter - lets the FO switch between Plant 1 / Plant 2 lists. */}
-          {pickingLists.length > 0 && (
-            <div className="bg-white border border-neutral-10 rounded-lg px-3 py-2 min-h-[52px] flex items-center gap-2">
-              <div className="text-[13px] text-neutral-60">{tEN('Production line', 'Línea de producción')}</div>
-              <select
-                value={currentLine}
-                onChange={e => setCurrentLine(e.target.value)}
-                className="text-[15px] font-medium text-neutral-100 bg-transparent border-0 focus:outline-none focus:ring-0 cursor-pointer pr-1"
-              >
-                {pickingLists.map(pl => (
-                  <option key={pl.productionLine} value={pl.productionLine}>
-                    {pl.productionLine} ({pl.loads.filter(l => !processed[l.loadId]).length})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
           <PickerFilterDropdown
             label={tEN('Bays', 'Filas')}
             value={bayFilter}
@@ -4513,6 +4614,17 @@
               {pickingListOnly
                 ? tEN('Showing picking list only', 'Mostrando solo lista')
                 : tEN('Show picking list only', 'Mostrar solo lista')}
+            </button>
+          )}
+          {/* R35: Print picking list - opens a printable view in a new window.
+              Visible whenever the active list has at least one load. */}
+          {pickingList && pickingList.loads.length > 0 && (
+            <button
+              onClick={() => printPickingList(pickingList)}
+              className="inline-flex items-center gap-2 px-4 py-3 rounded-lg border border-neutral-10 bg-white text-neutral-80 text-[15px] font-medium hover:bg-neutral-5 min-h-[52px]"
+            >
+              <Icon d={I.print} className="w-5 h-5" />
+              {tEN('Print list', 'Imprimir lista')}
             </button>
           )}
           {anyFilterActive && (
