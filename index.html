@@ -283,7 +283,26 @@
 
   // Each bay carries a `capacity` (max loads it can physically hold).
   // current loads vs capacity → "Empty" | "Capacity for N load" | "Full" chip.
-  const YARD = [
+  // R39: ZONE_COLORS palette for the editable warehouse. `id` is internal,
+  // `swatch` is the small visual chip, `accent` is the subtle background used
+  // on zone cards / borders, and `border` is the left rule on the zone card.
+  const ZONE_COLORS = [
+    { id: 'none',       label: 'No colour',   swatch: 'transparent', accent: 'transparent', border: 'transparent' },
+    { id: 'red',        label: 'Red',         swatch: '#ef4444', accent: 'rgba(239, 68, 68, 0.06)',  border: '#fca5a5' },
+    { id: 'orange',     label: 'Orange',      swatch: '#f97316', accent: 'rgba(249, 115, 22, 0.06)', border: '#fdba74' },
+    { id: 'yellow',     label: 'Yellow',      swatch: '#facc15', accent: 'rgba(250, 204, 21, 0.10)', border: '#fde68a' },
+    { id: 'lightGreen', label: 'Light green', swatch: '#84cc16', accent: 'rgba(132, 204, 22, 0.08)', border: '#bef264' },
+    { id: 'darkGreen',  label: 'Dark green',  swatch: '#16a34a', accent: 'rgba(22, 163, 74, 0.06)',  border: '#86efac' },
+    { id: 'turquoise',  label: 'Turquoise',   swatch: '#06b6d4', accent: 'rgba(6, 182, 212, 0.06)',  border: '#7dd3fc' },
+    { id: 'lightBlue',  label: 'Light blue',  swatch: '#38bdf8', accent: 'rgba(56, 189, 248, 0.06)', border: '#7dd3fc' },
+    { id: 'darkBlue',   label: 'Dark blue',   swatch: '#1d4ed8', accent: 'rgba(29, 78, 216, 0.06)',  border: '#93c5fd' },
+    { id: 'purple',     label: 'Purple',      swatch: '#a855f7', accent: 'rgba(168, 85, 247, 0.06)', border: '#d8b4fe' },
+    { id: 'pink',       label: 'Pink',        swatch: '#ec4899', accent: 'rgba(236, 72, 153, 0.06)', border: '#f9a8d4' },
+    { id: 'grey',       label: 'Grey',        swatch: '#6b7280', accent: 'rgba(107, 114, 128, 0.06)', border: '#d4d4d8' },
+  ];
+  const getZoneColor = (id) => ZONE_COLORS.find(c => c.id === id) || ZONE_COLORS[0];
+
+  const INITIAL_YARD = [
     {
       // Zone A - no inventory rule. Loads can be selected and picked in any order
       // (no LIFO/FIFO blocking). Used for plants that pick by quality/priority.
@@ -398,6 +417,12 @@
       ]
     }
   ];
+
+  // R39: YARD const kept as an alias of the initial yard so module-level code
+  // (helpers, dead-code components) keeps compiling. The live yard now lives
+  // in React state inside ProductionManagementPage; components that mutate or
+  // read the live yard receive it as a prop.
+  const YARD = INITIAL_YARD;
 
   // Active production target (top-of-page card)
   const ACTIVE_WINDOW = {
@@ -730,7 +755,7 @@
   //           single horizontal row, with a heat-mapped minimap above.
   // Bay view:  full load list (LoadRow re-used).
   // ============================================================================
-  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast }) {
+  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast, yardOps = {} }) {
     const [view, setView] = useState({ level: 'overview' });
     // Which bay tile (if any) should appear first + highlighted (from the filter or minimap stepper)
     const [focusBayId, setFocusBayId] = useState(null);
@@ -742,6 +767,19 @@
     // R25: reject modal state. Triggered from per-load Reject button in bay view.
     // { zone, bay, load, accessibleBales } | null
     const [rejectModal, setRejectModal] = useState(null);
+    // R39: warehouse editor modal state.
+    // Shapes:
+    //   { type: 'createZone' }
+    //   { type: 'editZone', zoneId }
+    //   { type: 'createBays', zoneId }
+    //   { type: 'editBays', zoneId }
+    //   { type: 'editBay', zoneId, bayId }
+    //   { type: 'moveLoads', fromZoneId, fromBayId, loadIds }
+    const [editor, setEditor] = useState(null);
+    // R39: bay-view selection mode for bulk-move. When true, checkboxes appear
+    // per load and a floating action bar shows selected count + "Move N".
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [bulkSelected, setBulkSelected] = useState(new Set());
     const bayRowRef = useRef(null);
 
     const goOverview = () => { setFocusBayId(null); setView({ level: 'overview' }); };
@@ -933,12 +971,23 @@
 
       return (
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
-          {/* Header row: title + KPI/Progress toggle */}
+          {/* Header row: title + KPI/Progress toggle + Create zone (R39) */}
           <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
             <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60">
               {tr('yardOverview', lang)} · {lang === 'es' ? 'vista superior' : 'top-down view'}
             </div>
-            <ViewToggle />
+            <div className="flex items-center gap-2 flex-wrap">
+              <ViewToggle />
+              {!isCreating && yardOps?.createZone && (
+                <button
+                  onClick={() => setEditor({ type: 'createZone' })}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700"
+                >
+                  <Icon d={I.plus} className="w-3.5 h-3.5" />
+                  {lang === 'es' ? 'Crear zona' : 'Create zone'}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-col gap-3">
@@ -1094,11 +1143,44 @@
           <Breadcrumbs zone={zone} />
 
           {/* Tight yard header: title, single-line metrics, then minimap */}
-          <div className="mt-2 mb-3">
-            <h3 className="text-2xl font-bold text-neutral-100">{zoneName(zone, lang)}</h3>
-            <div className="text-[13px] text-neutral-60 mt-1">
-              {z.bays} {tr('bays', lang).toLowerCase()} · {z.loads} {tr('loads', lang).toLowerCase()} · {fmtNum(z.bales)} {tr('bales', lang).toLowerCase()} · {fmtKg(z.weight)}
+          <div className="mt-2 mb-3 flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div className="flex items-center gap-2">
+                {(() => { const zc = getZoneColor(zone.color); return zc.id !== 'none' ? <span className="w-3 h-3 rounded-full" style={{ backgroundColor: zc.swatch }} /> : null; })()}
+                <h3 className="text-2xl font-bold text-neutral-100">{zoneName(zone, lang)}</h3>
+              </div>
+              <div className="text-[13px] text-neutral-60 mt-1">
+                {z.bays} {tr('bays', lang).toLowerCase()} · {z.loads} {tr('loads', lang).toLowerCase()} · {fmtNum(z.bales)} {tr('bales', lang).toLowerCase()} · {fmtKg(z.weight)}
+              </div>
             </div>
+            {/* R39: zone-level edit actions */}
+            {!isCreating && yardOps?.updateZone && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setEditor({ type: 'editZone', zoneId: zone.id })}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
+                >
+                  <Icon d={I.edit} className="w-3.5 h-3.5" />
+                  {lang === 'es' ? 'Editar zona' : 'Edit zone'}
+                </button>
+                <button
+                  onClick={() => setEditor({ type: 'createBays', zoneId: zone.id })}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700"
+                >
+                  <Icon d={I.plus} className="w-3.5 h-3.5" />
+                  {lang === 'es' ? 'Crear filas' : 'Create bays'}
+                </button>
+                {zone.bays.length > 0 && (
+                  <button
+                    onClick={() => setEditor({ type: 'editBays', zoneId: zone.id })}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
+                  >
+                    <Icon d={I.edit} className="w-3.5 h-3.5" />
+                    {lang === 'es' ? 'Editar filas' : 'Edit bays'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Directional flow indicator (picking list workflow only) */}
@@ -1404,7 +1486,7 @@
         setSelectionBales(prev => {
           if (prev[key] != null) { const n = { ...prev }; delete n[key]; return n; }
           const [zid, bid, lid] = key.split('|');
-          const zz = YARD.find(z => z.id === zid);
+          const zz = yard.find(z => z.id === zid);
           const bb = zz?.bays.find(b => b.id === bid);
           const ld = bb?.loads.find(l => l.id === lid);
           return { ...prev, [key]: ld?.bales || 0 };
@@ -1433,7 +1515,31 @@
                   In {zoneName(zone, lang)} · {s.loads} {tr('loads', lang).toLowerCase()} · {fmtNum(s.bales)} {tr('bales', lang).toLowerCase()} · {fmtKg(s.weight)}
                 </div>
               </div>
-              <CapacityChip bales={s.bales} />
+              <div className="flex items-center gap-2 flex-wrap">
+                <CapacityChip bales={s.bales} />
+                {/* R39: bay-level edit + bulk-select actions, default mode only. */}
+                {!isCreating && yardOps?.updateBay && (
+                  <>
+                    <button
+                      onClick={() => setEditor({ type: 'editBay', zoneId: zone.id, bayId: bay.id })}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
+                    >
+                      <Icon d={I.edit} className="w-3.5 h-3.5" />
+                      {lang === 'es' ? 'Editar fila' : 'Edit bay'}
+                    </button>
+                    {bay.loads.length > 0 && yard.length > 1 && (
+                      <button
+                        onClick={() => { setSelectionMode(v => !v); setBulkSelected(new Set()); }}
+                        aria-pressed={selectionMode}
+                        className={'inline-flex items-center gap-1.5 px-3 py-1.5 rounded border text-[13px] font-medium ' + (selectionMode ? 'border-safi-600 bg-safi-50 text-safi-700' : 'border-neutral-10 text-neutral-100 bg-white hover:bg-neutral-5')}
+                      >
+                        <Icon d={selectionMode ? I.check : I.list} className="w-3.5 h-3.5" />
+                        {selectionMode ? (lang === 'es' ? 'Cancelar selección' : 'Done selecting') : (lang === 'es' ? 'Mover cargas' : 'Move loads')}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
             {isCreating && !bay.accessible && (
               <div className="mt-3 inline-flex items-center gap-2 px-3 py-2 rounded bg-amber-50 text-amber-900 text-[13px]">
@@ -1494,6 +1600,28 @@
                   const access = accessibilityOf(zone, bay, load);
                   const lifoOk = isLifoSelectable(zone, bay, load, selectionBales, pickerMode);
                   const alreadySelected = selectionBales[key] != null;
+                  // R39: selection mode for bulk-move. Overrides isCreating treatment.
+                  if (!isCreating && selectionMode) {
+                    const isBulkSel = bulkSelected.has(load.id);
+                    return (
+                      <label key={load.id} className={'flex items-center gap-3 pl-4 pr-3 py-3 cursor-pointer ' + (isBulkSel ? 'bg-safi-50' : 'hover:bg-neutral-5')}>
+                        <input
+                          type="checkbox"
+                          checked={isBulkSel}
+                          onChange={() => setBulkSelected(prev => {
+                            const next = new Set(prev);
+                            if (next.has(load.id)) next.delete(load.id); else next.add(load.id);
+                            return next;
+                          })}
+                          className="w-5 h-5 rounded text-safi-600 focus:ring-safi-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-neutral-100">{load.supplier} <span className="text-neutral-40 text-sm">#{load.lot}</span></div>
+                          <div className="text-[13px] text-neutral-60 mt-0.5">{fmtNum(load.bales)} bales · {fmtKg(load.weight)}</div>
+                        </div>
+                      </label>
+                    );
+                  }
                   // R35: loadClaimMap is loadId -> {productionLine, shift}. A load on
                   // ANOTHER (line, shift) combination is locked from this list.
                   const claimOwner = loadClaimMap[load.id] || null;
@@ -1528,11 +1656,41 @@
                   );
                 })}
               </div>
+              {/* R39: bulk-move action bar - appears when at least one load is ticked in selection mode. */}
+              {!isCreating && selectionMode && bulkSelected.size > 0 && (
+                <div className="sticky bottom-4 z-30 mt-3 mx-4 mb-4 px-4 py-3 rounded-lg bg-neutral-100 text-white shadow-lg flex items-center justify-between gap-3 flex-wrap">
+                  <div className="text-sm font-medium">
+                    {bulkSelected.size} {bulkSelected.size === 1 ? (lang === 'es' ? 'lote seleccionado' : 'load selected') : (lang === 'es' ? 'lotes seleccionados' : 'loads selected')}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => { setBulkSelected(new Set()); }}
+                      className="px-3 py-1.5 rounded border border-white/20 text-white text-[13px] font-medium hover:bg-white/10"
+                    >
+                      {lang === 'es' ? 'Limpiar' : 'Clear'}
+                    </button>
+                    <button
+                      onClick={() => setEditor({ type: 'moveLoads', fromZoneId: zone.id, fromBayId: bay.id, loadIds: Array.from(bulkSelected) })}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700"
+                    >
+                      <Icon d={I.arrowR} className="w-3.5 h-3.5" />
+                      {lang === 'es'
+                        ? `Mover ${bulkSelected.size} ${bulkSelected.size === 1 ? 'lote' : 'lotes'}`
+                        : `Move ${bulkSelected.size} ${bulkSelected.size === 1 ? 'load' : 'loads'}`}
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
       );
     };
+
+    // R39: when the move modal closes successfully, clear the selection.
+    useEffect(() => {
+      if (!editor) { /* may have been move - clear selection if so */ setBulkSelected(prev => prev.size > 0 ? new Set() : prev); }
+    }, [editor]);
 
     const renderContent = () => {
       if (view.level === 'zone') return renderZone();
@@ -1566,12 +1724,402 @@
                   : `Rejected ${bales} bales from #${rejectModal.load.lot} (${reason}, ${fmtKg(weight)})`),
                 kind: 'success'
               });
-              // NOTE prototype: YARD data is a const so the rejection isn't persisted.
-              // In production this would call an API and decrement load.bales + load.weight.
             }}
           />
         )}
+        {editor && (
+          <WarehouseEditorModal
+            editor={editor}
+            yard={yard}
+            yardOps={yardOps}
+            lang={lang}
+            setToast={setToast}
+            onClose={() => setEditor(null)}
+          />
+        )}
       </>
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // R39: WarehouseEditorModal - handles all warehouse editing flows from the
+  // layout tab. Picks the right form based on editor.type. Each flow validates
+  // and calls the corresponding yardOps mutator, then closes.
+  // -------------------------------------------------------------------------
+  function WarehouseEditorModal({ editor, yard, yardOps, lang = 'en', setToast, onClose }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const Title = ({ children }) => <h3 className="font-bold text-lg text-neutral-100">{children}</h3>;
+    const Field = ({ label, children }) => (
+      <div>
+        <label className="block text-[13px] font-semibold text-neutral-80 mb-1.5">{label}</label>
+        {children}
+      </div>
+    );
+    const TextInput = (props) => (
+      <input
+        type="text"
+        {...props}
+        className={'w-full h-11 px-3 border border-neutral-10 rounded-lg text-base text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 ' + (props.className || '')}
+      />
+    );
+    const Footer = ({ onCancel, onConfirm, confirmLabel, confirmDanger, confirmDisabled }) => (
+      <div className="mt-6 flex gap-2 justify-end">
+        <button onClick={onCancel} className="px-4 py-2.5 rounded-lg border border-neutral-10 text-[13px] font-medium hover:bg-neutral-5 min-h-[44px]">
+          {tEN('Cancel', 'Cancelar')}
+        </button>
+        <button
+          disabled={confirmDisabled}
+          onClick={onConfirm}
+          className={'px-4 py-2.5 rounded-lg text-[13px] font-medium min-h-[44px] ' + (
+            confirmDisabled ? 'bg-neutral-10 text-neutral-40 cursor-not-allowed' :
+              confirmDanger ? 'bg-rose-600 text-white hover:bg-rose-700' :
+                'bg-safi-600 text-white hover:bg-safi-700'
+          )}
+        >{confirmLabel}</button>
+      </div>
+    );
+
+    // Build flow components inline. Each handles its own local state.
+    const CreateZoneForm = () => {
+      const [name, setName] = useState('');
+      const [colorId, setColorId] = useState('none');
+      const trimmed = name.trim();
+      const duplicate = trimmed && yard.some(z => (z.name || '').toLowerCase() === trimmed.toLowerCase());
+      const canSave = !!trimmed && !duplicate;
+      return (
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <Title>{tEN('Create zone', 'Crear zona')}</Title>
+          <p className="text-[13px] text-neutral-60 mt-1">{tEN('Name your new zone and pick a colour.', 'Nombra tu nueva zona y elige un color.')}</p>
+          <div className="mt-5 space-y-4">
+            <Field label={tEN('Zone name', 'Nombre de la zona')}>
+              <TextInput value={name} onChange={e => setName(e.target.value)} placeholder={tEN('e.g. Zone D', 'p. ej. Zona D')} />
+              {duplicate && <p className="text-[13px] text-rose-700 mt-1.5">{tEN('A zone with that name already exists.', 'Ya existe una zona con ese nombre.')}</p>}
+            </Field>
+            <Field label={tEN('Colour', 'Color')}>
+              <div className="grid grid-cols-6 gap-2">
+                {ZONE_COLORS.map(c => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setColorId(c.id)}
+                    aria-pressed={colorId === c.id}
+                    className={'h-10 rounded-lg border-2 flex items-center justify-center transition ' + (colorId === c.id ? 'border-safi-600 ring-2 ring-safi-200' : 'border-neutral-10 hover:border-neutral-40')}
+                    title={c.label}
+                  >
+                    {c.id === 'none' ? (
+                      <span className="text-[13px] text-neutral-60">—</span>
+                    ) : (
+                      <span className="w-5 h-5 rounded-full" style={{ backgroundColor: c.swatch }} />
+                    )}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[13px] text-neutral-60 mt-1.5">{getZoneColor(colorId).label}</p>
+            </Field>
+          </div>
+          <Footer
+            onCancel={onClose}
+            onConfirm={() => { yardOps.createZone({ name: trimmed, color: colorId }); setToast?.({ message: tEN(`Zone "${trimmed}" created.`, `Zona "${trimmed}" creada.`), kind: 'success' }); onClose(); }}
+            confirmLabel={tEN('Create zone', 'Crear zona')}
+            confirmDisabled={!canSave}
+          />
+        </div>
+      );
+    };
+
+    const EditZoneForm = () => {
+      const zone = yard.find(z => z.id === editor.zoneId);
+      const [name, setName] = useState(zone?.name || '');
+      const [colorId, setColorId] = useState(zone?.color || 'none');
+      const [confirmDelete, setConfirmDelete] = useState(false);
+      if (!zone) return null;
+      const totalLoads = zone.bays.reduce((a, b) => a + b.loads.length, 0);
+      const trimmed = name.trim();
+      const duplicate = trimmed && yard.some(z => z.id !== zone.id && (z.name || '').toLowerCase() === trimmed.toLowerCase());
+      const canSave = !!trimmed && !duplicate;
+      const canDelete = totalLoads === 0 && zone.bays.every(b => b.loads.length === 0);
+      return (
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <Title>{tEN('Edit zone', 'Editar zona')}</Title>
+          <div className="mt-5 space-y-4">
+            <Field label={tEN('Zone name', 'Nombre de la zona')}>
+              <TextInput value={name} onChange={e => setName(e.target.value)} />
+              {duplicate && <p className="text-[13px] text-rose-700 mt-1.5">{tEN('A zone with that name already exists.', 'Ya existe una zona con ese nombre.')}</p>}
+            </Field>
+            <Field label={tEN('Colour', 'Color')}>
+              <div className="grid grid-cols-6 gap-2">
+                {ZONE_COLORS.map(c => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setColorId(c.id)}
+                    aria-pressed={colorId === c.id}
+                    className={'h-10 rounded-lg border-2 flex items-center justify-center transition ' + (colorId === c.id ? 'border-safi-600 ring-2 ring-safi-200' : 'border-neutral-10 hover:border-neutral-40')}
+                    title={c.label}
+                  >
+                    {c.id === 'none' ? <span className="text-[13px] text-neutral-60">—</span> : <span className="w-5 h-5 rounded-full" style={{ backgroundColor: c.swatch }} />}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <div className="pt-3 border-t border-neutral-10">
+              <button
+                disabled={!canDelete}
+                onClick={() => setConfirmDelete(true)}
+                className={'inline-flex items-center gap-1.5 px-3 py-2 rounded border text-[13px] font-medium ' + (canDelete ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-neutral-10 text-neutral-40 cursor-not-allowed')}
+                title={canDelete ? '' : tEN('Only empty zones can be deleted', 'Solo se pueden eliminar zonas vacías')}
+              >
+                <Icon d={I.trash} className="w-4 h-4" />
+                {tEN('Delete zone', 'Eliminar zona')}
+              </button>
+              {!canDelete && (
+                <p className="text-[13px] text-neutral-60 mt-1.5">
+                  {tEN('Only empty zones can be deleted. Move or process all loads first.', 'Solo se pueden eliminar zonas vacías. Mueve o procesa todas las cargas primero.')}
+                </p>
+              )}
+            </div>
+          </div>
+          {confirmDelete ? (
+            <div className="mt-6 p-4 rounded-lg bg-rose-50 border border-rose-200">
+              <p className="text-sm text-rose-900 font-semibold">{tEN(`Delete "${zone.name}"?`, `¿Eliminar "${zone.name}"?`)}</p>
+              <p className="text-[13px] text-rose-800 mt-1">{tEN('This cannot be undone.', 'No se puede deshacer.')}</p>
+              <div className="mt-3 flex items-center gap-2 justify-end">
+                <button onClick={() => setConfirmDelete(false)} className="px-3 py-2 rounded border border-neutral-10 text-[13px] font-medium bg-white">{tEN('Cancel', 'Cancelar')}</button>
+                <button onClick={() => { yardOps.deleteZone(zone.id); setToast?.({ message: tEN(`Zone "${zone.name}" deleted.`, `Zona "${zone.name}" eliminada.`), kind: 'success' }); onClose(); }} className="px-3 py-2 rounded bg-rose-600 text-white text-[13px] font-medium">{tEN('Delete', 'Eliminar')}</button>
+              </div>
+            </div>
+          ) : (
+            <Footer
+              onCancel={onClose}
+              onConfirm={() => { yardOps.updateZone(zone.id, { name: trimmed, color: colorId }); setToast?.({ message: tEN('Zone updated.', 'Zona actualizada.'), kind: 'success' }); onClose(); }}
+              confirmLabel={tEN('Save changes', 'Guardar cambios')}
+              confirmDisabled={!canSave}
+            />
+          )}
+        </div>
+      );
+    };
+
+    const CreateBaysForm = () => {
+      const zone = yard.find(z => z.id === editor.zoneId);
+      const [names, setNames] = useState(['']);
+      if (!zone) return null;
+      const trimmed = names.map(n => n.trim()).filter(Boolean);
+      const seen = new Set();
+      const existing = new Set(zone.bays.map(b => b.name.toLowerCase()));
+      const dups = trimmed.filter(n => {
+        const key = n.toLowerCase();
+        const isDup = seen.has(key) || existing.has(key);
+        seen.add(key);
+        return isDup;
+      });
+      const canSave = trimmed.length > 0 && dups.length === 0;
+      return (
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <Title>{tEN(`Create bays in ${zone.name}`, `Crear filas en ${zone.name}`)}</Title>
+          <p className="text-[13px] text-neutral-60 mt-1">{tEN('Add one or more bays. Names must be unique.', 'Añade una o más filas. Los nombres deben ser únicos.')}</p>
+          <div className="mt-5 space-y-2">
+            {names.map((n, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <TextInput value={n} onChange={e => setNames(prev => prev.map((v, j) => j === i ? e.target.value : v))} placeholder={tEN(`Bay name`, `Nombre de la fila`)} />
+                {names.length > 1 && (
+                  <button onClick={() => setNames(prev => prev.filter((_, j) => j !== i))} className="p-2 rounded text-neutral-60 hover:bg-neutral-5" aria-label="Remove"><Icon d={I.close} className="w-4 h-4" /></button>
+                )}
+              </div>
+            ))}
+            <button
+              onClick={() => setNames(prev => [...prev, ''])}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-dashed border-neutral-10 text-[13px] font-medium text-neutral-80 hover:bg-neutral-5"
+            >
+              <Icon d={I.plus} className="w-4 h-4" />
+              {tEN('Add another bay', 'Añadir otra fila')}
+            </button>
+            {dups.length > 0 && <p className="text-[13px] text-rose-700 mt-1.5">{tEN('Bay names must be unique within the zone.', 'Los nombres deben ser únicos dentro de la zona.')}</p>}
+          </div>
+          <Footer
+            onCancel={onClose}
+            onConfirm={() => { yardOps.createBays(zone.id, trimmed); setToast?.({ message: tEN(`${trimmed.length} bay${trimmed.length === 1 ? '' : 's'} created in ${zone.name}.`, `${trimmed.length} fila${trimmed.length === 1 ? '' : 's'} creada${trimmed.length === 1 ? '' : 's'} en ${zone.name}.`), kind: 'success' }); onClose(); }}
+            confirmLabel={tEN(`Create ${trimmed.length || ''} ${trimmed.length === 1 ? 'bay' : 'bays'}`.replace('  ', ' '), `Crear ${trimmed.length || ''} fila${trimmed.length === 1 ? '' : 's'}`.replace('  ', ' '))}
+            confirmDisabled={!canSave}
+          />
+        </div>
+      );
+    };
+
+    const EditBaysForm = () => {
+      const zone = yard.find(z => z.id === editor.zoneId);
+      const [rows, setRows] = useState(zone ? zone.bays.map(b => ({ id: b.id, name: b.name, originalName: b.name, empty: b.loads.length === 0, deleted: false })) : []);
+      if (!zone) return null;
+      const trimmedNames = rows.filter(r => !r.deleted).map(r => r.name.trim());
+      const namesUnique = new Set(trimmedNames.map(n => n.toLowerCase())).size === trimmedNames.length;
+      const canSave = trimmedNames.every(n => n.length > 0) && namesUnique;
+      return (
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <Title>{tEN(`Edit bays in ${zone.name}`, `Editar filas en ${zone.name}`)}</Title>
+          <p className="text-[13px] text-neutral-60 mt-1">{tEN('Rename or delete bays. Only empty bays can be deleted.', 'Renombra o elimina filas. Solo las filas vacías se pueden eliminar.')}</p>
+          <div className="mt-5 space-y-2 max-h-[50vh] overflow-y-auto">
+            {rows.map((r, i) => (
+              <div key={r.id} className={'flex items-center gap-2 ' + (r.deleted ? 'opacity-40' : '')}>
+                <TextInput
+                  value={r.name}
+                  disabled={r.deleted}
+                  onChange={e => setRows(prev => prev.map((row, j) => j === i ? { ...row, name: e.target.value } : row))}
+                />
+                <button
+                  onClick={() => setRows(prev => prev.map((row, j) => j === i ? { ...row, deleted: !row.deleted } : row))}
+                  disabled={!r.empty}
+                  title={!r.empty ? tEN('Bay has loads - move them first.', 'La fila tiene cargas - muévelas primero.') : ''}
+                  className={'p-2 rounded ' + (!r.empty ? 'text-neutral-40 cursor-not-allowed' : r.deleted ? 'bg-neutral-5 text-neutral-100' : 'text-rose-700 hover:bg-rose-50')}
+                  aria-label="Delete"
+                >
+                  <Icon d={r.deleted ? I.close : I.trash} className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <Footer
+            onCancel={onClose}
+            onConfirm={() => {
+              rows.forEach(r => {
+                if (r.deleted) { yardOps.deleteBay(zone.id, r.id); }
+                else if (r.name.trim() !== r.originalName) { yardOps.updateBay(zone.id, r.id, { name: r.name.trim() }); }
+              });
+              setToast?.({ message: tEN('Bay changes saved.', 'Cambios guardados.'), kind: 'success' });
+              onClose();
+            }}
+            confirmLabel={tEN('Save changes', 'Guardar cambios')}
+            confirmDisabled={!canSave}
+          />
+        </div>
+      );
+    };
+
+    const EditBayForm = () => {
+      const zone = yard.find(z => z.id === editor.zoneId);
+      const bay = zone?.bays.find(b => b.id === editor.bayId);
+      const [name, setName] = useState(bay?.name || '');
+      const [confirmDelete, setConfirmDelete] = useState(false);
+      if (!bay) return null;
+      const trimmed = name.trim();
+      const duplicate = trimmed && zone.bays.some(b => b.id !== bay.id && b.name.toLowerCase() === trimmed.toLowerCase());
+      const canSave = !!trimmed && !duplicate;
+      const canDelete = bay.loads.length === 0;
+      return (
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <Title>{tEN('Edit bay', 'Editar fila')}</Title>
+          <div className="mt-5 space-y-4">
+            <Field label={tEN('Bay name', 'Nombre de la fila')}>
+              <TextInput value={name} onChange={e => setName(e.target.value)} />
+              {duplicate && <p className="text-[13px] text-rose-700 mt-1.5">{tEN('A bay with that name already exists in this zone.', 'Ya existe una fila con ese nombre en esta zona.')}</p>}
+            </Field>
+            <div className="pt-3 border-t border-neutral-10">
+              <button
+                disabled={!canDelete}
+                onClick={() => setConfirmDelete(true)}
+                className={'inline-flex items-center gap-1.5 px-3 py-2 rounded border text-[13px] font-medium ' + (canDelete ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-neutral-10 text-neutral-40 cursor-not-allowed')}
+              >
+                <Icon d={I.trash} className="w-4 h-4" />
+                {tEN('Delete bay', 'Eliminar fila')}
+              </button>
+              {!canDelete && (
+                <p className="text-[13px] text-neutral-60 mt-1.5">{tEN('Only empty bays can be deleted. Move or process all loads first.', 'Solo se pueden eliminar filas vacías. Mueve o procesa todas las cargas primero.')}</p>
+              )}
+            </div>
+          </div>
+          {confirmDelete ? (
+            <div className="mt-6 p-4 rounded-lg bg-rose-50 border border-rose-200">
+              <p className="text-sm text-rose-900 font-semibold">{tEN(`Delete "${bay.name}"?`, `¿Eliminar "${bay.name}"?`)}</p>
+              <div className="mt-3 flex items-center gap-2 justify-end">
+                <button onClick={() => setConfirmDelete(false)} className="px-3 py-2 rounded border border-neutral-10 text-[13px] font-medium bg-white">{tEN('Cancel', 'Cancelar')}</button>
+                <button onClick={() => { yardOps.deleteBay(zone.id, bay.id); setToast?.({ message: tEN(`Bay "${bay.name}" deleted.`, `Fila "${bay.name}" eliminada.`), kind: 'success' }); onClose(); }} className="px-3 py-2 rounded bg-rose-600 text-white text-[13px] font-medium">{tEN('Delete', 'Eliminar')}</button>
+              </div>
+            </div>
+          ) : (
+            <Footer
+              onCancel={onClose}
+              onConfirm={() => { yardOps.updateBay(zone.id, bay.id, { name: trimmed }); setToast?.({ message: tEN('Bay updated.', 'Fila actualizada.'), kind: 'success' }); onClose(); }}
+              confirmLabel={tEN('Save changes', 'Guardar cambios')}
+              confirmDisabled={!canSave}
+            />
+          )}
+        </div>
+      );
+    };
+
+    const MoveLoadsForm = () => {
+      const [toZoneId, setToZoneId] = useState(yard.find(z => z.id !== editor.fromZoneId)?.id || '');
+      const targetZone = yard.find(z => z.id === toZoneId);
+      const validBays = targetZone ? targetZone.bays.filter(b => b.id !== editor.fromBayId) : [];
+      const [toBayId, setToBayId] = useState(validBays[0]?.id || '');
+      const [confirmed, setConfirmed] = useState(false);
+      // Re-derive when target zone changes
+      useEffect(() => {
+        const nextValid = targetZone ? targetZone.bays.filter(b => b.id !== editor.fromBayId) : [];
+        setToBayId(nextValid[0]?.id || '');
+      }, [toZoneId]);
+      const count = editor.loadIds.length;
+      const fromZone = yard.find(z => z.id === editor.fromZoneId);
+      const fromBay = fromZone?.bays.find(b => b.id === editor.fromBayId);
+      const canMove = !!toBayId;
+      const bulk = count > 1;
+      const goConfirm = () => {
+        if (bulk && !confirmed) { setConfirmed(true); return; }
+        yardOps.moveLoads(editor.fromZoneId, editor.fromBayId, editor.loadIds, toZoneId, toBayId);
+        setToast?.({
+          message: tEN(`${count} load${count === 1 ? '' : 's'} moved to ${targetZone?.name} · ${validBays.find(b => b.id === toBayId)?.name}.`,
+                       `${count} lote${count === 1 ? '' : 's'} movido${count === 1 ? '' : 's'} a ${targetZone?.name} · ${validBays.find(b => b.id === toBayId)?.name}.`),
+          kind: 'success'
+        });
+        onClose();
+      };
+      return (
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <Title>{tEN(bulk ? `Move ${count} loads` : 'Move load', bulk ? `Mover ${count} lotes` : 'Mover lote')}</Title>
+          <p className="text-[13px] text-neutral-60 mt-1">
+            {tEN(`From ${fromZone?.name} · ${fromBay?.name}`, `Desde ${fromZone?.name} · ${fromBay?.name}`)}
+          </p>
+          <div className="mt-5 space-y-4">
+            <Field label={tEN('Target zone', 'Zona destino')}>
+              <select value={toZoneId} onChange={e => setToZoneId(e.target.value)} className="w-full h-11 px-3 border border-neutral-10 rounded-lg text-base text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600">
+                {yard.map(z => <option key={z.id} value={z.id} disabled={z.bays.length === 0}>{z.name}</option>)}
+              </select>
+            </Field>
+            <Field label={tEN('Target bay', 'Fila destino')}>
+              <select value={toBayId} onChange={e => setToBayId(e.target.value)} className="w-full h-11 px-3 border border-neutral-10 rounded-lg text-base text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600">
+                {validBays.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </Field>
+          </div>
+          {bulk && confirmed ? (
+            <div className="mt-5 p-4 rounded-lg bg-amber-50 border border-amber-200">
+              <p className="text-sm text-amber-900 font-semibold">{tEN(`Confirm moving ${count} loads?`, `¿Confirmar mover ${count} lotes?`)}</p>
+              <p className="text-[13px] text-amber-800 mt-1">{tEN(`This will move all ${count} loads in one go to ${targetZone?.name} · ${validBays.find(b => b.id === toBayId)?.name}.`, `Se moverán los ${count} lotes a ${targetZone?.name} · ${validBays.find(b => b.id === toBayId)?.name}.`)}</p>
+              <div className="mt-3 flex items-center gap-2 justify-end">
+                <button onClick={() => setConfirmed(false)} className="px-3 py-2 rounded border border-neutral-10 text-[13px] font-medium bg-white">{tEN('Back', 'Atrás')}</button>
+                <button onClick={goConfirm} className="px-3 py-2 rounded bg-safi-600 text-white text-[13px] font-medium">{tEN(`Yes, move ${count} loads`, `Sí, mover ${count} lotes`)}</button>
+              </div>
+            </div>
+          ) : (
+            <Footer
+              onCancel={onClose}
+              onConfirm={goConfirm}
+              confirmLabel={bulk ? tEN(`Move ${count} loads`, `Mover ${count} lotes`) : tEN('Move load', 'Mover lote')}
+              confirmDisabled={!canMove}
+            />
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+        {editor.type === 'createZone' && <CreateZoneForm />}
+        {editor.type === 'editZone' && <EditZoneForm />}
+        {editor.type === 'createBays' && <CreateBaysForm />}
+        {editor.type === 'editBays' && <EditBaysForm />}
+        {editor.type === 'editBay' && <EditBayForm />}
+        {editor.type === 'moveLoads' && <MoveLoadsForm />}
+      </div>
     );
   }
 
@@ -1880,6 +2428,53 @@
     // Tabs - accordion variant removed. Sticky is the default.
     const [tab, setTab] = useState('pw-v2');
 
+    // R39: editable warehouse - yard structure now lives in state so the SL can
+    // create / rename / delete zones + bays + move loads at runtime.
+    const [yard, setYard] = useState(INITIAL_YARD);
+    // Mutator helpers - thin wrappers that keep call sites readable.
+    const yardOps = {
+      createZone: ({ name, color }) => setYard(prev => {
+        const id = name.replace(/\s+/g, '').slice(0, 4).toUpperCase() + '-' + Date.now().toString(36).slice(-4);
+        return [...prev, { id, name, esName: name, color: color || 'none', inventoryRule: 'NONE', bays: [] }];
+      }),
+      updateZone: (zoneId, patch) => setYard(prev => prev.map(z => z.id === zoneId ? { ...z, ...patch, esName: patch.name || z.esName } : z)),
+      deleteZone: (zoneId) => setYard(prev => prev.filter(z => z.id !== zoneId)),
+      createBays: (zoneId, names) => setYard(prev => prev.map(z => {
+        if (z.id !== zoneId) return z;
+        const newBays = names.map(name => ({ id: name, name, esName: name, accessible: true, loads: [] }));
+        return { ...z, bays: [...z.bays, ...newBays] };
+      })),
+      updateBay: (zoneId, bayId, patch) => setYard(prev => prev.map(z => {
+        if (z.id !== zoneId) return z;
+        return { ...z, bays: z.bays.map(b => b.id === bayId ? { ...b, ...patch, esName: patch.name || b.esName } : b) };
+      })),
+      deleteBay: (zoneId, bayId) => setYard(prev => prev.map(z => {
+        if (z.id !== zoneId) return z;
+        return { ...z, bays: z.bays.filter(b => b.id !== bayId || b.loads.length > 0) };
+      })),
+      moveLoads: (fromZoneId, fromBayId, loadIds, toZoneId, toBayId) => setYard(prev => {
+        const moved = [];
+        const next = prev.map(z => {
+          if (z.id !== fromZoneId) return z;
+          return {
+            ...z,
+            bays: z.bays.map(b => {
+              if (b.id !== fromBayId) return b;
+              const keep = []; b.loads.forEach(l => { if (loadIds.includes(l.id)) moved.push(l); else keep.push(l); });
+              return { ...b, loads: keep };
+            })
+          };
+        });
+        return next.map(z => {
+          if (z.id !== toZoneId) return z;
+          return {
+            ...z,
+            bays: z.bays.map(b => b.id === toBayId ? { ...b, loads: [...b.loads, ...moved] } : b)
+          };
+        });
+      }),
+    };
+
     // R35/R36: Picking list state - identified by (productionLine, shift).
     // Apan 1 / Apan 2 are PRODUCTION LINES. Each line can have multiple picking
     // lists, typically one per shift. Up to 6 unique slots (2 lines * 3 shifts).
@@ -2025,7 +2620,7 @@
                                     pickingLists={pickingLists} upsertList={upsertList} loadClaimMap={loadClaimMap}
                                     creationLine={creationLine} setCreationLine={setCreationLine}
                                     creationShift={creationShift} setCreationShift={setCreationShift}
-                                    loadClaimMap={loadClaimMap}
+                                    yard={yard} yardOps={yardOps}
                                     setTab={setTab} setRole={setRole}
                                     slMode={slMode} setSlMode={setSlMode}
                                     windowActive={windowActive} setWindowActive={setWindowActive}
@@ -2037,7 +2632,7 @@
                                     pickingLists={pickingLists} upsertList={upsertList} loadClaimMap={loadClaimMap}
                                     creationLine={creationLine} setCreationLine={setCreationLine}
                                     creationShift={creationShift} setCreationShift={setCreationShift}
-                                    loadClaimMap={loadClaimMap}
+                                    yard={yard} yardOps={yardOps}
                                     setTab={setTab} setRole={setRole}
                                     slMode={slMode} setSlMode={setSlMode}
                                     windowActive={windowActive} setWindowActive={setWindowActive}
@@ -2046,8 +2641,8 @@
                                     pickerMode={pickerMode} />}
           {/* tab === 'picker' (original load-only Picker) is no longer routed - ForkliftPickerView retained in source */}
           {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={pickingLists} processed={processed}
-                                  setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} />}
-          {tab === 'history' && <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} />}
+                                  setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} yard={yard} />}
+          {tab === 'history' && <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} yard={yard} />}
         </div>
 
         {/* Confirm-back dialog when leaving Create with > 1 selected load */}
@@ -2325,7 +2920,7 @@
 
   // R29/R30: HistoryView - one row per production window (active first, then most-recent-first).
   // Supplier filter sits above; clicking a row opens the side drawer with per-window detail.
-  function HistoryView({ processed, pickerMode = 'load', lang = 'en' }) {
+  function HistoryView({ processed, pickerMode = 'load', lang = 'en', yard = [] }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
     const [supplierQuery, setSupplierQuery] = useState('');
     const [selectedWindow, setSelectedWindow] = useState(null);
@@ -2771,7 +3366,7 @@
   // SHIFT LEADER VIEW - progressive disclosure + picking-list creation
   // ============================================================================
 
-  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load' }) {
+  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load', yard = [], yardOps = {} }) {
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
@@ -3101,6 +3696,7 @@
               setSlMode={setSlMode}
               pickerMode={pickerMode}
               setToast={setToast}
+              yardOps={yardOps}
             />
           ) : (
           /* Yard - Zones / Bays / Loads */
@@ -4235,7 +4831,7 @@
     w.document.close();
   }
 
-  function ForkliftPickerMergedView({ pickingLists = [], processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load' }) {
+  function ForkliftPickerMergedView({ pickingLists = [], processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load', yard = [] }) {
     // R36: FO selects a single picking list via a "Production line" dropdown
     // showing the (line, shift) combinations that have lists. Default to first available.
     const [pickingListId, setPickingListId] = useState(() => pickingLists[0]?.id || null);
