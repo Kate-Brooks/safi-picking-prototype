@@ -1783,13 +1783,27 @@
     const CreateZoneForm = () => {
       const [name, setName] = useState('');
       const [colorId, setColorId] = useState('none');
+      // R40: bays managed inline. Starts with one bay defaulted to "Bay 1".
+      const [bays, setBays] = useState([{ key: 'b1', name: 'Bay 1' }]);
+      const addBay = () => {
+        // Pick the next numeric "Bay N" that doesn't clash with what's already in the list.
+        const existing = new Set(bays.map(b => b.name.trim().toLowerCase()));
+        let n = bays.length + 1;
+        while (existing.has(`bay ${n}`.toLowerCase())) n += 1;
+        setBays(prev => [...prev, { key: `b${Date.now()}`, name: `Bay ${n}` }]);
+      };
       const trimmed = name.trim();
       const duplicate = trimmed && yard.some(z => (z.name || '').toLowerCase() === trimmed.toLowerCase());
-      const canSave = !!trimmed && !duplicate;
+      // Bay validation: all non-empty + unique within the new zone.
+      const bayNames = bays.map(b => b.name.trim());
+      const baysAllFilled = bayNames.every(n => n.length > 0);
+      const baysUnique = new Set(bayNames.map(n => n.toLowerCase())).size === bayNames.length;
+      const baysValid = bays.length > 0 && baysAllFilled && baysUnique;
+      const canSave = !!trimmed && !duplicate && baysValid;
       return (
-        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
           <Title>{tEN('Create zone', 'Crear zona')}</Title>
-          <p className="text-[13px] text-neutral-60 mt-1">{tEN('Name your new zone and pick a colour.', 'Nombra tu nueva zona y elige un color.')}</p>
+          <p className="text-[13px] text-neutral-60 mt-1">{tEN('Name your new zone, pick a colour, and add bays.', 'Nombra tu nueva zona, elige un color y añade filas.')}</p>
           <div className="mt-5 space-y-4">
             <Field label={tEN('Zone name', 'Nombre de la zona')}>
               <TextInput value={name} onChange={e => setName(e.target.value)} placeholder={tEN('e.g. Zone D', 'p. ej. Zona D')} />
@@ -1816,10 +1830,55 @@
               </div>
               <p className="text-[13px] text-neutral-60 mt-1.5">{getZoneColor(colorId).label}</p>
             </Field>
+            {/* R40: inline bay editor. Always starts with one default bay. */}
+            <Field label={tEN('Bays', 'Filas')}>
+              <div className="space-y-2">
+                {bays.map((b, i) => (
+                  <div key={b.key} className="flex items-center gap-2">
+                    <TextInput
+                      value={b.name}
+                      onChange={e => setBays(prev => prev.map((bay, j) => j === i ? { ...bay, name: e.target.value } : bay))}
+                      placeholder={`Bay ${i + 1}`}
+                    />
+                    {/* New zones have no loads yet, so delete is always allowed - except when only one bay remains. */}
+                    <button
+                      type="button"
+                      disabled={bays.length === 1}
+                      onClick={() => setBays(prev => prev.filter((_, j) => j !== i))}
+                      title={bays.length === 1 ? tEN('A zone needs at least one bay.', 'Una zona necesita al menos una fila.') : tEN('Remove bay', 'Eliminar fila')}
+                      className={'p-2 rounded ' + (bays.length === 1 ? 'text-neutral-40 cursor-not-allowed' : 'text-rose-700 hover:bg-rose-50')}
+                      aria-label="Remove bay"
+                    >
+                      <Icon d={I.trash} className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={addBay}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-dashed border-neutral-10 text-[13px] font-medium text-neutral-80 hover:bg-neutral-5"
+                >
+                  <Icon d={I.plus} className="w-4 h-4" />
+                  {tEN('Add another bay', 'Añadir otra fila')}
+                </button>
+                {!baysUnique && <p className="text-[13px] text-rose-700 mt-1.5">{tEN('Bay names must be unique within the zone.', 'Los nombres de filas deben ser únicos dentro de la zona.')}</p>}
+                {baysUnique && !baysAllFilled && <p className="text-[13px] text-rose-700 mt-1.5">{tEN('Bay names cannot be empty.', 'Los nombres de filas no pueden estar vacíos.')}</p>}
+              </div>
+            </Field>
           </div>
           <Footer
             onCancel={onClose}
-            onConfirm={() => { yardOps.createZone({ name: trimmed, color: colorId }); setToast?.({ message: tEN(`Zone "${trimmed}" created.`, `Zona "${trimmed}" creada.`), kind: 'success' }); onClose(); }}
+            onConfirm={() => {
+              const finalBays = bayNames.filter(Boolean);
+              yardOps.createZone({ name: trimmed, color: colorId, bays: finalBays });
+              setToast?.({
+                message: tEN(
+                  `Zone "${trimmed}" created with ${finalBays.length} bay${finalBays.length === 1 ? '' : 's'}.`,
+                  `Zona "${trimmed}" creada con ${finalBays.length} fila${finalBays.length === 1 ? '' : 's'}.`),
+                kind: 'success'
+              });
+              onClose();
+            }}
             confirmLabel={tEN('Create zone', 'Crear zona')}
             confirmDisabled={!canSave}
           />
@@ -2433,9 +2492,11 @@
     const [yard, setYard] = useState(INITIAL_YARD);
     // Mutator helpers - thin wrappers that keep call sites readable.
     const yardOps = {
-      createZone: ({ name, color }) => setYard(prev => {
+      createZone: ({ name, color, bays = [] }) => setYard(prev => {
         const id = name.replace(/\s+/g, '').slice(0, 4).toUpperCase() + '-' + Date.now().toString(36).slice(-4);
-        return [...prev, { id, name, esName: name, color: color || 'none', inventoryRule: 'NONE', bays: [] }];
+        // R40: bays passed in are created together with the zone.
+        const bayObjs = bays.map(bn => ({ id: bn, name: bn, esName: bn, accessible: true, loads: [] }));
+        return [...prev, { id, name, esName: name, color: color || 'none', inventoryRule: 'NONE', bays: bayObjs }];
       }),
       updateZone: (zoneId, patch) => setYard(prev => prev.map(z => z.id === zoneId ? { ...z, ...patch, esName: patch.name || z.esName } : z)),
       deleteZone: (zoneId) => setYard(prev => prev.filter(z => z.id !== zoneId)),
