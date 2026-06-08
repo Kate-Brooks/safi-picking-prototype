@@ -424,6 +424,33 @@
   // read the live yard receive it as a prop.
   const YARD = INITIAL_YARD;
 
+  // R42: seed the buffer with a handful of items so the bale-based Warehouse
+  // tab has something to show before the FO has moved anything in. Each item
+  // references a real load in INITIAL_YARD; `loadBales` is the original bale
+  // count, `bales` is the portion currently sitting in the buffer (partial or
+  // full). `bufferEntered` mirrors what the existing FO moveToBuffer flow
+  // creates so both data sources can share the same render logic.
+  const SEED_BUFFER = [
+    {
+      uid: 'seed-1', loadId: 'LOT-A001',
+      supplier: 'Supplier A', lot: 'LOT-A001',
+      bales: 10, loadBales: 25, weightPerBale: 14870 / 25,
+      sourceZoneId: 'A', sourceBayId: 'A1'
+    },
+    {
+      uid: 'seed-2', loadId: 'LOT-A002',
+      supplier: 'Supplier B', lot: 'LOT-A002',
+      bales: 20, loadBales: 20, weightPerBale: 14829 / 20,
+      sourceZoneId: 'A', sourceBayId: 'A1'
+    },
+    {
+      uid: 'seed-3', loadId: 'LOT-A003',
+      supplier: 'Supplier C', lot: 'LOT-A003',
+      bales: 5, loadBales: 22, weightPerBale: 12964 / 22,
+      sourceZoneId: 'A', sourceBayId: 'A2'
+    }
+  ];
+
   // Active production target (top-of-page card)
   const ACTIVE_WINDOW = {
     material: 'BLANCA',
@@ -755,7 +782,7 @@
   //           single horizontal row, with a heat-mapped minimap above.
   // Bay view:  full load list (LoadRow re-used).
   // ============================================================================
-  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast, yardOps = {} }) {
+  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast, yardOps = {}, buffer = [] }) {
     const [view, setView] = useState({ level: 'overview' });
     // Which bay tile (if any) should appear first + highlighted (from the filter or minimap stepper)
     const [focusBayId, setFocusBayId] = useState(null);
@@ -785,6 +812,9 @@
     const goOverview = () => { setFocusBayId(null); setView({ level: 'overview' }); };
     const goZone = (zoneId) => setView({ level: 'zone', zoneId });
     const goBay = (zoneId, bayId) => setView({ level: 'bay', zoneId, bayId });
+    // R42: buffer detail view - only reachable from the Buffer card on the
+    // yard overview (bale-based mode only).
+    const goBuffer = () => { setFocusBayId(null); setView({ level: 'buffer' }); };
 
     // R37: compute the bay's claim state during create/edit. Returns:
     // - null if no external claims (loads are free)
@@ -991,6 +1021,46 @@
           </div>
 
           <div className="flex flex-col gap-3">
+            {/* R42: Buffer card - bale-based mode only, default (non-creating) only.
+                Shows bales + weight totals (no bays/loads) and opens a buffer detail
+                view when clicked. Sits above the yard's zones because the buffer is
+                where material is staged before processing. */}
+            {pickerMode === 'bale' && !isCreating && (() => {
+              const bufferBales = buffer.reduce((a, b) => a + b.bales, 0);
+              const bufferWeight = buffer.reduce((a, b) => a + Math.round(b.bales * b.weightPerBale), 0);
+              return (
+                <div
+                  key="__buffer__"
+                  role="button"
+                  tabIndex={0}
+                  onClick={goBuffer}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goBuffer(); } }}
+                  className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition cursor-pointer hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
+                >
+                  <div className="flex items-start justify-between gap-6 flex-wrap">
+                    <div className="flex-1 min-w-[280px]">
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-full bg-amber-400" aria-hidden="true" />
+                        <div className="font-bold text-neutral-100 text-xl">
+                          {lang === 'es' ? 'Búfer' : 'Buffer'}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-6 mt-2 flex-wrap">
+                        <Metric2 label={tr('bales', lang)} value={fmtNum(bufferBales)} />
+                        <Metric2 label={tr('weight', lang)} value={fmtKg(bufferWeight)} />
+                      </div>
+                    </div>
+                    {/* Right: bale count visualisation - blue fill bar across remaining space. */}
+                    <div className="flex-[2] min-w-[280px] pt-[38px]">
+                      <div className="text-[13px] text-neutral-60 mb-1">
+                        {lang === 'es' ? 'Pacas en búfer' : 'Bales in buffer'}
+                      </div>
+                      <FillBar value={bufferBales} max={Math.max(1, bufferBales, ...yard.map(z => zoneStats(z).bales))} suffix={tr('bales', lang).toLowerCase()} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             {yard.map(zone => {
               const z = zoneStats(zone);
               if (isKpiMode) {
@@ -1692,9 +1762,106 @@
       if (!editor) { /* may have been move - clear selection if so */ setBulkSelected(prev => prev.size > 0 ? new Set() : prev); }
     }, [editor]);
 
+    // R42: buffer detail view. Mirrors the bay-detail layout:
+    // - breadcrumb (Yard overview / Buffer)
+    // - title + summary line (items, bales, weight)
+    // - per-item rows showing supplier + lot + (looked-up) material chips, with
+    //   a prominent "X of Y bales in buffer" metric on the right
+    const renderBuffer = () => {
+      const bufferBales = buffer.reduce((a, b) => a + b.bales, 0);
+      const bufferWeight = buffer.reduce((a, b) => a + Math.round(b.bales * b.weightPerBale), 0);
+      // Look up each item against the live yard so we can show the existing
+      // green material chips and the per-load context (zone · bay source).
+      const resolved = buffer.map(item => {
+        let load = null, sourceZone = null, sourceBay = null;
+        for (const z of yard) {
+          for (const b of z.bays) {
+            const ld = b.loads.find(l => l.id === item.loadId);
+            if (ld) { load = ld; sourceZone = z; sourceBay = b; break; }
+          }
+          if (load) break;
+        }
+        return { item, load, sourceZone, sourceBay };
+      });
+      return (
+        <div className="bg-white border border-neutral-10 rounded-xl">
+          <div className="p-5 border-b border-neutral-10">
+            {/* Breadcrumb (custom for buffer - Yard overview / Buffer) */}
+            <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[13px] flex-wrap">
+              <button onClick={goOverview} className="text-safi-600 hover:underline">
+                {tr('yardOverview', lang)}
+              </button>
+              <span className="text-neutral-40">/</span>
+              <span className="text-neutral-100 font-medium">{lang === 'es' ? 'Búfer' : 'Buffer'}</span>
+            </nav>
+            <div className="mt-2 flex items-center justify-between gap-6 flex-wrap">
+              <div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="w-3 h-3 rounded-full bg-amber-400" aria-hidden="true" />
+                  <h3 className="text-2xl font-bold text-neutral-100">{lang === 'es' ? 'Búfer' : 'Buffer'}</h3>
+                </div>
+                <div className="text-[13px] text-neutral-60 mt-1">
+                  {`${buffer.length} ${buffer.length === 1 ? (lang === 'es' ? 'lote' : 'load') : (lang === 'es' ? 'lotes' : 'loads')} · ${fmtNum(bufferBales)} ${tr('bales', lang).toLowerCase()} · ${fmtKg(bufferWeight)}`}
+                </div>
+              </div>
+            </div>
+          </div>
+          {buffer.length === 0 ? (
+            <div className="px-6 py-10 text-center text-neutral-60 text-[13px]">
+              {lang === 'es' ? 'No hay pacas en el búfer todavía' : 'No bales in the buffer yet'}
+            </div>
+          ) : (
+            <div className="divide-y divide-neutral-10">
+              {resolved.map(({ item, load, sourceZone, sourceBay }) => {
+                const pct = item.loadBales ? Math.round((item.bales / item.loadBales) * 100) : null;
+                const isFull = item.loadBales && item.bales >= item.loadBales;
+                return (
+                  <div key={item.uid} className="flex items-start gap-4 px-5 py-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap text-neutral-100">
+                        <span className="font-medium">{item.supplier}</span>
+                        <span className="text-neutral-40 text-[13px]">#{item.lot}</span>
+                        {/* Material chips - reuse the green pill style from bay detail. */}
+                        {load?.results && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[13px] font-medium">
+                            <Icon d={I.check} className="w-3.5 h-3.5" />
+                            {load.material} {load.results[0]?.value != null ? `${load.results[0].value}%` : ''}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-[13px] text-neutral-60">
+                        {lang === 'es' ? 'Origen' : 'From'}: {sourceZone ? zoneName(sourceZone, lang) : `Zone ${item.sourceZoneId}`} · {sourceBay ? bayName(sourceBay, lang) : `Bay ${item.sourceBayId}`}
+                      </div>
+                    </div>
+                    {/* High-emphasis metric: bales-in-buffer, with optional partial/full hint. */}
+                    <div className="text-right shrink-0">
+                      <div className="text-2xl font-bold text-neutral-100 leading-tight">
+                        {item.loadBales
+                          ? `${fmtNum(item.bales)} / ${fmtNum(item.loadBales)}`
+                          : fmtNum(item.bales)}
+                      </div>
+                      <div className="text-[13px] text-neutral-60">
+                        {lang === 'es' ? 'pacas en búfer' : 'bales in buffer'}
+                        {pct != null && !isFull ? ` · ${pct}%` : ''}
+                        {isFull ? ` · ${lang === 'es' ? 'completo' : 'full load'}` : ''}
+                      </div>
+                      <div className="text-[13px] text-neutral-60 mt-0.5">
+                        {fmtKg(Math.round(item.bales * item.weightPerBale))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    };
+
     const renderContent = () => {
       if (view.level === 'zone') return renderZone();
       if (view.level === 'bay') return renderBay();
+      if (view.level === 'buffer') return renderBuffer();
       return renderOverview();
     };
 
@@ -2491,6 +2658,11 @@
     // R39: editable warehouse - yard structure now lives in state so the SL can
     // create / rename / delete zones + bays + move loads at runtime.
     const [yard, setYard] = useState(INITIAL_YARD);
+    // R42: buffer lives at the page level so both the Warehouse tab (Buffer card
+    // + buffer detail view) and the Picker (move/return/process actions) can
+    // share it. Seeded so the bale-based Warehouse view shows realistic content
+    // out of the box.
+    const [buffer, setBuffer] = useState(SEED_BUFFER);
     // Mutator helpers - thin wrappers that keep call sites readable.
     const yardOps = {
       createZone: ({ name, color, bays = [] }) => setYard(prev => {
@@ -2677,8 +2849,10 @@
             </div>
           )}
 
-          {/* R41: vertical-list (layout="sticky") tab removed. The component is retained in source. */}
+          {/* R41: vertical-list (layout="sticky") tab removed. The component is retained in source.
+              R42: buffer + setBuffer passed in so the Warehouse tab can render the Buffer card / detail. */}
           {tab === 'pw-layout' && <ShiftLeaderView
+                                    buffer={buffer} setBuffer={setBuffer}
                                     layout="spatial"
                                     pickingLists={pickingLists} upsertList={upsertList} loadClaimMap={loadClaimMap}
                                     creationLine={creationLine} setCreationLine={setCreationLine}
@@ -2691,8 +2865,10 @@
                                     selectionBales={selectionBales} setSelectionBales={setSelectionBales}
                                     pickerMode={pickerMode} />}
           {/* tab === 'picker' (original load-only Picker) is no longer routed - ForkliftPickerView retained in source */}
+          {/* R42: buffer + setBuffer lifted from inside the picker so the Warehouse tab can share it. */}
           {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={pickingLists} processed={processed}
-                                  setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} yard={yard} />}
+                                  setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} yard={yard}
+                                  buffer={buffer} setBuffer={setBuffer} />}
           {tab === 'history' && <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} yard={yard} />}
         </div>
 
@@ -3417,7 +3593,7 @@
   // SHIFT LEADER VIEW - progressive disclosure + picking-list creation
   // ============================================================================
 
-  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load', yard = [], yardOps = {} }) {
+  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load', yard = [], yardOps = {}, buffer = [], setBuffer = () => {} }) {
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
@@ -3748,6 +3924,7 @@
               pickerMode={pickerMode}
               setToast={setToast}
               yardOps={yardOps}
+              buffer={buffer}
             />
           ) : (
           /* Yard - Zones / Bays / Loads */
@@ -4882,7 +5059,7 @@
     w.document.close();
   }
 
-  function ForkliftPickerMergedView({ pickingLists = [], processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load', yard = [] }) {
+  function ForkliftPickerMergedView({ pickingLists = [], processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load', yard = [], buffer = [], setBuffer = () => {} }) {
     // R36: FO selects a single picking list via a "Production line" dropdown
     // showing the (line, shift) combinations that have lists. Default to first available.
     const [pickingListId, setPickingListId] = useState(() => pickingLists[0]?.id || null);
@@ -4901,7 +5078,8 @@
     // R26: per-session Hide/Show toggle removed. The header Load-based / Bale-based
     // setting alone drives buffer visibility - bufferEnabled comes in as a prop.
     const bufferVisible = bufferEnabled;
-    const [buffer, setBuffer] = useState([]);     // [{ uid, loadId, supplier, lot, bales, weightPerBale, sourceZoneId, sourceBayId }]
+    // R42: buffer + setBuffer now come from props (lifted to ProductionManagementPage)
+    // so the Warehouse tab can render it side-by-side with the picker actions.
     const [modal, setModal] = useState(null);     // { type: 'move'|'process'|'reject', source: 'bay'|'buffer', zone?, bay?, bufferItems? }
     // Lifted so the Process modal defaults to the FO's last choice ('auto' | 'manual')
     const [weightMode, setWeightMode] = useState('auto');
@@ -5066,6 +5244,9 @@
         supplier: primaryLoad?.supplier || tEN('Mixed material', 'Material mixto'),
         lot: primaryLoad?.lot || '-',
         bales,
+        // R42: store the load's original bale count so the Warehouse buffer detail
+        // view can show partial-vs-full clearly (e.g. "10 of 25 bales in buffer").
+        loadBales: primaryLoad?.bales || bales,
         weightPerBale,
         sourceZoneId: zone.id,
         sourceBayId: bay.id
