@@ -782,7 +782,7 @@
   //           single horizontal row, with a heat-mapped minimap above.
   // Bay view:  full load list (LoadRow re-used).
   // ============================================================================
-  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast, yardOps = {}, buffer = [] }) {
+  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast, yardOps = {}, buffer = [], setBuffer = () => {}, setProcessed = () => {} }) {
     const [view, setView] = useState({ level: 'overview' });
     // Which bay tile (if any) should appear first + highlighted (from the filter or minimap stepper)
     const [focusBayId, setFocusBayId] = useState(null);
@@ -794,6 +794,12 @@
     // R25: reject modal state. Triggered from per-load Reject button in bay view.
     // { zone, bay, load, accessibleBales } | null
     const [rejectModal, setRejectModal] = useState(null);
+    // R45: per-bale kebab menu + process modal state for the buffer detail view.
+    // openBaleMenu = `${uid}-${idx}` of the bale row whose menu is open (or null).
+    // processBaleModal = { item, idx } when the user clicks "Process bale" - opens
+    // the existing ProcessMaterialModal in buffer/bale-mode with bufferItems = [synthetic single-bale slice].
+    const [openBaleMenu, setOpenBaleMenu] = useState(null);
+    const [processBaleModal, setProcessBaleModal] = useState(null);
     // R39: warehouse editor modal state.
     // Shapes:
     //   { type: 'createZone' }
@@ -1763,6 +1769,43 @@
       if (!editor) { /* may have been move - clear selection if so */ setBulkSelected(prev => prev.size > 0 ? new Set() : prev); }
     }, [editor]);
 
+    // R45: close any open bale-menu when clicking elsewhere on the page.
+    useEffect(() => {
+      if (!openBaleMenu) return;
+      const close = () => setOpenBaleMenu(null);
+      document.addEventListener('mousedown', close);
+      return () => document.removeEventListener('mousedown', close);
+    }, [openBaleMenu]);
+
+    // R45: decrement a buffer item by one bale (used by both "return" and "process").
+    const decrementBufferBale = (uid) => {
+      setBuffer(prev => prev
+        .map(b => b.uid === uid ? { ...b, bales: b.bales - 1 } : b)
+        .filter(b => b.bales > 0));
+    };
+
+    // R45: return a single bale from a buffer item back to its source zone/bay.
+    // The data model doesn't actually shrink the source bay's loads when bales
+    // were moved to the buffer (loads stay intact, buffer tracks the slice), so
+    // "returning" just removes the buffer slice and shows a toast.
+    const returnBaleToWarehouse = (item, idx) => {
+      decrementBufferBale(item.uid);
+      const sourceLabel = `${item.sourceZoneId} · ${item.sourceBayId}`;
+      setToast?.({
+        message: lang === 'es'
+          ? `Paca devuelta a ${sourceLabel} (#${item.lot})`
+          : `Bale returned to ${sourceLabel} (#${item.lot})`,
+        kind: 'success'
+      });
+      setOpenBaleMenu(null);
+    };
+
+    // R45: open the existing Process modal in single-bale buffer mode.
+    const openProcessForBale = (item, idx) => {
+      setProcessBaleModal({ item, idx });
+      setOpenBaleMenu(null);
+    };
+
     // R42: buffer detail view. Mirrors the bay-detail layout:
     // - breadcrumb (Yard overview / Buffer)
     // - title + summary line (items, bales, weight)
@@ -1821,22 +1864,67 @@
                 return Array.from({ length: item.bales }).map((_, idx) => {
                   const baleNo = String(idx + 1).padStart(3, '0');
                   const sourceLabel = `${sourceZone ? zoneName(sourceZone, lang) : `Zone ${item.sourceZoneId}`} · ${sourceBay ? bayName(sourceBay, lang) : `Bay ${item.sourceBayId}`}`;
+                  const menuKey = `${item.uid}-${idx}`;
+                  const menuOpen = openBaleMenu === menuKey;
                   return (
-                    <div key={`${item.uid}-${idx}`} className="px-5 py-4">
-                      <div className="flex items-center gap-2 flex-wrap text-neutral-100">
-                        <span className="font-medium">{item.supplier}</span>
-                        <span className="text-neutral-40 text-[13px]">##{item.lot}</span>
-                        <span className="text-neutral-40 text-[13px]">{lang === 'es' ? 'Lote' : 'Load'} #{baleNo}</span>
-                      </div>
-                      {/* Reuse the standard AI result chips (green when in-spec, red when off). */}
-                      {load && (
-                        <div className="mt-2">
-                          <AIResultChips load={load} />
+                    // R45: `group` enables hover-only kebab; the menu itself stays open on click.
+                    <div key={menuKey} className="group relative px-5 py-4 hover:bg-neutral-5/40">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap text-neutral-100">
+                            <span className="font-medium">{item.supplier}</span>
+                            <span className="text-neutral-40 text-[13px]">##{item.lot}</span>
+                            <span className="text-neutral-40 text-[13px]">{lang === 'es' ? 'Lote' : 'Load'} #{baleNo}</span>
+                          </div>
+                          {/* Reuse the standard AI result chips (green when in-spec, red when off). */}
+                          {load && (
+                            <div className="mt-2">
+                              <AIResultChips load={load} />
+                            </div>
+                          )}
+                          <div className="text-[13px] text-neutral-60 mt-2">
+                            {lang === 'es' ? 'Peso est.' : 'Est. weight'} {fmtKg(Math.round(item.weightPerBale))}
+                            {' · '}{lang === 'es' ? 'Origen' : 'From'}: {sourceLabel}
+                          </div>
                         </div>
-                      )}
-                      <div className="text-[13px] text-neutral-60 mt-2">
-                        {lang === 'es' ? 'Peso est.' : 'Est. weight'} {fmtKg(Math.round(item.weightPerBale))}
-                        {' · '}{lang === 'es' ? 'Origen' : 'From'}: {sourceLabel}
+                        {/* Kebab menu - hover-only by default, stays visible while menu is open. */}
+                        <div className="shrink-0">
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => { e.stopPropagation(); setOpenBaleMenu(menuOpen ? null : menuKey); }}
+                            aria-haspopup="menu"
+                            aria-expanded={menuOpen}
+                            aria-label={lang === 'es' ? 'Más opciones' : 'More options'}
+                            className={'p-1.5 rounded text-neutral-60 hover:bg-neutral-10 hover:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-safi-600 ' + (menuOpen ? 'opacity-100 bg-neutral-10' : 'opacity-0 group-hover:opacity-100 focus:opacity-100')}
+                          >
+                            <Icon d={I.kebab} className="w-4 h-4" strokeWidth={2.5} />
+                          </button>
+                          {menuOpen && (
+                            <div
+                              role="menu"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              className="absolute right-3 top-12 z-20 w-56 bg-white rounded-lg shadow-lg border border-neutral-10 py-1"
+                            >
+                              <button
+                                role="menuitem"
+                                onClick={(e) => { e.stopPropagation(); returnBaleToWarehouse(item, idx); }}
+                                className="w-full text-left px-3 py-2 text-[13px] text-neutral-100 hover:bg-neutral-5 flex items-center gap-2"
+                              >
+                                <Icon d={I.undo} className="w-4 h-4 text-neutral-60" />
+                                {lang === 'es' ? 'Devolver al almacén' : 'Return to warehouse'}
+                              </button>
+                              <button
+                                role="menuitem"
+                                onClick={(e) => { e.stopPropagation(); openProcessForBale(item, idx); }}
+                                className="w-full text-left px-3 py-2 text-[13px] text-neutral-100 hover:bg-neutral-5 flex items-center gap-2"
+                              >
+                                <Icon d={I.factory} className="w-4 h-4 text-neutral-60" />
+                                {lang === 'es' ? 'Procesar paca' : 'Process bale'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -1894,6 +1982,48 @@
             onClose={() => setEditor(null)}
           />
         )}
+        {/* R45: process-a-single-bale modal triggered from the buffer kebab menu.
+            Reuses the existing ProcessMaterialModal with a synthetic single-bale
+            bufferItems slice so the modal opens in bale-source mode and the FO
+            just needs to enter the weight. */}
+        {processBaleModal && (() => {
+          const { item } = processBaleModal;
+          const singleBaleSlice = [{
+            uid: item.uid,
+            loadId: item.loadId,
+            supplier: item.supplier,
+            lot: item.lot,
+            bales: 1,
+            weightPerBale: item.weightPerBale,
+            sourceZoneId: item.sourceZoneId,
+            sourceBayId: item.sourceBayId
+          }];
+          return (
+            <ProcessMaterialModal
+              source="buffer"
+              bufferItems={singleBaleSlice}
+              avgWeight={item.weightPerBale}
+              lang={lang}
+              pickerMode="bale"
+              onCancel={() => setProcessBaleModal(null)}
+              onConfirm={({ bales, weight }) => {
+                decrementBufferBale(item.uid);
+                const pid = `bufferbale-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                setProcessed(prev => ({
+                  ...prev,
+                  [pid]: { bales, weight, at: new Date().toISOString(), partial: true, source: 'Buffer' }
+                }));
+                setProcessBaleModal(null);
+                setToast?.({
+                  message: lang === 'es'
+                    ? `Procesada 1 paca (${fmtKg(weight)})`
+                    : `Processed 1 bale (${fmtKg(weight)})`,
+                  kind: 'success'
+                });
+              }}
+            />
+          );
+        })()}
       </>
     );
   }
@@ -2499,6 +2629,12 @@
     claim:    ['M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z', 'M14 2v6h6'],
     deals:    ['M3 7l9 6 9-6', 'M3 7v10l9 6 9-6V7'],
     settings: ['M12 15a3 3 0 100-6 3 3 0 000 6z', 'M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8L4.2 7a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z'],
+    // R45: 3-dot kebab menu icon for the per-bale options menu in the buffer view.
+    // Uses the same "tiny horizontal line + strokeLinecap=round" technique as I.list dots
+    // so the three points render as solid circles at strokeWidth 2-3.
+    kebab:    ['M12 6h.01', 'M12 12h.01', 'M12 18h.01'],
+    // R45: undo-style arrow used for "Return to original location" menu item.
+    undo:     ['M3 12a9 9 0 109-9', 'M3 5v7h7'],
     info:     ['M12 8h.01', 'M11 12h1v4h1', 'M12 22a10 10 0 100-20 10 10 0 000 20z'],
     help:     ['M12 22a10 10 0 100-20 10 10 0 000 20z', 'M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3', 'M12 17h.01'],
     ground:   ['M12 22s8-7 8-13a8 8 0 10-16 0c0 6 8 13 8 13z', 'M12 11a3 3 0 100-6 3 3 0 000 6z'],
@@ -2851,7 +2987,7 @@
                                     setTab={setTab} setRole={setRole}
                                     slMode={slMode} setSlMode={setSlMode}
                                     windowActive={windowActive} setWindowActive={setWindowActive}
-                                    setToast={setToast} processed={processed} lang={lang}
+                                    setToast={setToast} processed={processed} setProcessed={setProcessed} lang={lang}
                                     selectionBales={selectionBales} setSelectionBales={setSelectionBales}
                                     pickerMode={pickerMode} />}
           {/* tab === 'picker' (original load-only Picker) is no longer routed - ForkliftPickerView retained in source */}
@@ -3583,7 +3719,7 @@
   // SHIFT LEADER VIEW - progressive disclosure + picking-list creation
   // ============================================================================
 
-  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load', yard = [], yardOps = {}, buffer = [], setBuffer = () => {} }) {
+  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, setProcessed = () => {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load', yard = [], yardOps = {}, buffer = [], setBuffer = () => {} }) {
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
@@ -3915,6 +4051,8 @@
               setToast={setToast}
               yardOps={yardOps}
               buffer={buffer}
+              setBuffer={setBuffer}
+              setProcessed={setProcessed}
             />
           ) : (
           /* Yard - Zones / Bays / Loads */
