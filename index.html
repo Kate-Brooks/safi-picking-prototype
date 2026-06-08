@@ -2485,7 +2485,8 @@
     const setRole = () => {};
 
     // Tabs - accordion variant removed. Sticky is the default.
-    const [tab, setTab] = useState('pw-v2');
+    // R41: default landing tab is now the (renamed) Warehouse layout — vertical-list tab removed.
+    const [tab, setTab] = useState('pw-layout');
 
     // R39: editable warehouse - yard structure now lives in state so the SL can
     // create / rename / delete zones + bays + move loads at runtime.
@@ -2625,7 +2626,7 @@
       <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode}>
         <div className="px-8 py-6">
           {/* Page heading swaps when SL enters Create picking list mode */}
-          {slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout') ? (
+          {slMode === 'create' && tab === 'pw-layout' ? (
             <div>
               <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[13px] mb-2">
                 <button
@@ -2665,10 +2666,10 @@
               in the nav - its component (ForkliftPickerView) is left in the source so
               we can reinstate it cheaply if needed. The merged tab now drives both
               load-based and bale-based flows via the header Picker mode toggle. */}
-          {!(slMode === 'create' && (tab === 'pw-v2' || tab === 'pw-layout')) && (
+          {!(slMode === 'create' && tab === 'pw-layout') && (
             <div className="border-b border-neutral-10 mb-6 flex gap-6 text-[13px] overflow-x-auto">
-              <Tab id="pw-v2"     label={lang === 'es' ? 'Almacén (lista vertical)' : 'Warehouse (vertical-list)'} tab={tab} setTab={setTab} />
-              <Tab id="pw-layout" label={lang === 'es' ? 'Almacén (plano)' : 'Warehouse (layout)'} tab={tab} setTab={setTab} />
+              {/* R41: vertical-list tab removed; layout tab renamed to just "Warehouse". */}
+              <Tab id="pw-layout" label={lang === 'es' ? 'Almacén' : 'Warehouse'} tab={tab} setTab={setTab} />
               <Tab id="picker-merged" label={lang === 'es' ? 'Recolección' : 'Picker'}                                    tab={tab} setTab={setTab}
                    badge={hasAnyList ? loadsRemaining : null} />
               <Tab id="history"   label={lang === 'es' ? 'Historial' : 'History'}                                         tab={tab} setTab={setTab} />
@@ -2676,18 +2677,7 @@
             </div>
           )}
 
-          {tab === 'pw-v2'     && <ShiftLeaderView
-                                    layout="sticky"
-                                    pickingLists={pickingLists} upsertList={upsertList} loadClaimMap={loadClaimMap}
-                                    creationLine={creationLine} setCreationLine={setCreationLine}
-                                    creationShift={creationShift} setCreationShift={setCreationShift}
-                                    yard={yard} yardOps={yardOps}
-                                    setTab={setTab} setRole={setRole}
-                                    slMode={slMode} setSlMode={setSlMode}
-                                    windowActive={windowActive} setWindowActive={setWindowActive}
-                                    setToast={setToast} processed={processed} lang={lang}
-                                    selectionBales={selectionBales} setSelectionBales={setSelectionBales}
-                                    pickerMode={pickerMode} />}
+          {/* R41: vertical-list (layout="sticky") tab removed. The component is retained in source. */}
           {tab === 'pw-layout' && <ShiftLeaderView
                                     layout="spatial"
                                     pickingLists={pickingLists} upsertList={upsertList} loadClaimMap={loadClaimMap}
