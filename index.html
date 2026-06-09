@@ -2832,28 +2832,51 @@
   })();
 
   // ============================================================================
-  // R47: PAGE: LOAD DETAILS (drilled in from the Quality Control table)
+  // R47/R48: PAGE: LOAD OPERATIONS HUB (drilled in from the Quality Control table)
   //
-  // Recreates the Safi UI Kit load-details screen. Most content is static demo
-  // data; the header pulls supplier / orderRef from the clicked row so the
-  // page reads consistently with the table.
+  // R48: restructured into a 3-card information architecture matching the
+  // Load Operations Hub spec:
+  //   1) Load Summary       - identity + key dates/weights + Edit Details
+  //   2) Operational Status - Analysis / Storage / Production status with
+  //                            Analyse Material + Store Material actions, plus
+  //                            a material-flow stepper at the top.
+  //   3) Analysis History   - the stacked per-report cards.
   // ============================================================================
   function LoadDetailsView({ row, idx, onBack }) {
-    // R47: deterministic placeholder values keyed off the row index so each
-    // load detail page looks subtly different but stable across reloads.
+    // Deterministic demo values seeded off the row index so each load page
+    // looks subtly different but stable across reloads.
     const rng = (seed, max) => Math.abs(Math.sin(seed * 13.37)) % 1 * max;
-    const supplierShort = row.supplier.replace(/\s+/g, '');
-    const evRef = `EV${6262300 + idx}`;
-    const loadNo = 7 + (idx % 12);
-    const containerNo = `${1278600 + idx}U`;
-    const totalWeight = 100 + Math.floor(rng(idx + 1, 80));
-    const balesAnalysed = 20;
+    const supplierShort = row.supplier;
+    const orderRef = row.orderRef;
+    const scheduledWeightKg = 25000 + Math.floor(rng(idx + 1, 6) * 1000) * 100;
+    const actualWeightMissing = idx % 2 === 0;
+    const actualWeightKg = actualWeightMissing ? null : scheduledWeightKg - 200 + Math.floor(rng(idx + 8, 6) * 100);
+    const loadNumberMissing = idx % 3 === 0;
+    const loadNumber = loadNumberMissing ? null : (7 + (idx % 12));
+    const scheduledDelivery = '9 Jun 2026';
+    const actualDelivery = '9 Jun 2026 08:41';
+
+    // Operational status derivations. Most rows have demo state; a couple of
+    // rows (idx 104 in particular) show the full "on picking list" state.
+    const isAnalysed = !!row.results || idx % 3 === 1;
+    const photosCount = isAnalysed ? (5 + (idx % 6)) : 0;
+    const lastAnalysisAt = isAnalysed ? '09 Jun 10:22' : null;
     const targetUbc = 79 + Math.floor(rng(idx + 2, 9) * 10) / 10;
     const acceptableAl = 11 + Math.floor(rng(idx + 3, 5) * 10) / 10;
     const contamination = 6 + Math.floor(rng(idx + 4, 4) * 10) / 10;
+    const isStored = isAnalysed && idx % 4 !== 0;
+    const storageBays = isStored ? [
+      { id: 'Bay 4', bales: 6  },
+      { id: 'Bay 5', bales: 14 },
+      { id: 'Bay 6', bales: 14 },
+      { id: 'Bay 7', bales: 10 }
+    ] : [];
+    const onPickingList = (idx === 104) || (isStored && idx % 11 === 0);
+    const pickingList = onPickingList
+      ? { id: 'PL-231', addedBy: 'Marco Rossi', shift: 'Morning Shift' }
+      : null;
 
-    // R47: AI result chip - off-spec chips render in rose; on-spec in success-green.
-    // Order = three pills like the screenshot: Target / Acceptable / Contamination.
+    // R48: AI result chip - rose when off-spec, green when in-spec.
     const ResultChip = ({ label, value, ok }) => (
       <span className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[13px] font-medium ' +
         (ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
@@ -2867,24 +2890,43 @@
         <div className="text-[15px] text-neutral-100">{children}</div>
       </div>
     );
+    const MissingValue = () => (
+      <span className="inline-flex items-center gap-1.5 text-amber-700">
+        <Icon d={I.warning} className="w-4 h-4" />
+        Missing
+      </span>
+    );
+    const fmtKg = (n) => n == null ? '' : n.toLocaleString() + 'kg';
+
+    // R48: material-flow stepper at the top of the Operational Status card.
+    // Each stage is either complete (green check), current (purple ring) or
+    // pending (grey). The arrow between stages dims when the stage hasn't
+    // been reached.
+    const stages = [
+      { label: 'Arrived',      done: true },
+      { label: 'Analysed',     done: isAnalysed },
+      { label: 'Stored',       done: isStored },
+      { label: 'Picking List', done: onPickingList },
+      { label: 'Production',   done: false }
+    ];
 
     // Three demo reports - first two share a date, last is two weeks earlier.
     const REPORTS = [
-      { date: '8 Jun 2026', photos: 6, who: 'Boris Yordanov',  ubc: 70.0, alum: 15.5, contam: 14.5 },
-      { date: '8 Jun 2026', photos: 1, who: 'Kate Brooks',     ubc: 70.0, alum: 12.1, contam: 17.9 },
+      { date: '8 Jun 2026', photos: 6,  who: 'Boris Yordanov',    ubc: 70.0, alum: 15.5, contam: 14.5 },
+      { date: '8 Jun 2026', photos: 1,  who: 'Kate Brooks',       ubc: 70.0, alum: 12.1, contam: 17.9 },
       { date: '2 Jun 2026', photos: 13, who: 'Philippe Hohlfeld', ubc: 85.0, alum: 11.5, contam: 3.5  }
     ];
 
     return (
-      <div className="px-8 py-6">
+      <div className="px-8 py-6 space-y-4">
         {/* Breadcrumb + Create claim */}
-        <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="flex items-start justify-between gap-4">
           <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[15px] flex-wrap">
             <button onClick={onBack} className="text-neutral-60 hover:text-safi-600">
               Quality control
             </button>
             <Icon d={I.chevronR} className="w-4 h-4 text-neutral-40" />
-            <span className="text-neutral-100 font-medium">{supplierShort} #{evRef}</span>
+            <span className="text-neutral-100 font-medium">{supplierShort} #{orderRef}</span>
           </nav>
           <button className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
             <Icon d={I.claim} className="w-4 h-4" />
@@ -2892,122 +2934,162 @@
           </button>
         </div>
 
-        {/* Load header card */}
-        <div className="bg-white border border-neutral-10 rounded-xl p-6 mb-4">
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <h2 className="text-xl font-bold text-neutral-100">{supplierShort} #{evRef}</h2>
-            <div className="flex items-start gap-2">
-              <div className="relative">
-                <button className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Download">
-                  <Icon d={I.download} className="w-5 h-5" />
-                </button>
-                <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-full bg-safi-600 text-white text-[10px] font-semibold">New</span>
-              </div>
-              <button className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Share">
-                <Icon d={I.share} className="w-5 h-5" />
-              </button>
-              <button className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Edit">
-                <Icon d={I.edit} className="w-5 h-5" />
-              </button>
-              <button className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Delete">
-                <Icon d={I.trash} className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Average AI results */}
-          <div className="mb-5">
-            <div className="text-[13px] text-neutral-60 mb-2">Average AI results</div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <ResultChip label="Target UBC"           value={targetUbc}   ok={targetUbc >= 90} />
-              <ResultChip label="Acceptable Aluminium" value={acceptableAl} ok={acceptableAl <= 5} />
-              <ResultChip label="Contamination"        value={contamination} ok={contamination <= 2} />
-            </div>
-          </div>
-
-          {/* Field grid - 6 columns on wide screens */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-5">
-            <Field label="Load no">{loadNo}</Field>
-            <Field label="Container/vehicle no">{containerNo}</Field>
-            <Field label="Scheduled delivery">30 Jun 2026</Field>
-            <Field label="Material">Aluminium UBC Spec</Field>
-            <Field label="Total weight">{totalWeight}kg</Field>
-            <Field label="Bales analysed">{balesAnalysed}</Field>
-          </div>
-
-          <div className="mt-5">
-            <Field label="Description">testing ubc</Field>
-          </div>
-        </div>
-
-        {/* Storage and Processing Details */}
-        <div className="bg-white border border-neutral-10 rounded-xl p-6 mb-6">
-          <h3 className="text-base font-bold text-neutral-100 mb-5">Storage and Processing Details</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-5">
-            <Field label="Storage location">
-              <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-medium text-neutral-80">
-                Buffer (2)
-              </span>
+        {/* ---- 1) LOAD SUMMARY ---- */}
+        <div className="bg-white border border-neutral-10 rounded-xl p-6">
+          <h2 className="text-xl font-bold text-neutral-100 mb-5">{supplierShort} #{orderRef}</h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-5">
+            <Field label="Material">{row.material}</Field>
+            <Field label="Supplier">{row.supplier}</Field>
+            <Field label="Scheduled Weight">{fmtKg(scheduledWeightKg)}</Field>
+            <Field label="Actual Weight">
+              {actualWeightMissing ? <MissingValue /> : fmtKg(actualWeightKg)}
             </Field>
-            <Field label="Total weight received">{totalWeight}kg</Field>
-            <Field label="Weight processed">{totalWeight + 57}kg</Field>
-            <Field label="Weight loss">
-              <span className="inline-flex items-center gap-1.5 text-rose-700">
-                <Icon d={I.warning} className="w-4 h-4" />
-                -57kg
-              </span>
+            <Field label="Load Number">
+              {loadNumberMissing ? <MissingValue /> : loadNumber}
             </Field>
-            <Field label="Total bales received">3</Field>
-            <Field label="Bales processed">3</Field>
+            <Field label="Scheduled Delivery">{scheduledDelivery}</Field>
+            <Field label="Actual Delivery">{actualDelivery}</Field>
           </div>
-          <div className="mt-5 flex justify-end">
-            <button className="inline-flex items-center px-4 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
-              Store more bales
+          <div className="mt-6 flex justify-end">
+            <button className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
+              <Icon d={I.edit} className="w-4 h-4" />
+              Edit Details
             </button>
           </div>
         </div>
 
-        {/* Tabs row + Start analysing button */}
-        <div className="border-b border-neutral-10 flex items-center text-[15px] mb-4">
-          <button className="flex-1 px-6 py-3 border-b-2 border-safi-600 text-safi-700 font-medium">
-            Material Analysis
-          </button>
-          <button className="flex-1 px-6 py-3 border-b-2 border-transparent text-neutral-60 hover:text-neutral-100">
-            Other photos
-          </button>
-        </div>
-        <div className="flex justify-end mb-4">
-          <button className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
-            <Icon d={I.chart} className="w-4 h-4" />
-            Start analysing
-          </button>
+        {/* ---- 2) OPERATIONAL STATUS ---- */}
+        <div className="bg-white border border-neutral-10 rounded-xl p-6">
+          <h3 className="text-lg font-bold text-neutral-100 mb-4">Operational Status</h3>
+
+          {/* Material flow stepper */}
+          <div className="flex items-center gap-2 flex-wrap mb-6">
+            {stages.map((s, i) => (
+              <React.Fragment key={s.label}>
+                <div className={
+                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[13px] font-medium ' +
+                  (s.done
+                    ? 'bg-success-100 text-success-300'
+                    : 'bg-neutral-5 text-neutral-60 border border-neutral-10')
+                }>
+                  {s.done
+                    ? <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
+                    : <span className="w-2 h-2 rounded-full bg-neutral-40" aria-hidden="true" />}
+                  {s.label}
+                </div>
+                {i < stages.length - 1 && (
+                  <Icon d={I.arrowR} className={'w-4 h-4 ' + (stages[i + 1].done ? 'text-neutral-60' : 'text-neutral-40')} />
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+
+          {/* Three-column status grid: Analysis | Storage | Production */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Analysis */}
+            <div>
+              <div className="text-[13px] text-neutral-60 mb-2 font-medium uppercase tracking-wide">Analysis</div>
+              {isAnalysed ? (
+                <>
+                  <div className="inline-flex items-center gap-1.5 text-success-300 font-medium text-[15px]">
+                    <Icon d={I.checkCircle} className="w-4 h-4" />
+                    Analysed
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <ResultChip label="Target UBC"           value={targetUbc}     ok={targetUbc >= 90} />
+                    <ResultChip label="Acceptable Aluminium" value={acceptableAl}  ok={acceptableAl <= 5} />
+                    <ResultChip label="Contamination"        value={contamination} ok={contamination <= 2} />
+                  </div>
+                  <div className="mt-3 text-[13px] text-neutral-60">{photosCount} photos captured</div>
+                  <div className="text-[13px] text-neutral-60">Last analysis: {lastAnalysisAt}</div>
+                </>
+              ) : (
+                <div className="text-[13px] text-neutral-60">Not analysed yet</div>
+              )}
+            </div>
+
+            {/* Storage */}
+            <div>
+              <div className="text-[13px] text-neutral-60 mb-2 font-medium uppercase tracking-wide">Storage</div>
+              {isStored ? (
+                <div className="space-y-1">
+                  {storageBays.map(b => (
+                    <div key={b.id} className="text-[15px] text-neutral-100">
+                      {b.id} <span className="text-neutral-60">({b.bales})</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[13px] text-neutral-60">Not stored yet</div>
+              )}
+            </div>
+
+            {/* Production */}
+            <div>
+              <div className="text-[13px] text-neutral-60 mb-2 font-medium uppercase tracking-wide">Production</div>
+              {onPickingList ? (
+                <>
+                  <div className="inline-flex items-center gap-1.5 text-success-300 font-medium text-[15px]">
+                    <Icon d={I.checkCircle} className="w-4 h-4" />
+                    On Picking List
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-1.5 text-[13px]">
+                    <div><span className="text-neutral-60">Picking List:</span> <span className="text-neutral-100 font-medium">{pickingList.id}</span></div>
+                    <div><span className="text-neutral-60">Added by:</span> <span className="text-neutral-100">{pickingList.addedBy}</span></div>
+                    <div><span className="text-neutral-60">Shift:</span> <span className="text-neutral-100">{pickingList.shift}</span></div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-[15px] text-neutral-100">Not on picking list</div>
+              )}
+            </div>
+          </div>
+
+          {/* Action buttons - primary Analyse Material, secondary Store Material. */}
+          <div className="mt-6 flex items-center gap-2 flex-wrap justify-end">
+            <button className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
+              <Icon d={I.box} className="w-4 h-4" />
+              Store Material
+            </button>
+            <button className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700">
+              <Icon d={I.chart} className="w-4 h-4" />
+              Analyse Material
+            </button>
+          </div>
         </div>
 
-        {/* Reports */}
-        <div className="space-y-4">
-          {REPORTS.map((r, i) => (
-            <div key={i} className="bg-white border border-neutral-10 rounded-xl p-5">
-              <h4 className="text-base font-bold text-neutral-100 mb-2">Report - {r.date}</h4>
-              <div className="text-[13px] text-neutral-60 mb-2">Average AI results</div>
-              <div className="flex items-center gap-2 flex-wrap mb-4">
-                <ResultChip label="Target UBC"           value={r.ubc}    ok={r.ubc >= 90} />
-                <ResultChip label="Acceptable Aluminium" value={r.alum}   ok={r.alum <= 5} />
-                <ResultChip label="Contamination"        value={r.contam} ok={r.contam <= 2} />
-              </div>
-              <div className="flex items-center gap-5 text-[13px] text-neutral-60">
-                <span className="inline-flex items-center gap-1.5">
-                  <Icon d={I.chart} className="w-4 h-4" />
-                  AI Bale
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <Icon d={I.photo} className="w-4 h-4" />
-                  {r.photos} photos
-                </span>
-                <span>{r.date}</span>
-                <span className="text-neutral-100">{r.who}</span>
-              </div>
+        {/* ---- 3) ANALYSIS HISTORY ---- */}
+        <div className="bg-white border border-neutral-10 rounded-xl p-6">
+          <h3 className="text-lg font-bold text-neutral-100 mb-4">Analysis History</h3>
+          {REPORTS.length === 0 ? (
+            <div className="text-[13px] text-neutral-60">No analyses have been recorded yet.</div>
+          ) : (
+            <div className="divide-y divide-neutral-10">
+              {REPORTS.map((r, i) => (
+                <div key={i} className={i === 0 ? 'pb-5' : 'py-5'}>
+                  <h4 className="text-base font-bold text-neutral-100 mb-2">Report - {r.date}</h4>
+                  <div className="text-[13px] text-neutral-60 mb-2">Average AI results</div>
+                  <div className="flex items-center gap-2 flex-wrap mb-3">
+                    <ResultChip label="Target UBC"           value={r.ubc}    ok={r.ubc >= 90} />
+                    <ResultChip label="Acceptable Aluminium" value={r.alum}   ok={r.alum <= 5} />
+                    <ResultChip label="Contamination"        value={r.contam} ok={r.contam <= 2} />
+                  </div>
+                  <div className="flex items-center gap-5 text-[13px] text-neutral-60">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Icon d={I.chart} className="w-4 h-4" />
+                      AI Bale
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <Icon d={I.photo} className="w-4 h-4" />
+                      {r.photos} photos
+                    </span>
+                    <span>{r.date}</span>
+                    <span className="text-neutral-100">{r.who}</span>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       </div>
     );
