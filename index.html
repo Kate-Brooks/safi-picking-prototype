@@ -2832,6 +2832,320 @@
   })();
 
   // ============================================================================
+  // R49: PAGE: STORE MATERIAL (forklift operator workflow, full-screen)
+  //
+  // Touch-sized for an iPad. The FO arrives with 3 / 6 / 9 / 12+ bales from
+  // the lorry, walks to a zone+bay, then needs to log the addition in as few
+  // taps as possible. Layout is two side-by-side columns:
+  //   1) "How many bales?" - a large +/- stepper and quick-add chips.
+  //   2) "Where?"          - zone tabs, then a touch-sized bay tile grid
+  //                          reading from the live production yard.
+  // A single full-width primary action confirms the addition. A running
+  // session log shows the FO what they've added so far in this open flow.
+  //
+  // A persistent "Actual weight missing" banner reminds the FO to capture
+  // the weight; it has an inline editor that updates the parent state.
+  //
+  // Confirming an addition appends an entry to the per-load storage map AND
+  // appends a synthesised load object to the chosen yard bay so it shows up
+  // in production management (requirement #6).
+  // ============================================================================
+  function StoreMaterialView({
+    row, idx, yard, yardOps,
+    actualWeightOverride,
+    onAddStorage, onSetWeight, onToast,
+    onDone, onCancel
+  }) {
+    // Default to 3 bales (most common stack height per the brief).
+    const [bales, setBales] = useState(3);
+    const [selectedZoneId, setSelectedZoneId] = useState(yard[0]?.id || null);
+    const [selectedBayId, setSelectedBayId] = useState(null);
+    // Session log - additions made in THIS open flow only. Cumulative load
+    // storage lives in the parent state.
+    const [sessionLog, setSessionLog] = useState([]);
+    // Inline editor for the missing-weight banner.
+    const [weightEditorOpen, setWeightEditorOpen] = useState(false);
+    const [weightDraft, setWeightDraft] = useState('');
+
+    const weightMissing = actualWeightOverride == null && idx % 2 === 0;
+
+    const selectedZone = yard.find(z => z.id === selectedZoneId) || yard[0];
+    const selectedBay = selectedZone?.bays.find(b => b.id === selectedBayId) || null;
+
+    const stepBales = (d) => setBales(b => Math.max(1, Math.min(99, b + d)));
+    const canAdd = bales > 0 && selectedZone && selectedBay;
+    const sessionTotal = sessionLog.reduce((a, e) => a + e.bales, 0);
+
+    const handleAdd = () => {
+      if (!canAdd) return;
+      // 1) Append to the session log.
+      const entry = { zoneId: selectedZone.id, bayId: selectedBay.id, bales };
+      setSessionLog(prev => [...prev, entry]);
+      // 2) Propagate to parent state (drives Operational Status Storage).
+      onAddStorage?.(entry);
+      // 3) Append a synthesised load to the yard so the warehouse view picks it up.
+      if (typeof yardOps?.addLoad === 'function') {
+        const perBaleKg = 250 + (idx % 30); // believable per-bale weight
+        const synthLoad = {
+          id: `qc-${idx}-${selectedZone.id}-${selectedBay.id}-${Date.now()}`,
+          supplier: row.supplier,
+          lot: `${row.orderRef}-${sessionLog.length + 1}`,
+          weight: bales * perBaleKg,
+          bales,
+          // Map to a known material slot so existing filters don't break.
+          material: 'BLANCA',
+          results: null,
+          description: `From order ${row.orderRef}`,
+          processedAt: null
+        };
+        yardOps.addLoad(selectedZone.id, selectedBay.id, synthLoad);
+      }
+      // 4) Feedback + reset bay selection (keep the bales count so back-to-back
+      //    additions of the same stack size are one fewer tap).
+      onToast?.(`${bales} bales added to Zone ${selectedZone.id} · Bay ${selectedBay.id}`);
+      setSelectedBayId(null);
+    };
+
+    const handleSaveWeight = () => {
+      const n = parseFloat(weightDraft);
+      if (!Number.isFinite(n) || n <= 0) return;
+      onSetWeight?.(Math.round(n));
+      setWeightEditorOpen(false);
+      setWeightDraft('');
+    };
+
+    // Large touch-sized chip button.
+    const QuickChip = ({ n }) => (
+      <button
+        type="button"
+        onClick={() => setBales(n)}
+        aria-pressed={bales === n}
+        className={
+          'h-14 min-w-[64px] px-4 rounded-xl border-2 text-lg font-bold transition ' +
+          (bales === n
+            ? 'border-safi-600 bg-safi-50 text-safi-700'
+            : 'border-neutral-10 bg-white text-neutral-100 hover:bg-neutral-5')
+        }
+      >
+        {n}
+      </button>
+    );
+
+    return (
+      <div className="px-6 py-5">
+        {/* Top bar - Cancel / title / Done. Built for thumb reach on a tablet. */}
+        <div className="flex items-center justify-between gap-4 mb-5">
+          <button
+            onClick={onCancel}
+            className="px-4 py-3 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[15px] font-medium hover:bg-neutral-5 min-h-[48px]"
+          >
+            Cancel
+          </button>
+          <div className="text-center min-w-0 flex-1">
+            <div className="text-[13px] text-neutral-60">Store material</div>
+            <div className="text-base font-bold text-neutral-100 truncate">{row.supplier} #{row.orderRef}</div>
+          </div>
+          <button
+            onClick={onDone}
+            className="px-5 py-3 rounded-lg bg-safi-600 text-white text-[15px] font-semibold hover:bg-safi-700 min-h-[48px]"
+          >
+            Done
+          </button>
+        </div>
+
+        {/* Missing weight banner */}
+        {weightMissing && (
+          <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <Icon d={I.warning} className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-[15px] font-semibold text-amber-900">Actual weight is missing</div>
+                  <div className="text-[13px] text-amber-900/80 mt-0.5">Add it before this load is complete - you can do it now or once you've finished storing.</div>
+                </div>
+              </div>
+              {!weightEditorOpen ? (
+                <button
+                  onClick={() => setWeightEditorOpen(true)}
+                  className="shrink-0 px-4 py-2.5 rounded-lg bg-amber-600 text-white text-[13px] font-semibold hover:bg-amber-700 min-h-[44px]"
+                >
+                  Add weight
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="relative">
+                    <input
+                      type="number"
+                      autoFocus
+                      placeholder="0"
+                      value={weightDraft}
+                      onChange={e => setWeightDraft(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSaveWeight(); }}
+                      className="w-32 px-3 py-2.5 pr-10 border border-neutral-10 rounded-lg text-[15px] bg-white"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-neutral-60">kg</span>
+                  </div>
+                  <button
+                    onClick={handleSaveWeight}
+                    className="px-4 py-2.5 rounded-lg bg-amber-600 text-white text-[13px] font-semibold hover:bg-amber-700 min-h-[44px]"
+                  >Save</button>
+                  <button
+                    onClick={() => { setWeightEditorOpen(false); setWeightDraft(''); }}
+                    className="px-3 py-2.5 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] hover:bg-neutral-5 min-h-[44px]"
+                  >Cancel</button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Two-section layout: Quantity (left) + Location (right). Stack on narrow widths. */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+          {/* QUANTITY */}
+          <div className="lg:col-span-2 bg-white border border-neutral-10 rounded-xl p-5">
+            <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">
+              1. How many bales?
+            </div>
+            {/* Large +/- stepper */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => stepBales(-1)}
+                disabled={bales <= 1}
+                aria-label="Decrease bales"
+                className="w-16 h-16 rounded-xl border-2 border-neutral-10 bg-white text-3xl font-bold text-neutral-100 hover:bg-neutral-5 disabled:opacity-40"
+              >−</button>
+              <div className="flex-1 flex items-center justify-center h-16 rounded-xl bg-neutral-5 border-2 border-neutral-10">
+                <span className="text-4xl font-bold text-neutral-100">{bales}</span>
+                <span className="ml-2 text-[13px] text-neutral-60">{bales === 1 ? 'bale' : 'bales'}</span>
+              </div>
+              <button
+                onClick={() => stepBales(1)}
+                aria-label="Increase bales"
+                className="w-16 h-16 rounded-xl border-2 border-neutral-10 bg-white text-3xl font-bold text-neutral-100 hover:bg-neutral-5"
+              >+</button>
+            </div>
+            {/* Quick-add chips */}
+            <div className="mt-4">
+              <div className="text-[13px] text-neutral-60 mb-2">Quick set</div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {[3, 6, 9, 12].map(n => <QuickChip key={n} n={n} />)}
+              </div>
+            </div>
+          </div>
+
+          {/* LOCATION */}
+          <div className="lg:col-span-3 bg-white border border-neutral-10 rounded-xl p-5">
+            <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">
+              2. Where?
+            </div>
+            {/* Zone tabs */}
+            <div className="flex items-center gap-2 flex-wrap mb-4">
+              {yard.map(z => (
+                <button
+                  key={z.id}
+                  onClick={() => { setSelectedZoneId(z.id); setSelectedBayId(null); }}
+                  aria-pressed={selectedZoneId === z.id}
+                  className={
+                    'px-4 h-12 rounded-xl border-2 text-base font-semibold transition min-h-[48px] ' +
+                    (selectedZoneId === z.id
+                      ? 'border-safi-600 bg-safi-50 text-safi-700'
+                      : 'border-neutral-10 bg-white text-neutral-100 hover:bg-neutral-5')
+                  }
+                >
+                  Zone {z.id}
+                </button>
+              ))}
+            </div>
+            {/* Bay tile grid for the selected zone. Scrolls when there are many bays. */}
+            <div className="text-[13px] text-neutral-60 mb-2">
+              Tap a bay in Zone {selectedZone?.id}
+            </div>
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-[280px] overflow-y-auto pr-1">
+              {selectedZone?.bays.map(b => {
+                const baleCount = b.loads.reduce((a, l) => a + l.bales, 0);
+                const isSel = selectedBayId === b.id;
+                // Highlight bays that have received bales in this session.
+                const sessionAdds = sessionLog
+                  .filter(e => e.zoneId === selectedZone.id && e.bayId === b.id)
+                  .reduce((a, e) => a + e.bales, 0);
+                return (
+                  <button
+                    key={b.id}
+                    onClick={() => setSelectedBayId(b.id)}
+                    aria-pressed={isSel}
+                    className={
+                      'h-20 px-3 rounded-xl border-2 text-left transition flex flex-col justify-center min-h-[80px] ' +
+                      (isSel
+                        ? 'border-safi-600 bg-safi-50'
+                        : 'border-neutral-10 bg-white hover:bg-neutral-5')
+                    }
+                  >
+                    <div className={'text-[15px] font-bold ' + (isSel ? 'text-safi-700' : 'text-neutral-100')}>
+                      {b.name}
+                    </div>
+                    <div className="text-[13px] text-neutral-60 mt-0.5">
+                      {fmtNum(baleCount)} bales
+                      {sessionAdds > 0 && (
+                        <span className="ml-1 text-success-300 font-semibold">+{sessionAdds}</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Primary action - large, full width, sticks visible at the bottom */}
+        <div className="mt-5">
+          <button
+            onClick={handleAdd}
+            disabled={!canAdd}
+            className={
+              'w-full h-16 rounded-xl text-[17px] font-semibold transition flex items-center justify-center gap-2 ' +
+              (canAdd
+                ? 'bg-safi-600 text-white hover:bg-safi-700'
+                : 'bg-neutral-5 text-neutral-40 cursor-not-allowed')
+            }
+          >
+            <Icon d={I.plus} className="w-5 h-5" />
+            {canAdd
+              ? `Add ${bales} ${bales === 1 ? 'bale' : 'bales'} to Zone ${selectedZone.id} · Bay ${selectedBay.id}`
+              : selectedZone && !selectedBay
+                ? 'Select a bay to continue'
+                : 'Select a zone and bay to continue'}
+          </button>
+        </div>
+
+        {/* Session log */}
+        {sessionLog.length > 0 && (
+          <div className="mt-5 bg-white border border-neutral-10 rounded-xl p-5">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60">
+                Stored in this session
+              </div>
+              <div className="text-[13px] text-neutral-60">
+                Total: <span className="font-bold text-neutral-100">{sessionTotal}</span> {sessionTotal === 1 ? 'bale' : 'bales'}
+              </div>
+            </div>
+            <ul className="divide-y divide-neutral-10">
+              {sessionLog.map((e, i) => (
+                <li key={i} className="py-2.5 flex items-center gap-3 text-[15px]">
+                  <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-success-100 text-success-300 shrink-0">
+                    <Icon d={I.checkCircle} className="w-4 h-4" />
+                  </span>
+                  <span className="font-bold text-neutral-100">+{e.bales} bales</span>
+                  <span className="text-neutral-60">Zone {e.zoneId} · Bay {e.bayId}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================================
   // R47/R48: PAGE: LOAD OPERATIONS HUB (drilled in from the Quality Control table)
   //
   // R48: restructured into a 3-card information architecture matching the
@@ -2842,15 +3156,19 @@
   //                            a material-flow stepper at the top.
   //   3) Analysis History   - the stacked per-report cards.
   // ============================================================================
-  function LoadDetailsView({ row, idx, onBack }) {
+  function LoadDetailsView({ row, idx, onBack, onStoreMaterial = () => {}, stored = [], actualWeightOverride = null }) {
     // Deterministic demo values seeded off the row index so each load page
     // looks subtly different but stable across reloads.
     const rng = (seed, max) => Math.abs(Math.sin(seed * 13.37)) % 1 * max;
     const supplierShort = row.supplier;
     const orderRef = row.orderRef;
     const scheduledWeightKg = 25000 + Math.floor(rng(idx + 1, 6) * 1000) * 100;
-    const actualWeightMissing = idx % 2 === 0;
-    const actualWeightKg = actualWeightMissing ? null : scheduledWeightKg - 200 + Math.floor(rng(idx + 8, 6) * 100);
+    // R49: if the FO entered a weight via Store Material's missing-weight
+    // banner, that value wins over the demo's missing/synthetic logic.
+    const actualWeightMissing = actualWeightOverride == null && idx % 2 === 0;
+    const actualWeightKg = actualWeightOverride != null
+      ? actualWeightOverride
+      : (actualWeightMissing ? null : scheduledWeightKg - 200 + Math.floor(rng(idx + 8, 6) * 100));
     const loadNumberMissing = idx % 3 === 0;
     const loadNumber = loadNumberMissing ? null : (7 + (idx % 12));
     const scheduledDelivery = '9 Jun 2026';
@@ -2864,13 +3182,28 @@
     const targetUbc = 79 + Math.floor(rng(idx + 2, 9) * 10) / 10;
     const acceptableAl = 11 + Math.floor(rng(idx + 3, 5) * 10) / 10;
     const contamination = 6 + Math.floor(rng(idx + 4, 4) * 10) / 10;
-    const isStored = isAnalysed && idx % 4 !== 0;
-    const storageBays = isStored ? [
+    // R49: if the FO has stored bales via the Store Material flow, prefer
+    // those entries over the demo's static bay list. Aggregate by zoneId|bayId.
+    const aggregatedStorage = (() => {
+      if (stored.length === 0) return null;
+      const map = new Map();
+      stored.forEach(e => {
+        const k = `${e.zoneId}|${e.bayId}`;
+        map.set(k, (map.get(k) || 0) + e.bales);
+      });
+      return Array.from(map.entries()).map(([k, bales]) => {
+        const [zoneId, bayId] = k.split('|');
+        return { id: `Zone ${zoneId} · Bay ${bayId}`, bales };
+      });
+    })();
+    const demoStorageActive = !aggregatedStorage && isAnalysed && idx % 4 !== 0;
+    const isStored = !!aggregatedStorage || demoStorageActive;
+    const storageBays = aggregatedStorage || (demoStorageActive ? [
       { id: 'Bay 4', bales: 6  },
       { id: 'Bay 5', bales: 14 },
       { id: 'Bay 6', bales: 14 },
       { id: 'Bay 7', bales: 10 }
-    ] : [];
+    ] : []);
     const onPickingList = (idx === 104) || (isStored && idx % 11 === 0);
     const pickingList = onPickingList
       ? { id: 'PL-231', addedBy: 'Marco Rossi', shift: 'Morning Shift' }
@@ -3047,7 +3380,10 @@
 
           {/* Action buttons - primary Analyse Material, secondary Store Material. */}
           <div className="mt-6 flex items-center gap-2 flex-wrap justify-end">
-            <button className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
+            <button
+              onClick={onStoreMaterial}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
+            >
               <Icon d={I.box} className="w-4 h-4" />
               Store Material
             </button>
@@ -3095,7 +3431,7 @@
     );
   }
 
-  function QualityControlPage() {
+  function QualityControlPage({ yard = [], yardOps = {} }) {
     const ROWS_PER_PAGE = 15;
     const totalRows = QC_ROWS.length;
     const totalPages = Math.ceil(totalRows / ROWS_PER_PAGE);
@@ -3105,12 +3441,62 @@
     // R47: clicking a row drills into the load details view. selectedRowIdx is
     // the index into QC_ROWS; null means we're on the table view.
     const [selectedRowIdx, setSelectedRowIdx] = useState(null);
+    // R49: Store Material workflow state.
+    //   storeMode: true when the FO has opened the Store Material flow
+    //   loadStorage: map of QC row idx -> array of { zoneId, bayId, bales }
+    //                (cumulative across sessions, drives the Operational Status
+    //                 Storage section)
+    //   loadActualWeights: map of QC row idx -> kg (overrides the missing flag
+    //                on the Load Summary when the FO enters a weight mid-flow)
+    const [storeMode, setStoreMode] = useState(false);
+    const [loadStorage, setLoadStorage] = useState({});
+    const [loadActualWeights, setLoadActualWeights] = useState({});
+    // Lightweight toast for the Store Material flow ("3 bales added...").
+    const [storeToast, setStoreToast] = useState(null);
+    useEffect(() => {
+      if (!storeToast) return;
+      const t = setTimeout(() => setStoreToast(null), 2200);
+      return () => clearTimeout(t);
+    }, [storeToast]);
+
+    if (selectedRowIdx !== null && storeMode) {
+      return (
+        <>
+          <StoreMaterialView
+            row={QC_ROWS[selectedRowIdx]}
+            idx={selectedRowIdx}
+            yard={yard}
+            yardOps={yardOps}
+            actualWeightOverride={loadActualWeights[selectedRowIdx]}
+            onAddStorage={(entry) => {
+              setLoadStorage(prev => ({
+                ...prev,
+                [selectedRowIdx]: [...(prev[selectedRowIdx] || []), entry]
+              }));
+            }}
+            onSetWeight={(w) => setLoadActualWeights(prev => ({ ...prev, [selectedRowIdx]: w }))}
+            onToast={setStoreToast}
+            onDone={() => setStoreMode(false)}
+            onCancel={() => setStoreMode(false)}
+          />
+          {storeToast && (
+            <div className="fixed top-4 right-4 z-50 inline-flex items-center gap-2 px-4 py-3 rounded-lg bg-success-300 text-white shadow-lg text-[13px] font-medium">
+              <Icon d={I.checkCircle} className="w-5 h-5" />
+              {storeToast}
+            </div>
+          )}
+        </>
+      );
+    }
     if (selectedRowIdx !== null) {
       return (
         <LoadDetailsView
           row={QC_ROWS[selectedRowIdx]}
           idx={selectedRowIdx}
+          stored={loadStorage[selectedRowIdx] || []}
+          actualWeightOverride={loadActualWeights[selectedRowIdx]}
           onBack={() => setSelectedRowIdx(null)}
+          onStoreMaterial={() => setStoreMode(true)}
         />
       );
     }
@@ -3364,6 +3750,16 @@
         if (z.id !== zoneId) return z;
         return { ...z, bays: z.bays.filter(b => b.id !== bayId || b.loads.length > 0) };
       })),
+      // R49: append a synthesised load object to a target bay. Used by the
+      // Store Material workflow so bales stored from the QC load-details page
+      // appear in the production warehouse view.
+      addLoad: (zoneId, bayId, load) => setYard(prev => prev.map(z => {
+        if (z.id !== zoneId) return z;
+        return {
+          ...z,
+          bays: z.bays.map(b => b.id !== bayId ? b : { ...b, loads: [...b.loads, load] })
+        };
+      })),
       moveLoads: (fromZoneId, fromBayId, loadIds, toZoneId, toBayId) => setYard(prev => {
         const moved = [];
         const next = prev.map(z => {
@@ -3472,11 +3868,13 @@
     const hasAnyList = pickingLists.length > 0;
 
     // R46: Quality Control route - short-circuit out of the production page.
+    // R49: pass yard + yardOps so the Store Material flow can write to the
+    // production warehouse.
     if (appPage === 'quality-control') {
       return (
         <LangContext.Provider value={lang}>
           <AppShell lang={lang} setLang={setLang} appPage={appPage} setAppPage={setAppPage}>
-            <QualityControlPage />
+            <QualityControlPage yard={yard} yardOps={yardOps} />
           </AppShell>
         </LangContext.Provider>
       );
