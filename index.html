@@ -2650,18 +2650,26 @@
   // ----------------------------------------------------------------------------
   // APP SHELL - top nav + sidebar
   // ----------------------------------------------------------------------------
-  function AppShell({ lang, setLang, pickerMode, setPickerMode, children }) {
-    const NavItem = ({ icon, label, active }) => (
+  function AppShell({ lang, setLang, pickerMode, setPickerMode, appPage = 'production', setAppPage = () => {}, children }) {
+    // R46: navigation drawer styling refresh - active state now uses a lighter
+    // purple-tinted background (bg-safi-50/100) with safi-700 text + icon, per
+    // the Safi UI Kit drawer (Figma node 2637:7936) and the QC screenshot.
+    const NavItem = ({ icon, label, active, onClick }) => (
       <button
+        onClick={onClick}
+        aria-current={active ? 'page' : undefined}
         className={
           'w-full text-left flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ' +
-          (active ? 'bg-safi-600 text-white' : 'text-slate-700 hover:bg-slate-100')
+          (active ? 'bg-safi-50 text-safi-700' : 'text-slate-700 hover:bg-slate-100')
         }
       >
-        <Icon d={icon} className="w-5 h-5" />
+        <Icon d={icon} className={'w-5 h-5 ' + (active ? 'text-safi-700' : 'text-slate-500')} />
         {label}
       </button>
     );
+    // R46: hide the production-only header toggles (language + load/bale mode)
+    // on non-production pages so the QC view matches its Figma reference.
+    const showProductionHeaderToggles = appPage === 'production';
     return (
       <div className="min-h-screen flex flex-col bg-[#fafafa]">
         {/* Top bar */}
@@ -2669,7 +2677,8 @@
           <button aria-label="Menu" className="p-2 rounded-lg hover:bg-slate-100"><Icon d={I.menu} /></button>
           <div className="flex items-center gap-2"></div>
           <div className="flex items-center gap-3">
-            {/* Language toggle */}
+            {/* Language toggle - production-only per R46. */}
+            {showProductionHeaderToggles && (
             <div
               className="flex items-center gap-1 bg-slate-100 rounded-full p-1 text-[13px]"
               role="group"
@@ -2696,12 +2705,13 @@
                 Español
               </button>
             </div>
+            )}
             {/* R36: Production line switcher removed from header. Picker has a per-list
                 filter dropdown; warehouse alert shows all active lists in an accordion. */}
             {/* Picker mode plant setting - sibling style to the language switch.
                 "Load-based" hides the buffer area and lets the FO process whole loads;
                 "Bale-based" surfaces the buffer plus per-bale process/reject modals. */}
-            {typeof setPickerMode === 'function' && (
+            {typeof setPickerMode === 'function' && showProductionHeaderToggles && (
               <div
                 className="flex items-center gap-1 bg-slate-100 rounded-full p-1 text-[13px]"
                 role="group"
@@ -2743,15 +2753,15 @@
 
         <div className="flex flex-1 min-h-0">
           {/* Sidebar */}
+          {/* R46: nav drawer trimmed to match the QC screenshot's item list.
+              Deals / Collections / Ground Control removed; Production now reads
+              "Production Management" per the screenshot. */}
           <aside className="w-[230px] shrink-0 bg-white border-r border-slate-200 px-3 py-4 flex flex-col gap-1 sticky top-14 self-start h-[calc(100vh-3.5rem)]">
-            <NavItem icon={I.qa}       label="Quality Control" />
+            <NavItem icon={I.qa}       label="Quality Control"     active={appPage === 'quality-control'} onClick={() => setAppPage('quality-control')} />
             <NavItem icon={I.list}     label="Partner Invites" />
             <NavItem icon={I.chart}    label="Quality Analytics" />
             <NavItem icon={I.claim}    label="Claim Reports" />
-            <NavItem icon={I.factory}  label="Production" active />
-            <NavItem icon={I.deals}    label="Deals" />
-            <NavItem icon={I.truck}    label="Collections" />
-            <NavItem icon={I.ground}   label="Ground Control" />
+            <NavItem icon={I.factory}  label="Production Management" active={appPage === 'production'} onClick={() => setAppPage('production')} />
             <NavItem icon={I.settings} label="Settings" />
             <div className="mt-auto">
               <NavItem icon={I.help}   label="Help & Learn" />
@@ -2766,11 +2776,266 @@
     );
   }
 
+  // ============================================================================
+  // R46: PAGE: QUALITY CONTROL
+  //
+  // Recreates the Safi UI Kit "Quality control" screen. Sample data covers 130
+  // loads across a handful of suppliers; most are pending analysis (Average AI
+  // results = "-", Create claim disabled), two have AI results + an active
+  // Create claim button to demonstrate the analysed state.
+  // ============================================================================
+  const QC_SUPPLIERS = [
+    'GFL 122 Arrow Rd', 'GFL 124 Arrow Rd', 'GFL Peel', 'London',
+    'Emterra Niagara', 'WM Napanee', 'CELLMARK Green', 'Cascades Ottawa',
+    'Halton Recycling', 'Miller Waste', 'GFL Mississauga', 'WM New Toronto'
+  ];
+  const QC_MATERIALS = ['Clear PET Bales', 'Green PET Bales', 'Mixed PET Bales'];
+  // Build 130 deterministic rows so the screen renders the same every reload.
+  // Order refs follow the screenshot's 4500288xxx-XX pattern, dates step back
+  // from 9 Jun 2026, suppliers cycle through the list. Two specific rows
+  // (page 7, last two) carry analysis results.
+  const QC_ROWS = (() => {
+    const out = [];
+    let dateDay = 9;
+    const baseNum = 4500288078;
+    for (let i = 0; i < 130; i++) {
+      const supplier = QC_SUPPLIERS[i % QC_SUPPLIERS.length];
+      const orderNum = baseNum + Math.floor(i / 3);
+      const suffix = [10, 20, 30][i % 3];
+      // Schedule dates step back by 1 day every 13 rows so a page mostly
+      // shares the same date (matches the screenshot's repeated "9 Jun 2026").
+      const day = Math.max(1, dateDay - Math.floor(i / 13));
+      const material = i % 17 === 0 ? 'Green PET Bales' : (i % 23 === 0 ? 'Mixed PET Bales' : 'Clear PET Bales');
+      // Rows at index 103 & 104 (the last two of page 7, matching the screenshot)
+      // carry analysis results.
+      let results = null;
+      if (i === 103) {
+        results = { type: 'green', primary: { label: 'Green PET', value: 79.7, ok: true }, secondary: { label: 'Non Target', value: 7.3, ok: false } };
+      } else if (i === 104) {
+        results = { type: 'pet', primary: { label: 'PET', value: 91.0, ok: true }, secondary: { label: 'Non PET', value: 9.0, ok: true } };
+      }
+      out.push({
+        orderRef: `${orderNum}-${suffix}`,
+        supplier,
+        loadNo: '-',
+        scheduledDay: day,
+        material: results && i === 103 ? 'Green PET Bales' : material,
+        results
+      });
+    }
+    return out;
+  })();
+
+  function QualityControlPage() {
+    const ROWS_PER_PAGE = 15;
+    const totalRows = QC_ROWS.length;
+    const totalPages = Math.ceil(totalRows / ROWS_PER_PAGE);
+    // Default to page 7 so the screen lands on the same 91-105 slice as the
+    // reference screenshot (the two analysed rows at the bottom).
+    const [page, setPage] = useState(7);
+    const startIdx = (page - 1) * ROWS_PER_PAGE;
+    const endIdx = Math.min(startIdx + ROWS_PER_PAGE, totalRows);
+    const visibleRows = QC_ROWS.slice(startIdx, endIdx);
+    const goPrev = () => setPage(p => Math.max(1, p - 1));
+    const goNext = () => setPage(p => Math.min(totalPages, p + 1));
+
+    // Compact reusable field with a floating label sitting on the input's top border.
+    const FloatField = ({ label, children, hasValue = false }) => (
+      <div className="relative flex-1 min-w-[140px]">
+        <label className={'absolute -top-2 left-3 px-1.5 bg-white text-[13px] z-10 ' + (hasValue ? 'text-safi-700' : 'text-neutral-60')}>
+          {label}
+        </label>
+        {children}
+      </div>
+    );
+
+    const fmtDate = (day) => {
+      // 9 Jun 2026 style.
+      const d = Math.max(1, day);
+      return `${d} Jun 2026`;
+    };
+
+    return (
+      <div className="px-8 py-6">
+        {/* Page header */}
+        <div className="flex items-start justify-between gap-4 flex-wrap mb-6">
+          <h1 className="text-4xl font-bold tracking-tight text-neutral-100">Quality control</h1>
+          <div className="flex items-center gap-2">
+            {/* Import loads - split button with chevron */}
+            <div className="inline-flex rounded-lg overflow-hidden border border-neutral-10">
+              <button className="inline-flex items-center gap-2 px-3.5 py-2 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
+                <Icon d={I.arrowR} className="w-4 h-4 -rotate-90 text-neutral-60" />
+                Import loads
+              </button>
+              <button className="px-2 bg-white text-neutral-100 hover:bg-neutral-5 border-l border-neutral-10" aria-label="More import options">
+                <Icon d={I.chevron} className="w-4 h-4 text-neutral-60" />
+              </button>
+            </div>
+            <button className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700">
+              <Icon d={I.plus} className="w-4 h-4" />
+              Create load
+            </button>
+            <button className="p-2 rounded-lg border border-neutral-10 bg-white hover:bg-neutral-5" aria-label="More options">
+              <Icon d={I.kebab} className="w-4 h-4 -rotate-90 text-neutral-60" strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
+
+        {/* Filter row */}
+        <div className="flex items-stretch gap-3 mb-3 flex-wrap">
+          <FloatField label="Search loads">
+            <div className="relative">
+              <Icon d={I.search} className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-60" />
+              <input
+                placeholder="Enter..."
+                className="w-full pl-9 pr-3 py-2.5 border border-neutral-10 rounded-lg text-[13px] bg-white"
+              />
+            </div>
+          </FloatField>
+          <FloatField label="Material">
+            <button className="w-full flex items-center justify-between px-3 py-2.5 border border-neutral-10 rounded-lg text-[13px] bg-white text-neutral-60 text-left">
+              <span>&nbsp;</span>
+              <Icon d={I.chevron} className="w-4 h-4 text-neutral-60" />
+            </button>
+          </FloatField>
+          <FloatField label="Analysis status" hasValue>
+            <button className="w-full flex items-center justify-between px-3 py-2.5 border border-neutral-10 rounded-lg text-[13px] bg-white text-neutral-100 text-left">
+              <span>All</span>
+              <Icon d={I.chevron} className="w-4 h-4 text-neutral-60" />
+            </button>
+          </FloatField>
+          <FloatField label="Scheduled from date" hasValue>
+            <button className="w-full flex items-center justify-between px-3 py-2.5 border border-neutral-10 rounded-lg text-[13px] bg-white text-neutral-100 text-left">
+              <span>01/06/2026</span>
+              <Icon d={I.calendar} className="w-4 h-4 text-neutral-60" />
+            </button>
+          </FloatField>
+          <FloatField label="Supplier">
+            <button className="w-full flex items-center justify-between px-3 py-2.5 border border-neutral-10 rounded-lg text-[13px] bg-white text-neutral-60 text-left">
+              <span>&nbsp;</span>
+              <Icon d={I.chevron} className="w-4 h-4 text-neutral-60" />
+            </button>
+          </FloatField>
+          {/* Filter icon with badge */}
+          <button className="relative w-11 h-11 self-center flex items-center justify-center rounded-lg border border-neutral-10 bg-white hover:bg-neutral-5" aria-label="More filters">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-neutral-60">
+              <path d="M3 5h18l-7 9v6l-4-2v-4z" />
+            </svg>
+            <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-safi-600 text-white text-[11px] font-semibold flex items-center justify-center">1</span>
+          </button>
+        </div>
+
+        <div className="text-[13px] text-neutral-60 mb-3">Showing loads from 1 Jun 2026 onwards</div>
+
+        {/* Data table */}
+        <div className="bg-white border border-neutral-10 rounded-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead className="bg-white border-b border-neutral-10">
+                <tr className="text-left">
+                  <th className="px-4 py-3 font-medium text-neutral-60">Order ref</th>
+                  <th className="px-4 py-3 font-medium text-neutral-60">Supplier</th>
+                  <th className="px-4 py-3 font-medium text-neutral-60">Load no</th>
+                  <th className="px-4 py-3 font-medium text-neutral-60">
+                    <span className="inline-flex items-center gap-1">
+                      Scheduled delivery
+                      <Icon d={I.chevron} className="w-3.5 h-3.5" />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-neutral-60">Material</th>
+                  <th className="px-4 py-3 font-medium text-neutral-60">Average AI results</th>
+                  <th className="px-4 py-3 font-medium text-neutral-60">Claim status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-10">
+                {visibleRows.map((r, i) => {
+                  const analysed = !!r.results;
+                  return (
+                    <tr key={startIdx + i} className="hover:bg-neutral-5/50">
+                      <td className="px-4 py-3 font-semibold text-neutral-100">{r.orderRef}</td>
+                      <td className="px-4 py-3 text-neutral-100">{r.supplier}</td>
+                      <td className="px-4 py-3 text-neutral-60">{r.loadNo}</td>
+                      <td className="px-4 py-3 text-neutral-100">{fmtDate(r.scheduledDay)}</td>
+                      <td className="px-4 py-3 text-neutral-100">{r.material}</td>
+                      <td className="px-4 py-3">
+                        {analysed ? (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-medium ' + (r.results.primary.ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
+                              <Icon d={r.results.primary.ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
+                              {r.results.primary.label} {r.results.primary.value}%
+                            </span>
+                            <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-medium ' + (r.results.secondary.ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
+                              <Icon d={r.results.secondary.ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
+                              {r.results.secondary.label} {r.results.secondary.value}%
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-neutral-60">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          disabled={!analysed}
+                          className={
+                            'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[13px] font-medium ' +
+                            (analysed
+                              ? 'border-neutral-10 text-neutral-100 bg-white hover:bg-neutral-5'
+                              : 'border-neutral-10 text-neutral-40 bg-white cursor-not-allowed')
+                          }
+                        >
+                          <Icon d={I.claim} className="w-3.5 h-3.5" />
+                          Create claim
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {/* Pagination */}
+          <div className="flex items-center justify-end gap-6 px-4 py-3 text-[13px] text-neutral-60 border-t border-neutral-10">
+            <div className="flex items-center gap-2">
+              <span>Rows per page:</span>
+              <div className="inline-flex items-center gap-1 px-2 py-1 text-neutral-100">
+                <span>15</span>
+                <Icon d={I.chevron} className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="text-neutral-100">{startIdx + 1}–{endIdx} of {totalRows}</div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={goPrev}
+                disabled={page === 1}
+                className="p-1.5 rounded hover:bg-neutral-5 disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Previous page"
+              >
+                <Icon d={I.chevronR} className="w-4 h-4 rotate-180" />
+              </button>
+              <button
+                onClick={goNext}
+                disabled={page === totalPages}
+                className="p-1.5 rounded hover:bg-neutral-5 disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Next page"
+              >
+                <Icon d={I.chevronR} className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ----------------------------------------------------------------------------
   // PAGE: PRODUCTION MANAGEMENT (root of the prototype)
   // ----------------------------------------------------------------------------
 
   function ProductionManagementPage() {
+    // R46: top-level routing state. 'production' shows the existing production
+    // dashboard; 'quality-control' shows the new QC table. The nav drawer
+    // toggles between them.
+    const [appPage, setAppPage] = useState('production');
     // EN / ES language toggle (replaces the old role switcher)
     const [lang, setLang] = useState('en');
     // The "role" concept is gone - the SL is always the persona. Picker tab can still be visited.
@@ -2919,9 +3184,19 @@
     );
     const hasAnyList = pickingLists.length > 0;
 
+    // R46: Quality Control route - short-circuit out of the production page.
+    if (appPage === 'quality-control') {
+      return (
+        <LangContext.Provider value={lang}>
+          <AppShell lang={lang} setLang={setLang} appPage={appPage} setAppPage={setAppPage}>
+            <QualityControlPage />
+          </AppShell>
+        </LangContext.Provider>
+      );
+    }
     return (
       <LangContext.Provider value={lang}>
-      <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode}>
+      <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode} appPage={appPage} setAppPage={setAppPage}>
         <div className="px-8 py-6">
           {/* Page heading swaps when SL enters Create picking list mode */}
           {slMode === 'create' && tab === 'pw-layout' ? (
