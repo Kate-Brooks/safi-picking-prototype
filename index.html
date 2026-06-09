@@ -2888,30 +2888,37 @@
 
     const weightMissing = actualWeightOverride == null && idx % 2 === 0;
 
-    const selectedZone = yard.find(z => z.id === selectedZoneId) || yard[0];
-    const selectedBay = selectedZone?.bays.find(b => b.id === selectedBayId) || null;
+    // R53: zone "__buffer__" is a virtual destination (no real bays).
+    const isBufferDest = selectedZoneId === '__buffer__';
+    const selectedZone = isBufferDest ? null : (yard.find(z => z.id === selectedZoneId) || yard[0]);
+    const selectedBay = isBufferDest
+      ? null
+      : (selectedZone?.bays.find(b => b.id === selectedBayId) || null);
 
     const stepBales = (d) => setBales(b => Math.max(1, Math.min(99, b + d)));
-    const canAdd = bales > 0 && selectedZone && selectedBay;
+    const canAdd = bales > 0 && (isBufferDest || (selectedZone && selectedBay));
     const sessionTotal = sessionLog.reduce((a, e) => a + e.bales, 0);
 
     const handleAdd = () => {
       if (!canAdd) return;
-      // 1) Append to the session log.
-      const entry = { zoneId: selectedZone.id, bayId: selectedBay.id, bales };
+      // 1) Build the storage entry. Buffer entries use a special zoneId so
+      //    consumers (load details, yard) can branch on it.
+      const entry = isBufferDest
+        ? { zoneId: '__buffer__', bayId: null, bales }
+        : { zoneId: selectedZone.id, bayId: selectedBay.id, bales };
       setSessionLog(prev => [...prev, entry]);
-      // 2) Propagate to parent state (drives Operational Status Storage).
       onAddStorage?.(entry);
-      // 3) Append a synthesised load to the yard so the warehouse view picks it up.
-      if (typeof yardOps?.addLoad === 'function') {
-        const perBaleKg = 250 + (idx % 30); // believable per-bale weight
+      // 2) Append a synthesised load to the yard (zone path only; buffer adds
+      //    happen separately via setBuffer if needed - skipped here so we
+      //    don't double-account against the existing seed buffer).
+      if (!isBufferDest && typeof yardOps?.addLoad === 'function') {
+        const perBaleKg = 250 + (idx % 30);
         const synthLoad = {
           id: `qc-${idx}-${selectedZone.id}-${selectedBay.id}-${Date.now()}`,
           supplier: row.supplier,
           lot: `${row.orderRef}-${sessionLog.length + 1}`,
           weight: bales * perBaleKg,
           bales,
-          // Map to a known material slot so existing filters don't break.
           material: 'BLANCA',
           results: null,
           description: `From order ${row.orderRef}`,
@@ -2919,10 +2926,12 @@
         };
         yardOps.addLoad(selectedZone.id, selectedBay.id, synthLoad);
       }
-      // 4) Feedback + reset bay selection (keep the bales count so back-to-back
-      //    additions of the same stack size are one fewer tap).
-      onToast?.(`${bales} bales added to Zone ${selectedZone.id} · Bay ${selectedBay.id}`);
-      setSelectedBayId(null);
+      // 3) Feedback + reset bay selection (keep bales for fast repeats).
+      const dest = isBufferDest
+        ? 'the Buffer'
+        : `Zone ${selectedZone.id} · ${selectedBay.name || `Bay ${selectedBay.id}`}`;
+      onToast?.(`${bales} bales added to ${dest}`);
+      if (!isBufferDest) setSelectedBayId(null);
     };
 
     const handleSaveWeight = () => {
@@ -3025,7 +3034,8 @@
             <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">
               1. How many bales?
             </div>
-            {/* Large +/- stepper */}
+            {/* R53: Large +/- stepper - the central number is now a keyboard-
+                editable input so desktop users can type instead of tapping. */}
             <div className="flex items-center gap-3">
               <button
                 onClick={() => stepBales(-1)}
@@ -3033,9 +3043,21 @@
                 aria-label="Decrease bales"
                 className="w-16 h-16 rounded-xl border-2 border-neutral-10 bg-white text-3xl font-bold text-neutral-100 hover:bg-neutral-5 disabled:opacity-40"
               >−</button>
-              <div className="flex-1 flex items-center justify-center h-16 rounded-xl bg-neutral-5 border-2 border-neutral-10">
-                <span className="text-4xl font-bold text-neutral-100">{bales}</span>
-                <span className="ml-2 text-[13px] text-neutral-60">{bales === 1 ? 'bale' : 'bales'}</span>
+              <div className="flex-1 flex items-center justify-center h-16 rounded-xl bg-neutral-5 border-2 border-neutral-10 px-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={bales}
+                  onChange={e => {
+                    const v = parseInt(e.target.value, 10);
+                    if (Number.isFinite(v)) setBales(Math.max(1, Math.min(99, v)));
+                    else if (e.target.value === '') setBales(1);
+                  }}
+                  aria-label="Number of bales"
+                  className="w-20 bg-transparent text-center text-4xl font-bold text-neutral-100 focus:outline-none focus:ring-2 focus:ring-safi-600 rounded"
+                />
+                <span className="ml-1 text-[13px] text-neutral-60">{bales === 1 ? 'bale' : 'bales'}</span>
               </div>
               <button
                 onClick={() => stepBales(1)}
@@ -3043,9 +3065,9 @@
                 className="w-16 h-16 rounded-xl border-2 border-neutral-10 bg-white text-3xl font-bold text-neutral-100 hover:bg-neutral-5"
               >+</button>
             </div>
-            {/* Quick-add chips */}
+            {/* Quick-select chips (R53: renamed from "Quick set"). */}
             <div className="mt-4">
-              <div className="text-[13px] text-neutral-60 mb-2">Quick set</div>
+              <div className="text-[13px] text-neutral-60 mb-2">Quick select</div>
               <div className="flex items-center gap-2 flex-wrap">
                 {[3, 6, 9, 12].map(n => <QuickChip key={n} n={n} />)}
               </div>
@@ -3057,7 +3079,9 @@
             <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60 mb-3">
               2. Where?
             </div>
-            {/* Zone tabs */}
+            {/* R53: Zone tabs + Buffer tab. Buffer is a special destination
+                (no bays); selecting it auto-selects the buffer "bay" so the
+                Add button is enabled immediately. */}
             <div className="flex items-center gap-2 flex-wrap mb-4">
               {yard.map(z => (
                 <button
@@ -3074,44 +3098,84 @@
                   Zone {z.id}
                 </button>
               ))}
+              <button
+                key="__buffer__"
+                onClick={() => { setSelectedZoneId('__buffer__'); setSelectedBayId('__buffer__'); }}
+                aria-pressed={selectedZoneId === '__buffer__'}
+                className={
+                  'px-4 h-12 rounded-xl border-2 text-base font-semibold transition min-h-[48px] inline-flex items-center gap-2 ' +
+                  (selectedZoneId === '__buffer__'
+                    ? 'border-safi-600 bg-safi-50 text-safi-700'
+                    : 'border-neutral-10 bg-white text-neutral-100 hover:bg-neutral-5')
+                }
+              >
+                <span className="w-2 h-2 rounded-full bg-amber-400" aria-hidden="true" />
+                Buffer
+              </button>
             </div>
-            {/* Bay tile grid for the selected zone. Scrolls when there are many bays. */}
-            <div className="text-[13px] text-neutral-60 mb-2">
-              Tap a bay in Zone {selectedZone?.id}
-            </div>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-[280px] overflow-y-auto pr-1">
-              {selectedZone?.bays.map(b => {
-                const baleCount = b.loads.reduce((a, l) => a + l.bales, 0);
-                const isSel = selectedBayId === b.id;
-                // Highlight bays that have received bales in this session.
-                const sessionAdds = sessionLog
-                  .filter(e => e.zoneId === selectedZone.id && e.bayId === b.id)
-                  .reduce((a, e) => a + e.bales, 0);
-                return (
-                  <button
-                    key={b.id}
-                    onClick={() => setSelectedBayId(b.id)}
-                    aria-pressed={isSel}
-                    className={
-                      'h-20 px-3 rounded-xl border-2 text-left transition flex flex-col justify-center min-h-[80px] ' +
-                      (isSel
-                        ? 'border-safi-600 bg-safi-50'
-                        : 'border-neutral-10 bg-white hover:bg-neutral-5')
-                    }
-                  >
-                    <div className={'text-[15px] font-bold ' + (isSel ? 'text-safi-700' : 'text-neutral-100')}>
-                      {b.name}
-                    </div>
+            {/* Bay tile grid (zones) OR a single Buffer destination tile. */}
+            {selectedZoneId === '__buffer__' ? (
+              <div>
+                <div className="text-[13px] text-neutral-60 mb-2">
+                  Bales will be sent to the buffer for the picker to process. No bay needed.
+                </div>
+                <div className="rounded-xl border-2 border-safi-600 bg-safi-50 p-4 flex items-center gap-3">
+                  <span className="w-3 h-3 rounded-full bg-amber-400" aria-hidden="true" />
+                  <div className="flex-1">
+                    <div className="text-[15px] font-bold text-safi-700">Buffer</div>
                     <div className="text-[13px] text-neutral-60 mt-0.5">
-                      {fmtNum(baleCount)} bales
-                      {sessionAdds > 0 && (
-                        <span className="ml-1 text-success-300 font-semibold">+{sessionAdds}</span>
-                      )}
+                      Holds bales temporarily before processing
+                      {(() => {
+                        const sessionAdds = sessionLog
+                          .filter(e => e.zoneId === '__buffer__')
+                          .reduce((a, e) => a + e.bales, 0);
+                        if (sessionAdds === 0) return null;
+                        return <span className="ml-1 text-success-300 font-semibold">+{sessionAdds}</span>;
+                      })()}
                     </div>
-                  </button>
-                );
-              })}
-            </div>
+                  </div>
+                  <Icon d={I.checkCircle} className="w-5 h-5 text-safi-600" />
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="text-[13px] text-neutral-60 mb-2">
+                  Tap a bay in Zone {selectedZone?.id}
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-[280px] overflow-y-auto pr-1">
+                  {selectedZone?.bays.map(b => {
+                    const baleCount = b.loads.reduce((a, l) => a + l.bales, 0);
+                    const isSel = selectedBayId === b.id;
+                    const sessionAdds = sessionLog
+                      .filter(e => e.zoneId === selectedZone.id && e.bayId === b.id)
+                      .reduce((a, e) => a + e.bales, 0);
+                    return (
+                      <button
+                        key={b.id}
+                        onClick={() => setSelectedBayId(b.id)}
+                        aria-pressed={isSel}
+                        className={
+                          'h-20 px-3 rounded-xl border-2 text-left transition flex flex-col justify-center min-h-[80px] ' +
+                          (isSel
+                            ? 'border-safi-600 bg-safi-50'
+                            : 'border-neutral-10 bg-white hover:bg-neutral-5')
+                        }
+                      >
+                        <div className={'text-[15px] font-bold ' + (isSel ? 'text-safi-700' : 'text-neutral-100')}>
+                          {b.name}
+                        </div>
+                        <div className="text-[13px] text-neutral-60 mt-0.5">
+                          {fmtNum(baleCount)} bales
+                          {sessionAdds > 0 && (
+                            <span className="ml-1 text-success-300 font-semibold">+{sessionAdds}</span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -3129,10 +3193,12 @@
           >
             <Icon d={I.plus} className="w-5 h-5" />
             {canAdd
-              ? `Add ${bales} ${bales === 1 ? 'bale' : 'bales'} to Zone ${selectedZone.id} · Bay ${selectedBay.id}`
+              ? (isBufferDest
+                  ? `Add ${bales} ${bales === 1 ? 'bale' : 'bales'} to the Buffer`
+                  : `Add ${bales} ${bales === 1 ? 'bale' : 'bales'} to Zone ${selectedZone.id} · ${selectedBay.name || `Bay ${selectedBay.id}`}`)
               : selectedZone && !selectedBay
                 ? 'Select a bay to continue'
-                : 'Select a zone and bay to continue'}
+                : 'Select a zone, bay, or the Buffer to continue'}
           </button>
         </div>
 
@@ -3154,7 +3220,9 @@
                     <Icon d={I.checkCircle} className="w-4 h-4" />
                   </span>
                   <span className="font-bold text-neutral-100">+{e.bales} bales</span>
-                  <span className="text-neutral-60">Zone {e.zoneId} · Bay {e.bayId}</span>
+                  <span className="text-neutral-60">
+                    {e.zoneId === '__buffer__' ? 'Buffer' : `Zone ${e.zoneId} · Bay ${e.bayId}`}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -3175,7 +3243,30 @@
   //                            a material-flow stepper at the top.
   //   3) Analysis History   - the stacked per-report cards.
   // ============================================================================
-  function LoadDetailsView({ row, idx, onBack, onStoreMaterial = () => {}, stored = [], actualWeightOverride = null }) {
+  function LoadDetailsView({
+    row, idx,
+    onBack,
+    onStoreMaterial = () => {},
+    stored = [],
+    actualWeightOverride = null,
+    loadNumberOverride = null,
+    analysisSessions = [],
+    processedRecord = null,
+    onSetWeight = () => {},
+    onSetLoadNumber = () => {},
+    onAddAnalysisSession = () => {},
+    onMarkProcessed = () => {},
+    onNavigateToPicker = () => {},
+    onNavigateToHistory = () => {}
+  }) {
+    // R53: inline editor states for the missing fields.
+    const [editingWeight, setEditingWeight] = useState(false);
+    const [editingLoadNo, setEditingLoadNo] = useState(false);
+    const [weightDraft, setWeightDraft] = useState('');
+    const [loadNoDraft, setLoadNoDraft] = useState('');
+    // R53: Analyse-material splash modal.
+    const [analyseSplashOpen, setAnalyseSplashOpen] = useState(false);
+
     // Deterministic demo values seeded off the row index so each load page
     // looks subtly different but stable across reloads.
     const rng = (seed, max) => Math.abs(Math.sin(seed * 13.37)) % 1 * max;
@@ -3188,45 +3279,69 @@
     const actualWeightKg = actualWeightOverride != null
       ? actualWeightOverride
       : (actualWeightMissing ? null : scheduledWeightKg - 200 + Math.floor(rng(idx + 8, 6) * 100));
-    const loadNumberMissing = idx % 3 === 0;
-    const loadNumber = loadNumberMissing ? null : (7 + (idx % 12));
+    const loadNumberMissing = loadNumberOverride == null && idx % 3 === 0;
+    const loadNumber = loadNumberOverride != null
+      ? loadNumberOverride
+      : (loadNumberMissing ? null : (7 + (idx % 12)));
     const scheduledDelivery = '9 Jun 2026';
     const actualDelivery = '9 Jun 2026 08:41';
 
-    // Operational status derivations. Most rows have demo state; a couple of
-    // rows (idx 104 in particular) show the full "on picking list" state.
-    const isAnalysed = !!row.results || idx % 3 === 1;
-    const photosCount = isAnalysed ? (5 + (idx % 6)) : 0;
-    const lastAnalysisAt = isAnalysed ? '09 Jun 10:22' : null;
-    const targetUbc = 79 + Math.floor(rng(idx + 2, 9) * 10) / 10;
-    const acceptableAl = 11 + Math.floor(rng(idx + 3, 5) * 10) / 10;
-    const contamination = 6 + Math.floor(rng(idx + 4, 4) * 10) / 10;
-    // R49: if the FO has stored bales via the Store Material flow, prefer
-    // those entries over the demo's static bay list. Aggregate by zoneId|bayId.
+    // R53: Analysed iff there's at least one analysis history session.
+    // Either seeded (REPORTS array, hardcoded below) OR a session was just
+    // added via the Analyse Material splash. The seeded REPORTS list always
+    // has 3 entries for every load, so every load is "analysed" today; idx %
+    // 3 === 0 rows pretend they have no history yet so we can demo the
+    // not-analysed state cleanly.
+    const SEEDED_REPORTS = idx % 3 === 0 ? [] : [
+      { date: '8 Jun 2026', photos: 6,  who: 'Boris Yordanov',    ubc: 70.0, alum: 15.5, contam: 14.5 },
+      { date: '8 Jun 2026', photos: 1,  who: 'Kate Brooks',       ubc: 70.0, alum: 12.1, contam: 17.9 },
+      { date: '2 Jun 2026', photos: 13, who: 'Philippe Hohlfeld', ubc: 85.0, alum: 11.5, contam: 3.5  }
+    ];
+    const allSessions = [...analysisSessions, ...SEEDED_REPORTS];
+    const isAnalysed = allSessions.length > 0;
+    const photosCount = allSessions.reduce((a, s) => a + (s.photos || 0), 0);
+    const lastAnalysisAt = isAnalysed ? (allSessions[0].at || '09 Jun 10:22') : null;
+    // Latest session drives the headline AI chips.
+    const latest = isAnalysed ? allSessions[0] : null;
+    const targetUbc    = latest?.ubc    ?? (79 + Math.floor(rng(idx + 2, 9) * 10) / 10);
+    const acceptableAl = latest?.alum   ?? (11 + Math.floor(rng(idx + 3, 5) * 10) / 10);
+    const contamination = latest?.contam ?? (6 + Math.floor(rng(idx + 4, 4) * 10) / 10);
+    // R49/R53: if the FO has stored bales via the Store Material flow, prefer
+    // those entries over the demo's static bay list. Aggregate by zoneId|bayId
+    // (or "__buffer__" when the FO chose the buffer destination).
     const aggregatedStorage = (() => {
       if (stored.length === 0) return null;
       const map = new Map();
       stored.forEach(e => {
-        const k = `${e.zoneId}|${e.bayId}`;
+        const k = `${e.zoneId}|${e.bayId || ''}`;
         map.set(k, (map.get(k) || 0) + e.bales);
       });
       return Array.from(map.entries()).map(([k, bales]) => {
         const [zoneId, bayId] = k.split('|');
-        return { id: `Zone ${zoneId} · Bay ${bayId}`, bales };
+        if (zoneId === '__buffer__') return { label: 'Buffer', bales };
+        return { label: `Zone ${zoneId} · Bay ${bayId}`, bales };
       });
     })();
-    const demoStorageActive = !aggregatedStorage && isAnalysed && idx % 4 !== 0;
+    const demoStorageActive = !aggregatedStorage && idx % 4 !== 0 && idx % 3 !== 0;
     const isStored = !!aggregatedStorage || demoStorageActive;
     const storageBays = aggregatedStorage || (demoStorageActive ? [
-      { id: 'Bay 4', bales: 6  },
-      { id: 'Bay 5', bales: 14 },
-      { id: 'Bay 6', bales: 14 },
-      { id: 'Bay 7', bales: 10 }
+      { label: 'Zone A · Bay A1', bales: 6  },
+      { label: 'Zone A · Bay A2', bales: 14 },
+      { label: 'Zone B · Bay 3',  bales: 14 },
+      { label: 'Zone B · Bay 4',  bales: 10 }
     ] : []);
-    const onPickingList = (idx === 104) || (isStored && idx % 11 === 0);
+    // R53: a load can only be on a picking list AFTER it's been stored.
+    const onPickingList = isStored && (idx === 104 || idx % 11 === 0);
     const pickingList = onPickingList
       ? { id: 'PL-231', addedBy: 'Marco Rossi', shift: 'Morning Shift' }
       : null;
+    // R53: Processed - cannot be processed until stored. Demo a couple of rows
+    // as already processed (idx === 22) so the "Processed" stepper step + the
+    // production-window link can be seen.
+    const isProcessed = !!processedRecord || (isStored && idx === 22);
+    const processedWindow = processedRecord || (isStored && idx === 22
+      ? { windowId: 'PW-2026-06-08-AM', when: '08 Jun 14:22', material: row.material }
+      : null);
 
     // R48: AI result chip - rose when off-spec, green when in-spec.
     const ResultChip = ({ label, value, ok }) => (
@@ -3250,24 +3365,17 @@
     );
     const fmtKg = (n) => n == null ? '' : n.toLocaleString() + 'kg';
 
-    // R48: material-flow stepper at the top of the Operational Status card.
-    // Each stage is either complete (green check), current (purple ring) or
-    // pending (grey). The arrow between stages dims when the stage hasn't
-    // been reached.
+    // R53: stepper starts at Analysed (no Arrived); final step is Processed,
+    // not Production. Analysed and Stored can each be done first (no ordering).
     const stages = [
-      { label: 'Arrived',      done: true },
       { label: 'Analysed',     done: isAnalysed },
       { label: 'Stored',       done: isStored },
       { label: 'Picking List', done: onPickingList },
-      { label: 'Production',   done: false }
+      { label: 'Processed',    done: isProcessed }
     ];
 
-    // Three demo reports - first two share a date, last is two weeks earlier.
-    const REPORTS = [
-      { date: '8 Jun 2026', photos: 6,  who: 'Boris Yordanov',    ubc: 70.0, alum: 15.5, contam: 14.5 },
-      { date: '8 Jun 2026', photos: 1,  who: 'Kate Brooks',       ubc: 70.0, alum: 12.1, contam: 17.9 },
-      { date: '2 Jun 2026', photos: 13, who: 'Philippe Hohlfeld', ubc: 85.0, alum: 11.5, contam: 3.5  }
-    ];
+    // R53: combined sessions list for the Analysis History card.
+    const REPORTS = allSessions;
 
     return (
       <div className="px-8 py-6 space-y-4">
@@ -3293,11 +3401,96 @@
             <Field label="Material">{row.material}</Field>
             <Field label="Supplier">{row.supplier}</Field>
             <Field label="Scheduled Weight">{fmtKg(scheduledWeightKg)}</Field>
+            {/* R53: Actual Weight - inline editor when missing. */}
             <Field label="Actual Weight">
-              {actualWeightMissing ? <MissingValue /> : fmtKg(actualWeightKg)}
+              {actualWeightMissing ? (
+                editingWeight ? (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      autoFocus
+                      value={weightDraft}
+                      placeholder="0"
+                      onChange={e => setWeightDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          const n = parseFloat(weightDraft);
+                          if (Number.isFinite(n) && n > 0) { onSetWeight(Math.round(n)); setEditingWeight(false); setWeightDraft(''); }
+                        }
+                        if (e.key === 'Escape') { setEditingWeight(false); setWeightDraft(''); }
+                      }}
+                      className="w-28 px-2 py-1 border border-safi-600 rounded text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-200"
+                    />
+                    <span className="text-[13px] text-neutral-60">kg</span>
+                    <button
+                      onClick={() => {
+                        const n = parseFloat(weightDraft);
+                        if (Number.isFinite(n) && n > 0) { onSetWeight(Math.round(n)); setEditingWeight(false); setWeightDraft(''); }
+                      }}
+                      className="px-2 py-1 rounded bg-safi-600 text-white text-[13px] hover:bg-safi-700"
+                    >Save</button>
+                    <button
+                      onClick={() => { setEditingWeight(false); setWeightDraft(''); }}
+                      className="p-1 rounded hover:bg-neutral-5 text-neutral-60"
+                      aria-label="Cancel"
+                    ><Icon d={I.close} className="w-4 h-4" /></button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setEditingWeight(true); setWeightDraft(''); }}
+                    className="inline-flex items-center gap-1.5 text-amber-700 hover:underline"
+                  >
+                    <Icon d={I.warning} className="w-4 h-4" />
+                    Missing
+                    <span className="text-[13px] text-neutral-60">- click to add</span>
+                  </button>
+                )
+              ) : fmtKg(actualWeightKg)}
             </Field>
+            {/* R53: Load Number - inline editor when missing. */}
             <Field label="Load Number">
-              {loadNumberMissing ? <MissingValue /> : loadNumber}
+              {loadNumberMissing ? (
+                editingLoadNo ? (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={loadNoDraft}
+                      placeholder="e.g. 12"
+                      onChange={e => setLoadNoDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          const v = loadNoDraft.trim();
+                          if (v.length > 0) { onSetLoadNumber(v); setEditingLoadNo(false); setLoadNoDraft(''); }
+                        }
+                        if (e.key === 'Escape') { setEditingLoadNo(false); setLoadNoDraft(''); }
+                      }}
+                      className="w-24 px-2 py-1 border border-safi-600 rounded text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-200"
+                    />
+                    <button
+                      onClick={() => {
+                        const v = loadNoDraft.trim();
+                        if (v.length > 0) { onSetLoadNumber(v); setEditingLoadNo(false); setLoadNoDraft(''); }
+                      }}
+                      className="px-2 py-1 rounded bg-safi-600 text-white text-[13px] hover:bg-safi-700"
+                    >Save</button>
+                    <button
+                      onClick={() => { setEditingLoadNo(false); setLoadNoDraft(''); }}
+                      className="p-1 rounded hover:bg-neutral-5 text-neutral-60"
+                      aria-label="Cancel"
+                    ><Icon d={I.close} className="w-4 h-4" /></button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setEditingLoadNo(true); setLoadNoDraft(''); }}
+                    className="inline-flex items-center gap-1.5 text-amber-700 hover:underline"
+                  >
+                    <Icon d={I.warning} className="w-4 h-4" />
+                    Missing
+                    <span className="text-[13px] text-neutral-60">- click to add</span>
+                  </button>
+                )
+              ) : loadNumber}
             </Field>
             <Field label="Scheduled Delivery">{scheduledDelivery}</Field>
             <Field label="Actual Delivery">{actualDelivery}</Field>
@@ -3340,7 +3533,7 @@
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* Analysis */}
             <div>
-              <div className="text-[13px] text-neutral-60 mb-2 font-medium uppercase tracking-wide">Analysis</div>
+              <div className="text-[13px] text-neutral-60 mb-1">Analysis</div>
               {isAnalysed ? (
                 <>
                   <div className="inline-flex items-center gap-1.5 text-success-300 font-medium text-[15px]">
@@ -3360,26 +3553,45 @@
               )}
             </div>
 
-            {/* Storage */}
+            {/* Storage - R53: format "Zone X · Bay Y (N bales)". */}
             <div>
-              <div className="text-[13px] text-neutral-60 mb-2 font-medium uppercase tracking-wide">Storage</div>
+              <div className="text-[13px] text-neutral-60 mb-1">Storage</div>
               {isStored ? (
                 <div className="space-y-1">
-                  {storageBays.map(b => (
-                    <div key={b.id} className="text-[15px] text-neutral-100">
-                      {b.id} <span className="text-neutral-60">({b.bales})</span>
+                  {storageBays.map((b, i) => (
+                    <div key={i} className="text-[15px] text-neutral-100">
+                      {b.label} <span className="text-neutral-60">({b.bales} {b.bales === 1 ? 'bale' : 'bales'})</span>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-[13px] text-neutral-60">Not stored yet</div>
+                <div className="text-[15px] text-neutral-100">Not stored yet</div>
               )}
             </div>
 
-            {/* Production */}
+            {/* Production - R53: rename inner concept to Processed; show picking
+                list / production window navigation when applicable. */}
             <div>
-              <div className="text-[13px] text-neutral-60 mb-2 font-medium uppercase tracking-wide">Production</div>
-              {onPickingList ? (
+              <div className="text-[13px] text-neutral-60 mb-1">Production</div>
+              {isProcessed ? (
+                <>
+                  <div className="inline-flex items-center gap-1.5 text-success-300 font-medium text-[15px]">
+                    <Icon d={I.checkCircle} className="w-4 h-4" />
+                    Processed
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-1.5 text-[13px]">
+                    <div><span className="text-neutral-60">Window:</span> <span className="text-neutral-100 font-medium">{processedWindow.windowId}</span></div>
+                    <div><span className="text-neutral-60">Completed:</span> <span className="text-neutral-100">{processedWindow.when}</span></div>
+                  </div>
+                  <button
+                    onClick={() => onNavigateToHistory(processedWindow.windowId)}
+                    className="mt-3 inline-flex items-center gap-1 px-2.5 py-1 rounded text-[13px] font-medium text-safi-600 hover:bg-safi-50"
+                  >
+                    View production window
+                    <Icon d={I.chevronR} className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              ) : onPickingList ? (
                 <>
                   <div className="inline-flex items-center gap-1.5 text-success-300 font-medium text-[15px]">
                     <Icon d={I.checkCircle} className="w-4 h-4" />
@@ -3390,6 +3602,13 @@
                     <div><span className="text-neutral-60">Added by:</span> <span className="text-neutral-100">{pickingList.addedBy}</span></div>
                     <div><span className="text-neutral-60">Shift:</span> <span className="text-neutral-100">{pickingList.shift}</span></div>
                   </div>
+                  <button
+                    onClick={() => onNavigateToPicker({ loadId: row.orderRef, list: pickingList.id })}
+                    className="mt-3 inline-flex items-center gap-1 px-2.5 py-1 rounded text-[13px] font-medium text-safi-600 hover:bg-safi-50"
+                  >
+                    View on picking list
+                    <Icon d={I.chevronR} className="w-3.5 h-3.5" />
+                  </button>
                 </>
               ) : (
                 <div className="text-[15px] text-neutral-100">Not on picking list</div>
@@ -3406,12 +3625,55 @@
               <Icon d={I.box} className="w-4 h-4" />
               Store Material
             </button>
-            <button className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700">
+            <button
+              onClick={() => setAnalyseSplashOpen(true)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700"
+            >
               <Icon d={I.chart} className="w-4 h-4" />
               Analyse Material
             </button>
           </div>
         </div>
+
+        {/* R53: Analyse Material splash modal. Simulates a tablet/camera flow
+            where photos were captured offline and the FO confirms completion.
+            Confirming appends a synthetic analysis session, which flips the
+            load's analysed state on. */}
+        {analyseSplashOpen && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setAnalyseSplashOpen(false)}>
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 text-center" onClick={e => e.stopPropagation()}>
+              <div className="mx-auto w-14 h-14 rounded-full bg-safi-50 text-safi-600 flex items-center justify-center mb-4">
+                <Icon d={I.chart} className="w-7 h-7" />
+              </div>
+              <h3 className="font-bold text-lg text-neutral-100">Analyse material</h3>
+              <p className="text-[13px] text-neutral-60 mt-2">
+                Photos have been taken in the camera. The FO completes the session.
+              </p>
+              <div className="mt-6 flex items-center justify-center gap-2">
+                <button
+                  onClick={() => setAnalyseSplashOpen(false)}
+                  className="px-4 py-2 rounded-lg border border-neutral-10 text-neutral-100 bg-white text-[13px] font-medium hover:bg-neutral-5"
+                >Cancel</button>
+                <button
+                  onClick={() => {
+                    const synth = {
+                      date: '9 Jun 2026',
+                      at: '09 Jun 11:04',
+                      photos: 6,
+                      who: 'You',
+                      ubc:    70 + Math.floor(rng(idx + 11, 25) * 10) / 10,
+                      alum:   12 + Math.floor(rng(idx + 12, 6) * 10) / 10,
+                      contam: 4 + Math.floor(rng(idx + 13, 6) * 10) / 10
+                    };
+                    onAddAnalysisSession(synth);
+                    setAnalyseSplashOpen(false);
+                  }}
+                  className="px-5 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-semibold hover:bg-safi-700"
+                >Complete</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ---- 3) ANALYSIS HISTORY ---- */}
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
@@ -3470,6 +3732,16 @@
     const [storeMode, setStoreMode] = useState(false);
     const [loadStorage, setLoadStorage] = useState({});
     const [loadActualWeights, setLoadActualWeights] = useState({});
+    // R53: extra per-load state
+    //   loadNumbers     - inline-edited load number (overrides demo "Missing")
+    //   loadAnalysisSessions - additional analysis sessions appended by the
+    //                          "Analyse Material" flow; an entry being present
+    //                          marks the load as Analysed.
+    //   loadProcessed   - { windowId, completedAt } when the load has been
+    //                     processed. Drives the new "Processed" stepper step.
+    const [loadNumbers, setLoadNumbers] = useState({});
+    const [loadAnalysisSessions, setLoadAnalysisSessions] = useState({});
+    const [loadProcessed, setLoadProcessed] = useState({});
     // Lightweight toast for the Store Material flow ("3 bales added...").
     const [storeToast, setStoreToast] = useState(null);
     useEffect(() => {
@@ -3514,8 +3786,20 @@
           idx={selectedRowIdx}
           stored={loadStorage[selectedRowIdx] || []}
           actualWeightOverride={loadActualWeights[selectedRowIdx]}
+          loadNumberOverride={loadNumbers[selectedRowIdx]}
+          analysisSessions={loadAnalysisSessions[selectedRowIdx] || []}
+          processedRecord={loadProcessed[selectedRowIdx]}
           onBack={() => setSelectedRowIdx(null)}
           onStoreMaterial={() => setStoreMode(true)}
+          onSetWeight={(w) => setLoadActualWeights(prev => ({ ...prev, [selectedRowIdx]: w }))}
+          onSetLoadNumber={(v) => setLoadNumbers(prev => ({ ...prev, [selectedRowIdx]: v }))}
+          onAddAnalysisSession={(s) => setLoadAnalysisSessions(prev => ({
+            ...prev,
+            [selectedRowIdx]: [s, ...(prev[selectedRowIdx] || [])]
+          }))}
+          onMarkProcessed={(rec) => setLoadProcessed(prev => ({ ...prev, [selectedRowIdx]: rec }))}
+          onNavigateToPicker={() => {/* prototype stub - cross-app nav not wired */}}
+          onNavigateToHistory={() => {/* prototype stub */}}
         />
       );
     }
@@ -3619,9 +3903,9 @@
             <table className="w-full text-[13px]">
               <thead className="bg-white border-b border-neutral-10">
                 <tr className="text-left">
-                  <th className="px-4 py-3 font-medium text-neutral-60">Order ref</th>
+                  {/* R53: Order ref + Load no merged into one "Order details" column. */}
+                  <th className="px-4 py-3 font-medium text-neutral-60">Order details</th>
                   <th className="px-4 py-3 font-medium text-neutral-60">Supplier</th>
-                  <th className="px-4 py-3 font-medium text-neutral-60">Load no</th>
                   <th className="px-4 py-3 font-medium text-neutral-60">
                     <span className="inline-flex items-center gap-1">
                       Scheduled delivery
@@ -3630,34 +3914,41 @@
                   </th>
                   <th className="px-4 py-3 font-medium text-neutral-60">Material</th>
                   <th className="px-4 py-3 font-medium text-neutral-60">Average AI results</th>
-                  <th className="px-4 py-3 font-medium text-neutral-60">Claim status</th>
+                  {/* R53: column promoted to "Status / Action" - holds Create claim for
+                      analysed rows, or [Analyse] + [Store] CTAs for unanalysed ones. */}
+                  <th className="px-4 py-3 font-medium text-neutral-60">Status / Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-10">
                 {visibleRows.map((r, i) => {
-                  const analysed = !!r.results;
                   const rowIdx = startIdx + i;
+                  // R53: analysed = the load has any analysis history (seeded
+                  // results OR the FO completed an Analyse session).
+                  const analysed = !!r.results || (loadAnalysisSessions[rowIdx] && loadAnalysisSessions[rowIdx].length > 0);
                   return (
                     <tr
                       key={rowIdx}
                       onClick={() => setSelectedRowIdx(rowIdx)}
                       className="hover:bg-neutral-5/50 cursor-pointer"
                     >
-                      <td className="px-4 py-3 font-semibold text-neutral-100">{r.orderRef}</td>
+                      {/* Order details = order ref above, load number below in muted text. */}
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-neutral-100">{r.orderRef}</div>
+                        <div className="text-[13px] text-neutral-60 mt-0.5">{r.loadNo}</div>
+                      </td>
                       <td className="px-4 py-3 text-neutral-100">{r.supplier}</td>
-                      <td className="px-4 py-3 text-neutral-60">{r.loadNo}</td>
                       <td className="px-4 py-3 text-neutral-100">{fmtDate(r.scheduledDay)}</td>
                       <td className="px-4 py-3 text-neutral-100">{r.material}</td>
                       <td className="px-4 py-3">
                         {analysed ? (
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-medium ' + (r.results.primary.ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
-                              <Icon d={r.results.primary.ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
-                              {r.results.primary.label} {r.results.primary.value}%
+                            <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-medium ' + (r.results?.primary?.ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
+                              <Icon d={r.results?.primary?.ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
+                              {(r.results?.primary?.label) || 'Target UBC'} {((r.results?.primary?.value) ?? 70.0).toFixed(1)}%
                             </span>
-                            <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-medium ' + (r.results.secondary.ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
-                              <Icon d={r.results.secondary.ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
-                              {r.results.secondary.label} {r.results.secondary.value}%
+                            <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-medium ' + (r.results?.secondary?.ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
+                              <Icon d={r.results?.secondary?.ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
+                              {(r.results?.secondary?.label) || 'Non PET'} {((r.results?.secondary?.value) ?? 12.0).toFixed(1)}%
                             </span>
                           </div>
                         ) : (
@@ -3665,19 +3956,34 @@
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <button
-                          disabled={!analysed}
-                          onClick={(e) => e.stopPropagation()}
-                          className={
-                            'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[13px] font-medium ' +
-                            (analysed
-                              ? 'border-neutral-10 text-neutral-100 bg-white hover:bg-neutral-5'
-                              : 'border-neutral-10 text-neutral-40 bg-white cursor-not-allowed')
-                          }
-                        >
-                          <Icon d={I.claim} className="w-3.5 h-3.5" />
-                          Create claim
-                        </button>
+                        {analysed ? (
+                          <button
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
+                          >
+                            <Icon d={I.claim} className="w-3.5 h-3.5" />
+                            Create claim
+                          </button>
+                        ) : (
+                          // R53: unanalysed rows get two CTAs - primary Analyse,
+                          // secondary Store (opens the Store Material workflow).
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setSelectedRowIdx(rowIdx); /* Land on hub; analyse modal opened from there */ }}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700"
+                            >
+                              Analyse
+                              <Icon d={I.chevronR} className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setSelectedRowIdx(rowIdx); setStoreMode(true); }}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
+                            >
+                              Store
+                              <Icon d={I.chevronR} className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
