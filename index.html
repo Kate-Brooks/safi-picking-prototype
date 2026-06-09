@@ -2635,6 +2635,11 @@
     kebab:    ['M12 6h.01', 'M12 12h.01', 'M12 18h.01'],
     // R45: undo-style arrow used for "Return to original location" menu item.
     undo:     ['M3 12a9 9 0 109-9', 'M3 5v7h7'],
+    // R47: action icons for the load details header.
+    download: ['M12 3v12', 'M7 10l5 5 5-5', 'M5 21h14'],
+    share:    ['M18 8a3 3 0 100-6 3 3 0 000 6z', 'M6 15a3 3 0 100-6 3 3 0 000 6z', 'M18 22a3 3 0 100-6 3 3 0 000 6z', 'M8.6 13.5l6.8 4', 'M15.4 6.5l-6.8 4'],
+    photo:    ['M3 5h18v14H3z', 'M3 17l5-5 4 4 3-3 6 6'],
+    warning:  ['M10.3 3.9L2.5 17a2 2 0 001.7 3h15.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z', 'M12 9v4', 'M12 17h.01'],
     info:     ['M12 8h.01', 'M11 12h1v4h1', 'M12 22a10 10 0 100-20 10 10 0 000 20z'],
     help:     ['M12 22a10 10 0 100-20 10 10 0 000 20z', 'M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3', 'M12 17h.01'],
     ground:   ['M12 22s8-7 8-13a8 8 0 10-16 0c0 6 8 13 8 13z', 'M12 11a3 3 0 100-6 3 3 0 000 6z'],
@@ -2826,6 +2831,188 @@
     return out;
   })();
 
+  // ============================================================================
+  // R47: PAGE: LOAD DETAILS (drilled in from the Quality Control table)
+  //
+  // Recreates the Safi UI Kit load-details screen. Most content is static demo
+  // data; the header pulls supplier / orderRef from the clicked row so the
+  // page reads consistently with the table.
+  // ============================================================================
+  function LoadDetailsView({ row, idx, onBack }) {
+    // R47: deterministic placeholder values keyed off the row index so each
+    // load detail page looks subtly different but stable across reloads.
+    const rng = (seed, max) => Math.abs(Math.sin(seed * 13.37)) % 1 * max;
+    const supplierShort = row.supplier.replace(/\s+/g, '');
+    const evRef = `EV${6262300 + idx}`;
+    const loadNo = 7 + (idx % 12);
+    const containerNo = `${1278600 + idx}U`;
+    const totalWeight = 100 + Math.floor(rng(idx + 1, 80));
+    const balesAnalysed = 20;
+    const targetUbc = 79 + Math.floor(rng(idx + 2, 9) * 10) / 10;
+    const acceptableAl = 11 + Math.floor(rng(idx + 3, 5) * 10) / 10;
+    const contamination = 6 + Math.floor(rng(idx + 4, 4) * 10) / 10;
+
+    // R47: AI result chip - off-spec chips render in rose; on-spec in success-green.
+    // Order = three pills like the screenshot: Target / Acceptable / Contamination.
+    const ResultChip = ({ label, value, ok }) => (
+      <span className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[13px] font-medium ' +
+        (ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
+        <Icon d={ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
+        {label} {value.toFixed(1)}%
+      </span>
+    );
+    const Field = ({ label, children }) => (
+      <div>
+        <div className="text-[13px] text-neutral-60 mb-1">{label}</div>
+        <div className="text-[15px] text-neutral-100">{children}</div>
+      </div>
+    );
+
+    // Three demo reports - first two share a date, last is two weeks earlier.
+    const REPORTS = [
+      { date: '8 Jun 2026', photos: 6, who: 'Boris Yordanov',  ubc: 70.0, alum: 15.5, contam: 14.5 },
+      { date: '8 Jun 2026', photos: 1, who: 'Kate Brooks',     ubc: 70.0, alum: 12.1, contam: 17.9 },
+      { date: '2 Jun 2026', photos: 13, who: 'Philippe Hohlfeld', ubc: 85.0, alum: 11.5, contam: 3.5  }
+    ];
+
+    return (
+      <div className="px-8 py-6">
+        {/* Breadcrumb + Create claim */}
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[15px] flex-wrap">
+            <button onClick={onBack} className="text-neutral-60 hover:text-safi-600">
+              Quality control
+            </button>
+            <Icon d={I.chevronR} className="w-4 h-4 text-neutral-40" />
+            <span className="text-neutral-100 font-medium">{supplierShort} #{evRef}</span>
+          </nav>
+          <button className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
+            <Icon d={I.claim} className="w-4 h-4" />
+            Create claim
+          </button>
+        </div>
+
+        {/* Load header card */}
+        <div className="bg-white border border-neutral-10 rounded-xl p-6 mb-4">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <h2 className="text-xl font-bold text-neutral-100">{supplierShort} #{evRef}</h2>
+            <div className="flex items-start gap-2">
+              <div className="relative">
+                <button className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Download">
+                  <Icon d={I.download} className="w-5 h-5" />
+                </button>
+                <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-full bg-safi-600 text-white text-[10px] font-semibold">New</span>
+              </div>
+              <button className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Share">
+                <Icon d={I.share} className="w-5 h-5" />
+              </button>
+              <button className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Edit">
+                <Icon d={I.edit} className="w-5 h-5" />
+              </button>
+              <button className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Delete">
+                <Icon d={I.trash} className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Average AI results */}
+          <div className="mb-5">
+            <div className="text-[13px] text-neutral-60 mb-2">Average AI results</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <ResultChip label="Target UBC"           value={targetUbc}   ok={targetUbc >= 90} />
+              <ResultChip label="Acceptable Aluminium" value={acceptableAl} ok={acceptableAl <= 5} />
+              <ResultChip label="Contamination"        value={contamination} ok={contamination <= 2} />
+            </div>
+          </div>
+
+          {/* Field grid - 6 columns on wide screens */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-5">
+            <Field label="Load no">{loadNo}</Field>
+            <Field label="Container/vehicle no">{containerNo}</Field>
+            <Field label="Scheduled delivery">30 Jun 2026</Field>
+            <Field label="Material">Aluminium UBC Spec</Field>
+            <Field label="Total weight">{totalWeight}kg</Field>
+            <Field label="Bales analysed">{balesAnalysed}</Field>
+          </div>
+
+          <div className="mt-5">
+            <Field label="Description">testing ubc</Field>
+          </div>
+        </div>
+
+        {/* Storage and Processing Details */}
+        <div className="bg-white border border-neutral-10 rounded-xl p-6 mb-6">
+          <h3 className="text-base font-bold text-neutral-100 mb-5">Storage and Processing Details</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-5">
+            <Field label="Storage location">
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-medium text-neutral-80">
+                Buffer (2)
+              </span>
+            </Field>
+            <Field label="Total weight received">{totalWeight}kg</Field>
+            <Field label="Weight processed">{totalWeight + 57}kg</Field>
+            <Field label="Weight loss">
+              <span className="inline-flex items-center gap-1.5 text-rose-700">
+                <Icon d={I.warning} className="w-4 h-4" />
+                -57kg
+              </span>
+            </Field>
+            <Field label="Total bales received">3</Field>
+            <Field label="Bales processed">3</Field>
+          </div>
+          <div className="mt-5 flex justify-end">
+            <button className="inline-flex items-center px-4 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
+              Store more bales
+            </button>
+          </div>
+        </div>
+
+        {/* Tabs row + Start analysing button */}
+        <div className="border-b border-neutral-10 flex items-center text-[15px] mb-4">
+          <button className="flex-1 px-6 py-3 border-b-2 border-safi-600 text-safi-700 font-medium">
+            Material Analysis
+          </button>
+          <button className="flex-1 px-6 py-3 border-b-2 border-transparent text-neutral-60 hover:text-neutral-100">
+            Other photos
+          </button>
+        </div>
+        <div className="flex justify-end mb-4">
+          <button className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
+            <Icon d={I.chart} className="w-4 h-4" />
+            Start analysing
+          </button>
+        </div>
+
+        {/* Reports */}
+        <div className="space-y-4">
+          {REPORTS.map((r, i) => (
+            <div key={i} className="bg-white border border-neutral-10 rounded-xl p-5">
+              <h4 className="text-base font-bold text-neutral-100 mb-2">Report - {r.date}</h4>
+              <div className="text-[13px] text-neutral-60 mb-2">Average AI results</div>
+              <div className="flex items-center gap-2 flex-wrap mb-4">
+                <ResultChip label="Target UBC"           value={r.ubc}    ok={r.ubc >= 90} />
+                <ResultChip label="Acceptable Aluminium" value={r.alum}   ok={r.alum <= 5} />
+                <ResultChip label="Contamination"        value={r.contam} ok={r.contam <= 2} />
+              </div>
+              <div className="flex items-center gap-5 text-[13px] text-neutral-60">
+                <span className="inline-flex items-center gap-1.5">
+                  <Icon d={I.chart} className="w-4 h-4" />
+                  AI Bale
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Icon d={I.photo} className="w-4 h-4" />
+                  {r.photos} photos
+                </span>
+                <span>{r.date}</span>
+                <span className="text-neutral-100">{r.who}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   function QualityControlPage() {
     const ROWS_PER_PAGE = 15;
     const totalRows = QC_ROWS.length;
@@ -2833,6 +3020,18 @@
     // Default to page 7 so the screen lands on the same 91-105 slice as the
     // reference screenshot (the two analysed rows at the bottom).
     const [page, setPage] = useState(7);
+    // R47: clicking a row drills into the load details view. selectedRowIdx is
+    // the index into QC_ROWS; null means we're on the table view.
+    const [selectedRowIdx, setSelectedRowIdx] = useState(null);
+    if (selectedRowIdx !== null) {
+      return (
+        <LoadDetailsView
+          row={QC_ROWS[selectedRowIdx]}
+          idx={selectedRowIdx}
+          onBack={() => setSelectedRowIdx(null)}
+        />
+      );
+    }
     const startIdx = (page - 1) * ROWS_PER_PAGE;
     const endIdx = Math.min(startIdx + ROWS_PER_PAGE, totalRows);
     const visibleRows = QC_ROWS.slice(startIdx, endIdx);
@@ -2950,8 +3149,13 @@
               <tbody className="divide-y divide-neutral-10">
                 {visibleRows.map((r, i) => {
                   const analysed = !!r.results;
+                  const rowIdx = startIdx + i;
                   return (
-                    <tr key={startIdx + i} className="hover:bg-neutral-5/50">
+                    <tr
+                      key={rowIdx}
+                      onClick={() => setSelectedRowIdx(rowIdx)}
+                      className="hover:bg-neutral-5/50 cursor-pointer"
+                    >
                       <td className="px-4 py-3 font-semibold text-neutral-100">{r.orderRef}</td>
                       <td className="px-4 py-3 text-neutral-100">{r.supplier}</td>
                       <td className="px-4 py-3 text-neutral-60">{r.loadNo}</td>
@@ -2976,6 +3180,7 @@
                       <td className="px-4 py-3">
                         <button
                           disabled={!analysed}
+                          onClick={(e) => e.stopPropagation()}
                           className={
                             'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[13px] font-medium ' +
                             (analysed
