@@ -1857,7 +1857,10 @@
             // North Bay, 5 from Riverside".
             <div className="divide-y divide-neutral-10">
               {resolved.map(({ item, load, sourceZone, sourceBay }) => {
-                const sourceLabel = `${sourceZone ? zoneName(sourceZone, lang) : `Zone ${item.sourceZoneId}`} · ${sourceBay ? bayName(sourceBay, lang) : `Bay ${item.sourceBayId}`}`;
+                // R54: items coming from QC carry __qc__ markers — render as "Quality control" instead of "Zone __qc__ · Bay __qc__".
+                const sourceLabel = item.sourceZoneId === '__qc__'
+                  ? (lang === 'es' ? 'Control de calidad' : 'Quality control')
+                  : `${sourceZone ? zoneName(sourceZone, lang) : `Zone ${item.sourceZoneId}`} · ${sourceBay ? bayName(sourceBay, lang) : `Bay ${item.sourceBayId}`}`;
                 const buffWeight = Math.round(item.bales * item.weightPerBale);
                 const expanded = expandedBufferLoads.has(item.uid);
                 return (
@@ -2871,7 +2874,11 @@
   // ============================================================================
   function StoreMaterialView({
     row, idx, yard, yardOps,
+    setBuffer = () => {},
+    stored = [],
     actualWeightOverride,
+    totalBalesOverride,
+    processedBales = 0,
     onAddStorage, onSetWeight, onToast,
     onDone, onCancel
   }) {
@@ -2899,6 +2906,13 @@
     const canAdd = bales > 0 && (isBufferDest || (selectedZone && selectedBay));
     const sessionTotal = sessionLog.reduce((a, e) => a + e.bales, 0);
 
+    // R54: per-bale weight derived from actual load weight when known, so the
+    // synthesised yard loads carry believable weights and "Total weight" sums
+    // up correctly in the production warehouse view.
+    const perBaleKg = (actualWeightOverride != null && totalBalesOverride != null && totalBalesOverride > 0)
+      ? Math.round(actualWeightOverride / totalBalesOverride)
+      : 250 + (idx % 30);
+
     const handleAdd = () => {
       if (!canAdd) return;
       // 1) Build the storage entry. Buffer entries use a special zoneId so
@@ -2908,11 +2922,24 @@
         : { zoneId: selectedZone.id, bayId: selectedBay.id, bales };
       setSessionLog(prev => [...prev, entry]);
       onAddStorage?.(entry);
-      // 2) Append a synthesised load to the yard (zone path only; buffer adds
-      //    happen separately via setBuffer if needed - skipped here so we
-      //    don't double-account against the existing seed buffer).
+      // 2a) Buffer destination → push to the page-level buffer so the bales
+      //     show up in the warehouse/picker views in Production Management.
+      if (isBufferDest && typeof setBuffer === 'function') {
+        const uid = `qc-${idx}-buffer-${Date.now()}`;
+        setBuffer(prev => [...prev, {
+          uid,
+          loadId: row.orderRef,
+          supplier: row.supplier,
+          lot: row.orderRef,
+          bales,
+          loadBales: totalBalesOverride || bales,
+          weightPerBale: perBaleKg,
+          sourceZoneId: '__qc__',
+          sourceBayId: '__qc__'
+        }]);
+      }
+      // 2b) Zone+bay destination → append a synthesised load to the yard.
       if (!isBufferDest && typeof yardOps?.addLoad === 'function') {
-        const perBaleKg = 250 + (idx % 30);
         const synthLoad = {
           id: `qc-${idx}-${selectedZone.id}-${selectedBay.id}-${Date.now()}`,
           supplier: row.supplier,
@@ -3027,6 +3054,89 @@
           </div>
         )}
 
+        {/* R54: Amazon-style storage breakdown — stat cards + stacked bar +
+            locations pills. Replaces the previous accordion + headline. */}
+        {(() => {
+          const storedSoFar = stored.reduce((a, e) => a + e.bales, 0);
+          const proc = processedBales || 0;
+          const handled = storedSoFar + proc;
+          const known = totalBalesOverride != null;
+          const left = known ? Math.max(0, totalBalesOverride - handled) : null;
+          const target = known ? totalBalesOverride : Math.max(1, handled);
+          const sw = Math.min(100, Math.round(storedSoFar / target * 100));
+          const pw = Math.min(100, Math.round(proc / target * 100));
+          const lw = known ? Math.min(100, Math.round(left / target * 100)) : 0;
+          // Aggregate locations.
+          const locMap = new Map();
+          stored.forEach(e => {
+            const k = e.zoneId === '__buffer__' ? 'Buffer' : `Zone ${e.zoneId} · Bay ${e.bayId}`;
+            locMap.set(k, (locMap.get(k) || 0) + e.bales);
+          });
+          const locs = Array.from(locMap.entries()).map(([label, bales]) => ({ label, bales, isBuf: label === 'Buffer' }));
+          return (
+            <div className="mb-5">
+              <div className="flex items-baseline justify-between mb-2">
+                <div className="text-[13px] text-neutral-60">
+                  Storage breakdown{known ? ` · of ${target} total bales` : ''}
+                </div>
+                {known && handled >= target && (
+                  <span className="inline-flex items-center gap-1 text-[13px] font-medium text-success-300">
+                    <Icon d={I.checkCircle} className="w-3.5 h-3.5" />all bales handled
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-neutral-5 rounded-lg p-3">
+                  <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-safi-600"></span>
+                    Stored in warehouse
+                  </div>
+                  <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{storedSoFar}</div>
+                  <div className="text-[13px] text-neutral-60">bales</div>
+                </div>
+                <div className="bg-neutral-5 rounded-lg p-3">
+                  <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-amber-500"></span>
+                    Left to store
+                  </div>
+                  <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{known ? left : '—'}</div>
+                  <div className="text-[13px] text-neutral-60">{known ? 'bales' : 'set Total bales'}</div>
+                </div>
+                <div className="bg-neutral-5 rounded-lg p-3">
+                  <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-success-300"></span>
+                    Processed
+                  </div>
+                  <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{proc}</div>
+                  <div className="text-[13px] text-neutral-60">bales</div>
+                </div>
+              </div>
+              {known && (
+                <div className="flex h-2 mt-3 rounded-full overflow-hidden bg-neutral-5">
+                  <div className="h-full bg-safi-600 transition-all" style={{ width: sw + '%' }} />
+                  <div className="h-full bg-success-300 transition-all" style={{ width: pw + '%', opacity: 0.85 }} />
+                  <div className="h-full bg-amber-500 transition-all" style={{ width: lw + '%', opacity: 0.55 }} />
+                </div>
+              )}
+              {locs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {locs.map((l, i) => (
+                    <span
+                      key={i}
+                      className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[13px] ' +
+                        (l.isBuf
+                          ? 'bg-safi-50 text-safi-700'
+                          : 'bg-neutral-5 text-neutral-100')}
+                    >
+                      {l.label} <strong className="font-semibold">{l.bales}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Two-section layout: Quantity (left) + Location (right). Stack on narrow widths. */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
           {/* QUANTITY */}
@@ -3065,11 +3175,38 @@
                 className="w-16 h-16 rounded-xl border-2 border-neutral-10 bg-white text-3xl font-bold text-neutral-100 hover:bg-neutral-5"
               >+</button>
             </div>
-            {/* Quick-select chips (R53: renamed from "Quick set"). */}
+            {/* Quick-select chips (R53: renamed from "Quick set").
+                R54: amber "All N" chip appears when total bales is known and
+                there's still some left to store - stores the entire remaining
+                load in one tap. */}
             <div className="mt-4">
               <div className="text-[13px] text-neutral-60 mb-2">Quick select</div>
               <div className="flex items-center gap-2 flex-wrap">
                 {[3, 6, 9, 12].map(n => <QuickChip key={n} n={n} />)}
+                {(() => {
+                  const storedSoFar = stored.reduce((a, e) => a + e.bales, 0);
+                  const left = (totalBalesOverride != null)
+                    ? Math.max(0, totalBalesOverride - storedSoFar - processedBales)
+                    : 0;
+                  if (left <= 0) return null;
+                  const isOn = bales === left;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setBales(left)}
+                      aria-pressed={isOn}
+                      title="Store the remaining load in one go"
+                      className={
+                        'h-14 min-w-[64px] px-4 rounded-xl border-2 text-lg font-bold transition ' +
+                        (isOn
+                          ? 'border-amber-600 bg-amber-100 text-amber-900'
+                          : 'border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100')
+                      }
+                    >
+                      All {left}
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -3145,31 +3282,44 @@
                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-[280px] overflow-y-auto pr-1">
                   {selectedZone?.bays.map(b => {
                     const baleCount = b.loads.reduce((a, l) => a + l.bales, 0);
+                    const loadCount = b.loads.length;
                     const isSel = selectedBayId === b.id;
                     const sessionAdds = sessionLog
                       .filter(e => e.zoneId === selectedZone.id && e.bayId === b.id)
                       .reduce((a, e) => a + e.bales, 0);
+                    // R54: how many bales from THIS load (cumulative, not just session)
+                    const fromThisLoad = stored
+                      .filter(e => e.zoneId === selectedZone.id && e.bayId === b.id)
+                      .reduce((a, e) => a + e.bales, 0);
+                    const isEmpty = baleCount === 0;
                     return (
                       <button
                         key={b.id}
                         onClick={() => setSelectedBayId(b.id)}
                         aria-pressed={isSel}
                         className={
-                          'h-20 px-3 rounded-xl border-2 text-left transition flex flex-col justify-center min-h-[80px] ' +
+                          'min-h-[92px] px-3 py-2.5 rounded-xl border-2 text-left transition flex flex-col justify-between ' +
                           (isSel
                             ? 'border-safi-600 bg-safi-50'
-                            : 'border-neutral-10 bg-white hover:bg-neutral-5')
+                            : isEmpty
+                              ? 'border-dashed border-neutral-10 bg-white hover:bg-neutral-5'
+                              : 'border-neutral-10 bg-white hover:bg-neutral-5')
                         }
                       >
-                        <div className={'text-[15px] font-bold ' + (isSel ? 'text-safi-700' : 'text-neutral-100')}>
-                          {b.name}
+                        <div>
+                          <div className={'text-[15px] font-bold ' + (isSel ? 'text-safi-700' : 'text-neutral-100')}>
+                            {b.name}
+                          </div>
+                          <div className="text-[13px] text-neutral-60 mt-0.5">
+                            {isEmpty ? 'Empty' : `${loadCount} ${loadCount === 1 ? 'load' : 'loads'} · ${fmtNum(baleCount)} bales`}
+                          </div>
                         </div>
-                        <div className="text-[13px] text-neutral-60 mt-0.5">
-                          {fmtNum(baleCount)} bales
-                          {sessionAdds > 0 && (
-                            <span className="ml-1 text-success-300 font-semibold">+{sessionAdds}</span>
-                          )}
-                        </div>
+                        {fromThisLoad > 0 && (
+                          <div className="text-[12px] text-safi-700 font-medium mt-1">
+                            {fromThisLoad} from this load
+                            {sessionAdds > 0 && <span className="ml-1 text-success-300">(+{sessionAdds} today)</span>}
+                          </div>
+                        )}
                       </button>
                     );
                   })}
@@ -3247,15 +3397,20 @@
     row, idx,
     onBack,
     onStoreMaterial = () => {},
+    buffer = [],
     stored = [],
     actualWeightOverride = null,
     loadNumberOverride = null,
+    totalBalesOverride = null,
     analysisSessions = [],
     processedRecord = null,
     onSetWeight = () => {},
     onSetLoadNumber = () => {},
+    onSetTotalBales = () => {},
     onAddAnalysisSession = () => {},
     onMarkProcessed = () => {},
+    onGoBuffer = () => {},
+    onGoPicklist = () => {},
     onNavigateToPicker = () => {},
     onNavigateToHistory = () => {}
   }) {
@@ -3266,6 +3421,34 @@
     const [loadNoDraft, setLoadNoDraft] = useState('');
     // R53: Analyse-material splash modal.
     const [analyseSplashOpen, setAnalyseSplashOpen] = useState(false);
+    // R54: Edit details modal state.
+    const [editModalOpen, setEditModalOpen] = useState(false);
+    const [editFocusField, setEditFocusField] = useState(null);
+    const [editDraft, setEditDraft] = useState({});
+    const openEdit = (focus = null) => {
+      setEditFocusField(focus);
+      setEditDraft({
+        weight: actualWeightOverride != null ? String(actualWeightOverride) : '',
+        totalBales: totalBalesOverride != null ? String(totalBalesOverride) : '',
+        loadNo: loadNumberOverride != null ? String(loadNumberOverride) : '',
+        container: '',
+        material: row.material,
+        supplier: row.supplier,
+        description: ''
+      });
+      setEditModalOpen(true);
+    };
+    const applyEdit = () => {
+      const w = parseFloat(editDraft.weight);
+      if (Number.isFinite(w) && w > 0) onSetWeight(Math.round(w));
+      const tb = parseInt(editDraft.totalBales, 10);
+      if (Number.isFinite(tb) && tb > 0) onSetTotalBales(tb);
+      if (editDraft.loadNo && editDraft.loadNo.trim().length > 0) onSetLoadNumber(editDraft.loadNo.trim());
+    };
+    // R54: count of bales from THIS load currently in the shared buffer.
+    const bufferBalesForThisLoad = buffer
+      .filter(b => b.loadId === row.orderRef || b.lot === row.orderRef)
+      .reduce((a, b) => a + b.bales, 0);
 
     // Deterministic demo values seeded off the row index so each load page
     // looks subtly different but stable across reloads.
@@ -3394,12 +3577,30 @@
           </button>
         </div>
 
-        {/* ---- 1) LOAD SUMMARY ---- */}
+        {/* ---- 1) LOAD DETAILS (R54: title + Order ref + Total bales) ---- */}
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
-          <h2 className="text-xl font-bold text-neutral-100 mb-5">{supplierShort} #{orderRef}</h2>
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-xl font-bold text-neutral-100">Load details</h2>
+            <button
+              onClick={() => openEdit()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
+            >
+              <Icon d={I.edit} className="w-3.5 h-3.5" />
+              Edit details
+            </button>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-5">
             <Field label="Material">{row.material}</Field>
             <Field label="Supplier">{row.supplier}</Field>
+            <Field label="Order reference">#{orderRef}</Field>
+            <Field label="Total bales">
+              {totalBalesOverride != null ? totalBalesOverride : (
+                <button
+                  onClick={() => openEdit('totalBales')}
+                  className="text-neutral-40 hover:text-safi-600 hover:underline"
+                >—</button>
+              )}
+            </Field>
             <Field label="Scheduled Weight">{fmtKg(scheduledWeightKg)}</Field>
             {/* R53: Actual Weight - inline editor when missing. */}
             <Field label="Actual Weight">
@@ -3495,43 +3696,114 @@
             <Field label="Scheduled Delivery">{scheduledDelivery}</Field>
             <Field label="Actual Delivery">{actualDelivery}</Field>
           </div>
-          <div className="mt-6 flex justify-end">
-            <button className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5">
-              <Icon d={I.edit} className="w-4 h-4" />
-              Edit Details
-            </button>
-          </div>
         </div>
 
-        {/* ---- 2) OPERATIONAL STATUS ---- */}
+        {/* ---- 2) OPERATIONAL STATUS — R54 redesign ----
+            Drops the stepper. Storage breakdown (3 stat cards + stacked bar +
+            location pills) is the top zone — it's the most data-dense thing
+            on this page. Analysis + Picking list sit as a calmer secondary
+            row below a hairline divider. Buffer-bales-for-this-load show with
+            a "Go to buffer →" link to the production picker. */}
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
-          <h3 className="text-lg font-bold text-neutral-100 mb-4">Operational Status</h3>
-
-          {/* Material flow stepper */}
-          <div className="flex items-center gap-2 flex-wrap mb-6">
-            {stages.map((s, i) => (
-              <React.Fragment key={s.label}>
-                <div className={
-                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[13px] font-medium ' +
-                  (s.done
-                    ? 'bg-success-100 text-success-300'
-                    : 'bg-neutral-5 text-neutral-60 border border-neutral-10')
-                }>
-                  {s.done
-                    ? <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
-                    : <span className="w-2 h-2 rounded-full bg-neutral-40" aria-hidden="true" />}
-                  {s.label}
-                </div>
-                {i < stages.length - 1 && (
-                  <Icon d={I.arrowR} className={'w-4 h-4 ' + (stages[i + 1].done ? 'text-neutral-60' : 'text-neutral-40')} />
-                )}
-              </React.Fragment>
-            ))}
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-neutral-100">Operational status</h3>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onStoreMaterial}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
+              >
+                <Icon d={I.box} className="w-3.5 h-3.5" />
+                Store bales
+              </button>
+              <button
+                onClick={() => setAnalyseSplashOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700"
+              >
+                <Icon d={I.chart} className="w-3.5 h-3.5" />
+                Analyse
+              </button>
+            </div>
           </div>
 
-          {/* Three-column status grid: Analysis | Storage | Production */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Analysis */}
+          {/* Storage breakdown — Amazon-style stat cards + stacked bar + locations */}
+          {(() => {
+            const storedSoFar = stored.reduce((a, e) => a + e.bales, 0)
+              || (demoStorageActive ? storageBays.reduce((a, b) => a + b.bales, 0) : 0);
+            const proc = (processedRecord?.bales) || 0;
+            const known = totalBalesOverride != null;
+            const handled = storedSoFar + proc;
+            const left = known ? Math.max(0, totalBalesOverride - handled) : null;
+            const target = known ? totalBalesOverride : Math.max(1, handled);
+            const sw = Math.min(100, Math.round(storedSoFar / target * 100));
+            const pw = Math.min(100, Math.round(proc / target * 100));
+            const lw = known ? Math.min(100, Math.round(left / target * 100)) : 0;
+            return (
+              <>
+                <div className="flex items-baseline justify-between mb-2">
+                  <div className="text-[13px] text-neutral-60">
+                    Storage breakdown{known ? ` · of ${target} total bales` : ''}
+                  </div>
+                  {known && handled >= target && (
+                    <span className="inline-flex items-center gap-1 text-[13px] font-medium text-success-300">
+                      <Icon d={I.checkCircle} className="w-3.5 h-3.5" />all bales handled
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-neutral-5 rounded-lg p-3">
+                    <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
+                      <span className="inline-block w-2 h-2 rounded-full bg-safi-600"></span>
+                      Stored in warehouse
+                    </div>
+                    <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{storedSoFar}</div>
+                    <div className="text-[13px] text-neutral-60">bales</div>
+                  </div>
+                  <div className="bg-neutral-5 rounded-lg p-3">
+                    <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
+                      <span className="inline-block w-2 h-2 rounded-full bg-amber-500"></span>
+                      Left to store
+                    </div>
+                    <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{known ? left : '—'}</div>
+                    <div className="text-[13px] text-neutral-60">{known ? 'bales' : 'set Total bales'}</div>
+                  </div>
+                  <div className="bg-neutral-5 rounded-lg p-3">
+                    <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
+                      <span className="inline-block w-2 h-2 rounded-full bg-success-300"></span>
+                      Processed
+                    </div>
+                    <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{proc}</div>
+                    <div className="text-[13px] text-neutral-60">bales</div>
+                  </div>
+                </div>
+                {known && (
+                  <div className="flex h-2 mt-3 rounded-full overflow-hidden bg-neutral-5">
+                    <div className="h-full bg-safi-600 transition-all" style={{ width: sw + '%' }} />
+                    <div className="h-full bg-success-300 transition-all" style={{ width: pw + '%', opacity: 0.85 }} />
+                    <div className="h-full bg-amber-500 transition-all" style={{ width: lw + '%', opacity: 0.55 }} />
+                  </div>
+                )}
+                {storageBays.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {storageBays.map((b, i) => {
+                      const isBuf = b.label === 'Buffer';
+                      return (
+                        <span
+                          key={i}
+                          className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[13px] ' +
+                            (isBuf ? 'bg-safi-50 text-safi-700' : 'bg-neutral-5 text-neutral-100')}
+                        >
+                          {b.label} <strong className="font-semibold">{b.bales}</strong>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            );
+          })()}
+
+          {/* Hairline divider then 2-col secondary row: Analysis | Picking list */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-5 pt-5 border-t border-neutral-10">
             <div>
               <div className="text-[13px] text-neutral-60 mb-1">Analysis</div>
               {isAnalysed ? (
@@ -3545,47 +3817,23 @@
                     <ResultChip label="Acceptable Aluminium" value={acceptableAl}  ok={acceptableAl <= 5} />
                     <ResultChip label="Contamination"        value={contamination} ok={contamination <= 2} />
                   </div>
-                  <div className="mt-3 text-[13px] text-neutral-60">{photosCount} photos captured</div>
-                  <div className="text-[13px] text-neutral-60">Last analysis: {lastAnalysisAt}</div>
                 </>
               ) : (
                 <div className="text-[13px] text-neutral-60">Not analysed yet</div>
               )}
             </div>
-
-            {/* Storage - R53: format "Zone X · Bay Y (N bales)". */}
             <div>
-              <div className="text-[13px] text-neutral-60 mb-1">Storage</div>
-              {isStored ? (
-                <div className="space-y-1">
-                  {storageBays.map((b, i) => (
-                    <div key={i} className="text-[15px] text-neutral-100">
-                      {b.label} <span className="text-neutral-60">({b.bales} {b.bales === 1 ? 'bale' : 'bales'})</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-[15px] text-neutral-100">Not stored yet</div>
-              )}
-            </div>
-
-            {/* Production - R53: rename inner concept to Processed; show picking
-                list / production window navigation when applicable. */}
-            <div>
-              <div className="text-[13px] text-neutral-60 mb-1">Production</div>
+              <div className="text-[13px] text-neutral-60 mb-1">Picking list</div>
               {isProcessed ? (
                 <>
                   <div className="inline-flex items-center gap-1.5 text-success-300 font-medium text-[15px]">
                     <Icon d={I.checkCircle} className="w-4 h-4" />
                     Processed
                   </div>
-                  <div className="mt-3 grid grid-cols-1 gap-1.5 text-[13px]">
-                    <div><span className="text-neutral-60">Window:</span> <span className="text-neutral-100 font-medium">{processedWindow.windowId}</span></div>
-                    <div><span className="text-neutral-60">Completed:</span> <span className="text-neutral-100">{processedWindow.when}</span></div>
-                  </div>
+                  <div className="text-[13px] text-neutral-60 mt-1">Window {processedWindow.windowId} · {processedWindow.when}</div>
                   <button
                     onClick={() => onNavigateToHistory(processedWindow.windowId)}
-                    className="mt-3 inline-flex items-center gap-1 px-2.5 py-1 rounded text-[13px] font-medium text-safi-600 hover:bg-safi-50"
+                    className="mt-2 inline-flex items-center gap-1 text-[13px] font-medium text-safi-600 hover:underline"
                   >
                     View production window
                     <Icon d={I.chevronR} className="w-3.5 h-3.5" />
@@ -3595,45 +3843,170 @@
                 <>
                   <div className="inline-flex items-center gap-1.5 text-success-300 font-medium text-[15px]">
                     <Icon d={I.checkCircle} className="w-4 h-4" />
-                    On Picking List
+                    On {pickingList.id}
                   </div>
-                  <div className="mt-3 grid grid-cols-1 gap-1.5 text-[13px]">
-                    <div><span className="text-neutral-60">Picking List:</span> <span className="text-neutral-100 font-medium">{pickingList.id}</span></div>
-                    <div><span className="text-neutral-60">Added by:</span> <span className="text-neutral-100">{pickingList.addedBy}</span></div>
-                    <div><span className="text-neutral-60">Shift:</span> <span className="text-neutral-100">{pickingList.shift}</span></div>
-                  </div>
+                  <div className="text-[13px] text-neutral-60 mt-1">{pickingList.addedBy} · {pickingList.shift}</div>
                   <button
-                    onClick={() => onNavigateToPicker({ loadId: row.orderRef, list: pickingList.id })}
-                    className="mt-3 inline-flex items-center gap-1 px-2.5 py-1 rounded text-[13px] font-medium text-safi-600 hover:bg-safi-50"
+                    onClick={onGoPicklist}
+                    className="mt-2 inline-flex items-center gap-1 text-[13px] font-medium text-safi-600 hover:underline"
                   >
-                    View on picking list
+                    Go to picking list
                     <Icon d={I.chevronR} className="w-3.5 h-3.5" />
                   </button>
                 </>
               ) : (
-                <div className="text-[15px] text-neutral-100">Not on picking list</div>
+                <>
+                  <div className="text-[15px] text-neutral-100">Not on a list</div>
+                  <button
+                    onClick={onGoPicklist}
+                    className="mt-2 inline-flex items-center gap-1 text-[13px] font-medium text-safi-600 hover:underline"
+                  >
+                    Go to picking list
+                    <Icon d={I.chevronR} className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+              {bufferBalesForThisLoad > 0 && (
+                <div className="mt-3 pt-3 border-t border-neutral-10">
+                  <div className="text-[13px] text-neutral-60 mb-1">Bales in buffer</div>
+                  <div className="text-[15px]">{bufferBalesForThisLoad} bales held in the buffer</div>
+                  <button
+                    onClick={onGoBuffer}
+                    className="mt-2 inline-flex items-center gap-1 text-[13px] font-medium text-safi-600 hover:underline"
+                  >
+                    Go to buffer
+                    <Icon d={I.chevronR} className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               )}
             </div>
           </div>
-
-          {/* Action buttons - primary Analyse Material, secondary Store Material. */}
-          <div className="mt-6 flex items-center gap-2 flex-wrap justify-end">
-            <button
-              onClick={onStoreMaterial}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
-            >
-              <Icon d={I.box} className="w-4 h-4" />
-              Store Material
-            </button>
-            <button
-              onClick={() => setAnalyseSplashOpen(true)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700"
-            >
-              <Icon d={I.chart} className="w-4 h-4" />
-              Analyse Material
-            </button>
-          </div>
         </div>
+
+        {/* R54: Edit load details modal. All editable fields live here.
+            The Total bales section has an inline "Store bales →" CTA so the
+            FO can flow straight into the store workflow after entering the
+            count. Footer is Cancel + Save. */}
+        {editModalOpen && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setEditModalOpen(false)}>
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-10">
+                <h3 className="text-base font-bold text-neutral-100">Edit load details</h3>
+                <button onClick={() => setEditModalOpen(false)} className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Close">
+                  <Icon d={I.close} className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="overflow-y-auto p-5 space-y-3 flex-1">
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="text-[13px] text-amber-900 mb-1 flex items-center justify-between">
+                    <span>Actual weight</span>
+                    <span className="text-[11px] px-1.5 py-0.5 bg-amber-100 text-amber-900 rounded-full">important</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      autoFocus={editFocusField === 'weight'}
+                      type="number"
+                      placeholder="0"
+                      value={editDraft.weight}
+                      onChange={e => setEditDraft(d => ({ ...d, weight: e.target.value }))}
+                      className="flex-1 h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+                    />
+                    <span className="text-[13px] text-neutral-60">kg</span>
+                  </div>
+                  <div className="text-[11px] text-neutral-60 mt-1">Production needs this to track bale-level weights on the line.</div>
+                </div>
+
+                <div>
+                  <div className="text-[13px] text-neutral-60 mb-1">Total bales</div>
+                  <input
+                    autoFocus={editFocusField === 'totalBales'}
+                    type="number"
+                    placeholder="e.g. 25"
+                    value={editDraft.totalBales}
+                    onChange={e => setEditDraft(d => ({ ...d, totalBales: e.target.value }))}
+                    className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+                  />
+                  <div className="text-[11px] text-neutral-60 mt-1">Optional. Storage progress shows how many are still left to put away.</div>
+                  <button
+                    onClick={() => { applyEdit(); setEditModalOpen(false); onStoreMaterial(); }}
+                    className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700"
+                  >
+                    <Icon d={I.box} className="w-3.5 h-3.5" />
+                    Store bales
+                    <Icon d={I.chevronR} className="w-3.5 h-3.5" />
+                  </button>
+                  <div className="text-[11px] text-neutral-60 mt-1.5 flex items-center justify-center gap-1">
+                    <Icon d={I.check} className="w-3 h-3 text-success-300" />
+                    Your changes will be saved before continuing.
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[13px] text-neutral-60 mb-1">Load number</div>
+                  <input
+                    type="text"
+                    placeholder="Optional"
+                    value={editDraft.loadNo}
+                    onChange={e => setEditDraft(d => ({ ...d, loadNo: e.target.value }))}
+                    className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-[13px] text-neutral-60 mb-1">Container / vehicle</div>
+                  <input
+                    type="text"
+                    placeholder="Optional"
+                    value={editDraft.container}
+                    onChange={e => setEditDraft(d => ({ ...d, container: e.target.value }))}
+                    className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-[13px] text-neutral-60 mb-1">Material</div>
+                  <input
+                    type="text"
+                    value={editDraft.material}
+                    onChange={e => setEditDraft(d => ({ ...d, material: e.target.value }))}
+                    className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-[13px] text-neutral-60 mb-1">Supplier</div>
+                  <input
+                    type="text"
+                    value={editDraft.supplier}
+                    onChange={e => setEditDraft(d => ({ ...d, supplier: e.target.value }))}
+                    className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-[13px] text-neutral-60 mb-1">Description</div>
+                  <textarea
+                    rows={2}
+                    placeholder="Optional"
+                    value={editDraft.description}
+                    onChange={e => setEditDraft(d => ({ ...d, description: e.target.value }))}
+                    className="w-full px-3 py-2 border border-neutral-10 rounded text-[13px] bg-white resize-y"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-neutral-10">
+                <button
+                  onClick={() => setEditModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
+                >Cancel</button>
+                <button
+                  onClick={() => { applyEdit(); setEditModalOpen(false); }}
+                  className="px-3.5 py-1.5 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700"
+                >Save</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* R53: Analyse Material splash modal. Simulates a tablet/camera flow
             where photos were captured offline and the FO confirms completion.
@@ -3712,7 +4085,7 @@
     );
   }
 
-  function QualityControlPage({ yard = [], yardOps = {} }) {
+  function QualityControlPage({ yard = [], yardOps = {}, buffer = [], setBuffer = () => {}, setAppPage = () => {}, setTab = () => {}, setPickerMode = () => {} }) {
     const ROWS_PER_PAGE = 15;
     const totalRows = QC_ROWS.length;
     const totalPages = Math.ceil(totalRows / ROWS_PER_PAGE);
@@ -3742,6 +4115,15 @@
     const [loadNumbers, setLoadNumbers] = useState({});
     const [loadAnalysisSessions, setLoadAnalysisSessions] = useState({});
     const [loadProcessed, setLoadProcessed] = useState({});
+    // R54: optional total bales per load (entered via Edit modal). Drives the
+    // Storage breakdown (Stored / Left to store / Processed = Total).
+    const [loadTotalBales, setLoadTotalBales] = useState({});
+    // R54: cross-page nav helpers. "Go to buffer" lands on the warehouse-layout
+    // tab in bale-based mode so the Buffer card is visible. "Go to picking
+    // list" lands on the warehouse-layout tab (where the picking list alert /
+    // creation entry point lives).
+    const goToBuffer = () => { setPickerMode('bale'); setTab('pw-layout'); setAppPage('production'); };
+    const goToPicklist = () => { setTab('pw-layout'); setAppPage('production'); };
     // Lightweight toast for the Store Material flow ("3 bales added...").
     const [storeToast, setStoreToast] = useState(null);
     useEffect(() => {
@@ -3758,7 +4140,11 @@
             idx={selectedRowIdx}
             yard={yard}
             yardOps={yardOps}
+            setBuffer={setBuffer}
+            stored={loadStorage[selectedRowIdx] || []}
             actualWeightOverride={loadActualWeights[selectedRowIdx]}
+            totalBalesOverride={loadTotalBales[selectedRowIdx]}
+            processedBales={(loadProcessed[selectedRowIdx]?.bales) || 0}
             onAddStorage={(entry) => {
               setLoadStorage(prev => ({
                 ...prev,
@@ -3784,22 +4170,27 @@
         <LoadDetailsView
           row={QC_ROWS[selectedRowIdx]}
           idx={selectedRowIdx}
+          buffer={buffer}
           stored={loadStorage[selectedRowIdx] || []}
           actualWeightOverride={loadActualWeights[selectedRowIdx]}
           loadNumberOverride={loadNumbers[selectedRowIdx]}
+          totalBalesOverride={loadTotalBales[selectedRowIdx]}
           analysisSessions={loadAnalysisSessions[selectedRowIdx] || []}
           processedRecord={loadProcessed[selectedRowIdx]}
           onBack={() => setSelectedRowIdx(null)}
           onStoreMaterial={() => setStoreMode(true)}
           onSetWeight={(w) => setLoadActualWeights(prev => ({ ...prev, [selectedRowIdx]: w }))}
           onSetLoadNumber={(v) => setLoadNumbers(prev => ({ ...prev, [selectedRowIdx]: v }))}
+          onSetTotalBales={(v) => setLoadTotalBales(prev => ({ ...prev, [selectedRowIdx]: v }))}
           onAddAnalysisSession={(s) => setLoadAnalysisSessions(prev => ({
             ...prev,
             [selectedRowIdx]: [s, ...(prev[selectedRowIdx] || [])]
           }))}
           onMarkProcessed={(rec) => setLoadProcessed(prev => ({ ...prev, [selectedRowIdx]: rec }))}
-          onNavigateToPicker={() => {/* prototype stub - cross-app nav not wired */}}
-          onNavigateToHistory={() => {/* prototype stub */}}
+          onGoBuffer={goToBuffer}
+          onGoPicklist={goToPicklist}
+          onNavigateToPicker={goToBuffer}
+          onNavigateToHistory={() => { setTab('history'); setAppPage('production'); }}
         />
       );
     }
@@ -4199,7 +4590,11 @@
       return (
         <LangContext.Provider value={lang}>
           <AppShell lang={lang} setLang={setLang} appPage={appPage} setAppPage={setAppPage}>
-            <QualityControlPage yard={yard} yardOps={yardOps} />
+            <QualityControlPage
+              yard={yard} yardOps={yardOps}
+              buffer={buffer} setBuffer={setBuffer}
+              setAppPage={setAppPage} setTab={setTab} setPickerMode={setPickerMode}
+            />
           </AppShell>
         </LangContext.Provider>
       );
