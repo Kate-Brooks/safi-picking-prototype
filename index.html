@@ -309,6 +309,7 @@
       id: 'A',
       name: 'Zone A',
       esName: 'Zone A',
+      color: 'red',
       inventoryRule: 'NONE',
       bays: [
         {
@@ -353,6 +354,7 @@
       id: 'B',
       name: 'Zone B',
       esName: 'Zone B',
+      color: 'yellow',
       inventoryRule: 'LIFO',
       bays: (() => {
         const layout = [
@@ -388,6 +390,7 @@
       id: 'C',
       name: 'Zone C',
       esName: 'Zone C',
+      color: 'darkBlue',
       inventoryRule: 'FIFO',
       bays: [
         {
@@ -1040,6 +1043,8 @@
             {pickerMode === 'bale' && !isCreating && (() => {
               const bufferBales = buffer.reduce((a, b) => a + b.bales, 0);
               const bufferWeight = buffer.reduce((a, b) => a + Math.round(b.bales * b.weightPerBale), 0);
+              // R55: Loads on the buffer card = the count of distinct buffer items.
+              const bufferLoads = buffer.length;
               return (
                 <div
                   key="__buffer__"
@@ -1052,12 +1057,14 @@
                   <div className="flex items-start justify-between gap-6 flex-wrap">
                     <div className="flex-1 min-w-[280px]">
                       <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full bg-amber-400" aria-hidden="true" />
+                        {/* R55: Buffer gets a green dot to align with the zone colour treatment. */}
+                        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: '#16a34a' }} aria-hidden="true" />
                         <div className="font-bold text-neutral-100 text-xl">
                           {lang === 'es' ? 'Búfer' : 'Buffer'}
                         </div>
                       </div>
                       <div className="flex items-center gap-6 mt-2 flex-wrap">
+                        <Metric2 label={tr('loads', lang)} value={fmtNum(bufferLoads)} />
                         <Metric2 label={tr('bales', lang)} value={fmtNum(bufferBales)} />
                         <Metric2 label={tr('weight', lang)} value={fmtKg(bufferWeight)} />
                       </div>
@@ -1092,6 +1099,8 @@
                     className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition cursor-pointer hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
                   >
                     <div className="flex items-center gap-3 mb-3 flex-wrap">
+                      {/* R55: coloured zone dot for at-a-glance identification. */}
+                      {(() => { const zc = getZoneColor(zone.color); return zc.id !== 'none' ? <span className="w-3 h-3 rounded-full" style={{ backgroundColor: zc.swatch }} aria-hidden="true" /> : null; })()}
                       <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
                       {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80">
@@ -1123,6 +1132,8 @@
                     className="rounded-lg border border-neutral-10 bg-white px-5 py-4 text-left transition cursor-pointer hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
                   >
                     <div className="flex items-center gap-3 mb-3 flex-wrap">
+                      {/* R55: coloured zone dot for at-a-glance identification. */}
+                      {(() => { const zc = getZoneColor(zone.color); return zc.id !== 'none' ? <span className="w-3 h-3 rounded-full" style={{ backgroundColor: zc.swatch }} aria-hidden="true" /> : null; })()}
                       <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
                       {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80">
@@ -1165,7 +1176,11 @@
                 >
                   <div className="flex items-start justify-between gap-6 flex-wrap">
                     <div className="flex-1 min-w-[280px]">
-                      <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
+                      <div className="flex items-center gap-2">
+                        {/* R55: coloured zone dot for at-a-glance identification. */}
+                        {(() => { const zc = getZoneColor(zone.color); return zc.id !== 'none' ? <span className="w-3 h-3 rounded-full" style={{ backgroundColor: zc.swatch }} aria-hidden="true" /> : null; })()}
+                        <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
+                      </div>
                       <div className="flex items-center gap-6 mt-2 flex-wrap">
                         <Metric2 label={tr('bays',  lang)} value={fmtNum(z.bays)} />
                         <Metric2 label={tr('loads', lang)} value={fmtNum(z.loads)} />
@@ -1837,8 +1852,13 @@
               <span className="text-neutral-100 font-medium">{lang === 'es' ? 'Búfer' : 'Buffer'}</span>
             </nav>
             <div className="mt-2">
-              <h3 className="text-2xl font-bold text-neutral-100">{lang === 'es' ? 'Búfer' : 'Buffer'}</h3>
+              <div className="flex items-center gap-2">
+                {/* R55: green dot to match the Buffer card on the yard overview. */}
+                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: '#16a34a' }} aria-hidden="true" />
+                <h3 className="text-2xl font-bold text-neutral-100">{lang === 'es' ? 'Búfer' : 'Buffer'}</h3>
+              </div>
               <div className="flex items-center gap-6 mt-2 flex-wrap">
+                <Metric2 label={tr('loads', lang)}  value={fmtNum(buffer.length)} />
                 <Metric2 label={tr('bales', lang)}  value={fmtNum(bufferBales)} />
                 <Metric2 label={tr('weight', lang)} value={fmtKg(bufferWeight)} />
               </div>
@@ -1881,7 +1901,8 @@
                           {load && <AIResultChips load={load} />}
                         </div>
                         <div className="text-[13px] text-neutral-60 mt-1">
-                          {fmtNum(item.bales)} {tr('bales', lang).toLowerCase()} · {fmtKg(buffWeight)}
+                          {/* R55: bold the bale count so it stands out at a glance. */}
+                          <span className="font-bold text-neutral-100">{fmtNum(item.bales)} {tr('bales', lang).toLowerCase()}</span> · {fmtKg(buffWeight)}
                           {' · '}{lang === 'es' ? 'Origen' : 'From'}: {sourceLabel}
                         </div>
                       </div>
@@ -2886,6 +2907,9 @@
     const [bales, setBales] = useState(3);
     const [selectedZoneId, setSelectedZoneId] = useState(yard[0]?.id || null);
     const [selectedBayId, setSelectedBayId] = useState(null);
+    // R55: ref + focus state for the horizontal bay row + minimap.
+    const bayRowRef = useRef(null);
+    const [focusBayId, setFocusBayId] = useState(null);
     // Session log - additions made in THIS open flow only. Cumulative load
     // storage lives in the parent state.
     const [sessionLog, setSessionLog] = useState([]);
@@ -2912,6 +2936,50 @@
     const perBaleKg = (actualWeightOverride != null && totalBalesOverride != null && totalBalesOverride > 0)
       ? Math.round(actualWeightOverride / totalBalesOverride)
       : 250 + (idx % 30);
+
+    // R55: tap-to-add helper used by the new bay row. Commits the current
+    // bale count to the given zone/bay (or buffer) without any confirm step.
+    const addBalesTo = (zoneId, bayId) => {
+      if (bales <= 0) return;
+      const isBuf = zoneId === '__buffer__';
+      const entry = isBuf
+        ? { zoneId: '__buffer__', bayId: null, bales }
+        : { zoneId, bayId, bales };
+      setSessionLog(prev => [...prev, entry]);
+      onAddStorage?.(entry);
+      if (isBuf && typeof setBuffer === 'function') {
+        const uid = `qc-${idx}-buffer-${Date.now()}`;
+        setBuffer(prev => [...prev, {
+          uid,
+          loadId: row.orderRef,
+          supplier: row.supplier,
+          lot: row.orderRef,
+          bales,
+          loadBales: totalBalesOverride || bales,
+          weightPerBale: perBaleKg,
+          sourceZoneId: '__qc__',
+          sourceBayId: '__qc__'
+        }]);
+      }
+      if (!isBuf && typeof yardOps?.addLoad === 'function') {
+        const zoneObj = yard.find(z => z.id === zoneId);
+        const bayObj = zoneObj?.bays.find(b => b.id === bayId);
+        const synthLoad = {
+          id: `qc-${idx}-${zoneId}-${bayId}-${Date.now()}`,
+          supplier: row.supplier,
+          lot: `${row.orderRef}-${sessionLog.length + 1}`,
+          weight: bales * perBaleKg,
+          bales,
+          material: 'BLANCA',
+          results: null,
+          description: `From order ${row.orderRef}`,
+          processedAt: null
+        };
+        yardOps.addLoad(zoneId, bayId, synthLoad);
+      }
+      const dest = isBuf ? 'the Buffer' : `Zone ${zoneId} · Bay ${bayId}`;
+      onToast?.(`${bales} bales added to ${dest}`);
+    };
 
     const handleAdd = () => {
       if (!canAdd) return;
@@ -2988,24 +3056,17 @@
 
     return (
       <div className="px-6 py-5">
-        {/* Top bar - Cancel / title / Done. Built for thumb reach on a tablet. */}
-        <div className="flex items-center justify-between gap-4 mb-5">
-          <button
-            onClick={onCancel}
-            className="px-4 py-3 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[15px] font-medium hover:bg-neutral-5 min-h-[48px]"
-          >
-            Cancel
-          </button>
-          <div className="text-center min-w-0 flex-1">
-            <div className="text-[13px] text-neutral-60">Store material</div>
-            <div className="text-base font-bold text-neutral-100 truncate">{row.supplier} #{row.orderRef}</div>
+        {/* R55: Top header simplified - back link + title. Cancel/Done moved to
+            bottom right of the overlay per the v10 layout. */}
+        <div className="flex items-start justify-between gap-4 mb-5 pb-3 border-b border-neutral-10">
+          <div>
+            <button onClick={onCancel} className="inline-flex items-center gap-1 text-[13px] text-neutral-60 hover:text-safi-600 mb-1">
+              <Icon d={I.arrowL} className="w-3.5 h-3.5" />
+              Back to load
+            </button>
+            <div className="text-lg font-bold text-neutral-100">Store bales</div>
+            <div className="text-[13px] text-neutral-60">{row.supplier} #{row.orderRef}</div>
           </div>
-          <button
-            onClick={onDone}
-            className="px-5 py-3 rounded-lg bg-safi-600 text-white text-[15px] font-semibold hover:bg-safi-700 min-h-[48px]"
-          >
-            Done
-          </button>
         </div>
 
         {/* Missing weight banner */}
@@ -3085,7 +3146,10 @@
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              {/* R55: Processed dropped from the primary stat row — the FO can't
+                   process from this flow, so it doesn't belong as a primary stat.
+                   Surfaces below as a quiet note when processed > 0. */}
+              <div className="grid grid-cols-2 gap-2">
                 <div className="bg-neutral-5 rounded-lg p-3">
                   <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
                     <span className="inline-block w-2 h-2 rounded-full bg-safi-600"></span>
@@ -3102,20 +3166,18 @@
                   <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{known ? left : '—'}</div>
                   <div className="text-[13px] text-neutral-60">{known ? 'bales' : 'set Total bales'}</div>
                 </div>
-                <div className="bg-neutral-5 rounded-lg p-3">
-                  <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
-                    <span className="inline-block w-2 h-2 rounded-full bg-success-300"></span>
-                    Processed
-                  </div>
-                  <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{proc}</div>
-                  <div className="text-[13px] text-neutral-60">bales</div>
-                </div>
               </div>
               {known && (
                 <div className="flex h-2 mt-3 rounded-full overflow-hidden bg-neutral-5">
                   <div className="h-full bg-safi-600 transition-all" style={{ width: sw + '%' }} />
                   <div className="h-full bg-success-300 transition-all" style={{ width: pw + '%', opacity: 0.85 }} />
                   <div className="h-full bg-amber-500 transition-all" style={{ width: lw + '%', opacity: 0.55 }} />
+                </div>
+              )}
+              {proc > 0 && (
+                <div className="mt-2 text-[13px] text-neutral-60 inline-flex items-center gap-1.5">
+                  <Icon d={I.checkCircle} className="w-3.5 h-3.5 text-success-300" />
+                  {proc} bales from this load have already been processed
                 </div>
               )}
               {locs.length > 0 && (
@@ -3250,16 +3312,21 @@
                 Buffer
               </button>
             </div>
-            {/* Bay tile grid (zones) OR a single Buffer destination tile. */}
+            {/* R55: replaced bay grid with a horizontal row + minimap, mirroring
+                 the Production Management warehouse zone view but at a smaller
+                 scale. Tap a bay = immediate add (no confirm step). */}
             {selectedZoneId === '__buffer__' ? (
               <div>
                 <div className="text-[13px] text-neutral-60 mb-2">
-                  Bales will be sent to the buffer for the picker to process. No bay needed.
+                  Tap to send {bales} {bales === 1 ? 'bale' : 'bales'} to the buffer. No bay needed.
                 </div>
-                <div className="rounded-xl border-2 border-safi-600 bg-safi-50 p-4 flex items-center gap-3">
-                  <span className="w-3 h-3 rounded-full bg-amber-400" aria-hidden="true" />
+                <button
+                  onClick={() => addBalesTo('__buffer__', null)}
+                  className="w-full rounded-xl border-2 border-neutral-10 bg-white hover:border-safi-300 hover:bg-safi-50 p-4 flex items-center gap-3 text-left transition"
+                >
+                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: '#16a34a' }} aria-hidden="true" />
                   <div className="flex-1">
-                    <div className="text-[15px] font-bold text-safi-700">Buffer</div>
+                    <div className="text-[15px] font-bold text-neutral-100">Buffer</div>
                     <div className="text-[13px] text-neutral-60 mt-0.5">
                       Holds bales temporarily before processing
                       {(() => {
@@ -3267,58 +3334,105 @@
                           .filter(e => e.zoneId === '__buffer__')
                           .reduce((a, e) => a + e.bales, 0);
                         if (sessionAdds === 0) return null;
-                        return <span className="ml-1 text-success-300 font-semibold">+{sessionAdds}</span>;
+                        return <span className="ml-1 text-success-300 font-semibold">+{sessionAdds} today</span>;
                       })()}
                     </div>
                   </div>
-                  <Icon d={I.checkCircle} className="w-5 h-5 text-safi-600" />
-                </div>
+                  <Icon d={I.plus} className="w-5 h-5 text-safi-600" />
+                </button>
               </div>
             ) : (
               <>
                 <div className="text-[13px] text-neutral-60 mb-2">
-                  Tap a bay in Zone {selectedZone?.id}
+                  Tap a bay in Zone {selectedZone?.id} to store {bales} {bales === 1 ? 'bale' : 'bales'}
                 </div>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-[280px] overflow-y-auto pr-1">
+                {/* Minimap - bars represent relative bale density per bay.
+                    Click to scroll that bay into view. */}
+                {selectedZone && selectedZone.bays.length > 6 && (() => {
+                  const maxBales = Math.max(1, ...selectedZone.bays.map(b => b.loads.reduce((a, l) => a + l.bales, 0)));
+                  return (
+                    <div className="mb-3 px-3 py-2 rounded-md bg-neutral-5 border border-neutral-10">
+                      <div className="flex items-end gap-0.5 h-9 w-full" role="navigation" aria-label="Bay minimap">
+                        {selectedZone.bays.map(b => {
+                          const baleCount = b.loads.reduce((a, l) => a + l.bales, 0);
+                          const isEmpty = baleCount === 0;
+                          const pct = isEmpty ? 18 : Math.max(8, (baleCount / maxBales) * 100);
+                          const zc = getZoneColor(selectedZone.color);
+                          const isFocus = focusBayId === b.id;
+                          const tileStyle = isEmpty
+                            ? { height: `${pct}%`, backgroundColor: '#fff', border: '1px solid #d4d4d8', backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, #d4d4d8 3px, #d4d4d8 4px)' }
+                            : { height: `${pct}%`, backgroundColor: zc.swatch !== 'transparent' ? zc.swatch : '#0c87f5', opacity: 0.85 };
+                          return (
+                            <button
+                              key={b.id}
+                              onClick={() => {
+                                setFocusBayId(b.id);
+                                setTimeout(() => {
+                                  const el = document.querySelector(`[data-store-bay="${b.id}"]`);
+                                  if (el) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                                }, 0);
+                              }}
+                              title={`${b.name}: ${isEmpty ? 'Empty' : `${baleCount} bales`}`}
+                              aria-label={`Jump to ${b.name}`}
+                              className={'flex-1 rounded-t transition-opacity hover:opacity-100 ' + (isFocus ? 'outline outline-2 outline-safi-600 outline-offset-1 relative z-10' : '')}
+                              style={tileStyle}
+                            />
+                          );
+                        })}
+                      </div>
+                      <div className="mt-1.5 flex justify-between text-[11px] text-neutral-60">
+                        <span>{selectedZone.bays[0].name}</span>
+                        <span className="text-neutral-40">{selectedZone.bays.length} bays · click to jump</span>
+                        <span>{selectedZone.bays[selectedZone.bays.length - 1].name}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+                {/* Horizontal scrollable bay row. Each tile = tap to add. */}
+                <div ref={bayRowRef} className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
                   {selectedZone?.bays.map(b => {
                     const baleCount = b.loads.reduce((a, l) => a + l.bales, 0);
                     const loadCount = b.loads.length;
-                    const isSel = selectedBayId === b.id;
                     const sessionAdds = sessionLog
                       .filter(e => e.zoneId === selectedZone.id && e.bayId === b.id)
                       .reduce((a, e) => a + e.bales, 0);
-                    // R54: how many bales from THIS load (cumulative, not just session)
                     const fromThisLoad = stored
                       .filter(e => e.zoneId === selectedZone.id && e.bayId === b.id)
                       .reduce((a, e) => a + e.bales, 0);
                     const isEmpty = baleCount === 0;
+                    const isFocus = focusBayId === b.id;
                     return (
                       <button
                         key={b.id}
-                        onClick={() => setSelectedBayId(b.id)}
-                        aria-pressed={isSel}
+                        data-store-bay={b.id}
+                        onClick={() => addBalesTo(selectedZone.id, b.id)}
                         className={
-                          'min-h-[92px] px-3 py-2.5 rounded-xl border-2 text-left transition flex flex-col justify-between ' +
-                          (isSel
+                          'shrink-0 w-[160px] min-h-[100px] px-3 py-3 rounded-xl border-2 text-left transition flex flex-col justify-between relative ' +
+                          (isFocus
                             ? 'border-safi-600 bg-safi-50'
                             : isEmpty
-                              ? 'border-dashed border-neutral-10 bg-white hover:bg-neutral-5'
-                              : 'border-neutral-10 bg-white hover:bg-neutral-5')
+                              ? 'border-dashed border-neutral-10 bg-white hover:border-safi-300 hover:bg-safi-50'
+                              : 'border-neutral-10 bg-white hover:border-safi-300 hover:bg-safi-50')
                         }
                       >
                         <div>
-                          <div className={'text-[15px] font-bold ' + (isSel ? 'text-safi-700' : 'text-neutral-100')}>
-                            {b.name}
-                          </div>
-                          <div className="text-[13px] text-neutral-60 mt-0.5">
-                            {isEmpty ? 'Empty' : `${loadCount} ${loadCount === 1 ? 'load' : 'loads'} · ${fmtNum(baleCount)} bales`}
+                          <div className="text-[15px] font-bold text-neutral-100">{b.name}</div>
+                          <div className="text-[13px] text-neutral-60 mt-1">
+                            {isEmpty
+                              ? 'Empty'
+                              : `${loadCount} ${loadCount === 1 ? 'load' : 'loads'} · ${fmtNum(baleCount)} bales`}
                           </div>
                         </div>
                         {fromThisLoad > 0 && (
-                          <div className="text-[12px] text-safi-700 font-medium mt-1">
+                          <div className="text-[12px] text-safi-700 font-medium mt-2">
                             {fromThisLoad} from this load
                             {sessionAdds > 0 && <span className="ml-1 text-success-300">(+{sessionAdds} today)</span>}
                           </div>
+                        )}
+                        {sessionAdds > 0 && (
+                          <span className="absolute top-2 right-2 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-success-300 text-white text-[11px] font-semibold">
+                            +{sessionAdds}
+                          </span>
                         )}
                       </button>
                     );
@@ -3329,55 +3443,17 @@
           </div>
         </div>
 
-        {/* Primary action - large, full width, sticks visible at the bottom */}
-        <div className="mt-5">
+        {/* R55: Cancel + Done bottom-right, replacing the old Add bales CTA + session log. */}
+        <div className="mt-6 flex items-center justify-end gap-3">
           <button
-            onClick={handleAdd}
-            disabled={!canAdd}
-            className={
-              'w-full h-16 rounded-xl text-[17px] font-semibold transition flex items-center justify-center gap-2 ' +
-              (canAdd
-                ? 'bg-safi-600 text-white hover:bg-safi-700'
-                : 'bg-neutral-5 text-neutral-40 cursor-not-allowed')
-            }
-          >
-            <Icon d={I.plus} className="w-5 h-5" />
-            {canAdd
-              ? (isBufferDest
-                  ? `Add ${bales} ${bales === 1 ? 'bale' : 'bales'} to the Buffer`
-                  : `Add ${bales} ${bales === 1 ? 'bale' : 'bales'} to Zone ${selectedZone.id} · ${selectedBay.name || `Bay ${selectedBay.id}`}`)
-              : selectedZone && !selectedBay
-                ? 'Select a bay to continue'
-                : 'Select a zone, bay, or the Buffer to continue'}
-          </button>
+            onClick={onCancel}
+            className="text-[13px] font-medium text-neutral-60 hover:text-neutral-100 hover:underline"
+          >Cancel</button>
+          <button
+            onClick={onDone}
+            className="px-5 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-semibold hover:bg-safi-700"
+          >Done</button>
         </div>
-
-        {/* Session log */}
-        {sessionLog.length > 0 && (
-          <div className="mt-5 bg-white border border-neutral-10 rounded-xl p-5">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <div className="text-[13px] font-semibold uppercase tracking-wide text-neutral-60">
-                Stored in this session
-              </div>
-              <div className="text-[13px] text-neutral-60">
-                Total: <span className="font-bold text-neutral-100">{sessionTotal}</span> {sessionTotal === 1 ? 'bale' : 'bales'}
-              </div>
-            </div>
-            <ul className="divide-y divide-neutral-10">
-              {sessionLog.map((e, i) => (
-                <li key={i} className="py-2.5 flex items-center gap-3 text-[15px]">
-                  <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-success-100 text-success-300 shrink-0">
-                    <Icon d={I.checkCircle} className="w-4 h-4" />
-                  </span>
-                  <span className="font-bold text-neutral-100">+{e.bales} bales</span>
-                  <span className="text-neutral-60">
-                    {e.zoneId === '__buffer__' ? 'Buffer' : `Zone ${e.zoneId} · Bay ${e.bayId}`}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
     );
   }
@@ -3577,7 +3653,10 @@
           </button>
         </div>
 
-        {/* ---- 1) LOAD DETAILS (R54: title + Order ref + Total bales) ---- */}
+        {/* ---- 1) LOAD DETAILS (R54: title + Order ref + Total bales)
+             R55: Inline weight editor removed; missing-weight surfaces via a
+             prominent banner above the field grid that opens the Edit modal
+             focused on the Actual weight input. */}
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
           <div className="flex items-center justify-between mb-5">
             <h2 className="text-xl font-bold text-neutral-100">Load details</h2>
@@ -3589,6 +3668,19 @@
               Edit details
             </button>
           </div>
+          {actualWeightMissing && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3 flex-wrap">
+              <Icon d={I.warning} className="w-5 h-5 text-amber-700 shrink-0" />
+              <div className="flex-1 min-w-[200px]">
+                <div className="text-[14px] font-semibold text-amber-900">Actual load weight is missing</div>
+                <div className="text-[13px] text-amber-900/80">Production needs this to track bale-level weights on the line.</div>
+              </div>
+              <button
+                onClick={() => openEdit('weight')}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 text-white text-[13px] font-semibold hover:bg-amber-700"
+              >Add weight</button>
+            </div>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-5">
             <Field label="Material">{row.material}</Field>
             <Field label="Supplier">{row.supplier}</Field>
@@ -3602,96 +3694,15 @@
               )}
             </Field>
             <Field label="Scheduled Weight">{fmtKg(scheduledWeightKg)}</Field>
-            {/* R53: Actual Weight - inline editor when missing. */}
             <Field label="Actual Weight">
-              {actualWeightMissing ? (
-                editingWeight ? (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      autoFocus
-                      value={weightDraft}
-                      placeholder="0"
-                      onChange={e => setWeightDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          const n = parseFloat(weightDraft);
-                          if (Number.isFinite(n) && n > 0) { onSetWeight(Math.round(n)); setEditingWeight(false); setWeightDraft(''); }
-                        }
-                        if (e.key === 'Escape') { setEditingWeight(false); setWeightDraft(''); }
-                      }}
-                      className="w-28 px-2 py-1 border border-safi-600 rounded text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-200"
-                    />
-                    <span className="text-[13px] text-neutral-60">kg</span>
-                    <button
-                      onClick={() => {
-                        const n = parseFloat(weightDraft);
-                        if (Number.isFinite(n) && n > 0) { onSetWeight(Math.round(n)); setEditingWeight(false); setWeightDraft(''); }
-                      }}
-                      className="px-2 py-1 rounded bg-safi-600 text-white text-[13px] hover:bg-safi-700"
-                    >Save</button>
-                    <button
-                      onClick={() => { setEditingWeight(false); setWeightDraft(''); }}
-                      className="p-1 rounded hover:bg-neutral-5 text-neutral-60"
-                      aria-label="Cancel"
-                    ><Icon d={I.close} className="w-4 h-4" /></button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => { setEditingWeight(true); setWeightDraft(''); }}
-                    className="inline-flex items-center gap-1.5 text-amber-700 hover:underline"
-                  >
-                    <Icon d={I.warning} className="w-4 h-4" />
-                    Missing
-                    <span className="text-[13px] text-neutral-60">- click to add</span>
-                  </button>
-                )
-              ) : fmtKg(actualWeightKg)}
+              {actualWeightMissing
+                ? <span className="inline-flex items-center gap-1.5 text-amber-700"><Icon d={I.warning} className="w-4 h-4" />Missing</span>
+                : fmtKg(actualWeightKg)}
             </Field>
-            {/* R53: Load Number - inline editor when missing. */}
             <Field label="Load Number">
-              {loadNumberMissing ? (
-                editingLoadNo ? (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      autoFocus
-                      value={loadNoDraft}
-                      placeholder="e.g. 12"
-                      onChange={e => setLoadNoDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          const v = loadNoDraft.trim();
-                          if (v.length > 0) { onSetLoadNumber(v); setEditingLoadNo(false); setLoadNoDraft(''); }
-                        }
-                        if (e.key === 'Escape') { setEditingLoadNo(false); setLoadNoDraft(''); }
-                      }}
-                      className="w-24 px-2 py-1 border border-safi-600 rounded text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-200"
-                    />
-                    <button
-                      onClick={() => {
-                        const v = loadNoDraft.trim();
-                        if (v.length > 0) { onSetLoadNumber(v); setEditingLoadNo(false); setLoadNoDraft(''); }
-                      }}
-                      className="px-2 py-1 rounded bg-safi-600 text-white text-[13px] hover:bg-safi-700"
-                    >Save</button>
-                    <button
-                      onClick={() => { setEditingLoadNo(false); setLoadNoDraft(''); }}
-                      className="p-1 rounded hover:bg-neutral-5 text-neutral-60"
-                      aria-label="Cancel"
-                    ><Icon d={I.close} className="w-4 h-4" /></button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => { setEditingLoadNo(true); setLoadNoDraft(''); }}
-                    className="inline-flex items-center gap-1.5 text-amber-700 hover:underline"
-                  >
-                    <Icon d={I.warning} className="w-4 h-4" />
-                    Missing
-                    <span className="text-[13px] text-neutral-60">- click to add</span>
-                  </button>
-                )
-              ) : loadNumber}
+              {loadNumberMissing
+                ? <button onClick={() => openEdit('loadNo')} className="text-neutral-40 hover:text-safi-600 hover:underline">—</button>
+                : loadNumber}
             </Field>
             <Field label="Scheduled Delivery">{scheduledDelivery}</Field>
             <Field label="Actual Delivery">{actualDelivery}</Field>
@@ -3749,7 +3760,8 @@
                     </span>
                   )}
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                {/* R55: drop Processed from primary stats; surface as secondary line when applicable. */}
+                <div className="grid grid-cols-2 gap-2">
                   <div className="bg-neutral-5 rounded-lg p-3">
                     <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
                       <span className="inline-block w-2 h-2 rounded-full bg-safi-600"></span>
@@ -3766,20 +3778,18 @@
                     <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{known ? left : '—'}</div>
                     <div className="text-[13px] text-neutral-60">{known ? 'bales' : 'set Total bales'}</div>
                   </div>
-                  <div className="bg-neutral-5 rounded-lg p-3">
-                    <div className="text-[13px] text-neutral-60 flex items-center gap-1.5">
-                      <span className="inline-block w-2 h-2 rounded-full bg-success-300"></span>
-                      Processed
-                    </div>
-                    <div className="text-2xl font-bold text-neutral-100 leading-tight mt-1">{proc}</div>
-                    <div className="text-[13px] text-neutral-60">bales</div>
-                  </div>
                 </div>
                 {known && (
                   <div className="flex h-2 mt-3 rounded-full overflow-hidden bg-neutral-5">
                     <div className="h-full bg-safi-600 transition-all" style={{ width: sw + '%' }} />
                     <div className="h-full bg-success-300 transition-all" style={{ width: pw + '%', opacity: 0.85 }} />
                     <div className="h-full bg-amber-500 transition-all" style={{ width: lw + '%', opacity: 0.55 }} />
+                  </div>
+                )}
+                {proc > 0 && (
+                  <div className="mt-2 text-[13px] text-neutral-60 inline-flex items-center gap-1.5">
+                    <Icon d={I.checkCircle} className="w-3.5 h-3.5 text-success-300" />
+                    {proc} bales from this load have already been processed
                   </div>
                 )}
                 {storageBays.length > 0 && (
@@ -3941,6 +3951,28 @@
                   </div>
                 </div>
 
+                {/* R55: field order under the Store bales CTA is Material → Supplier →
+                    Load number → Container → Description. */}
+                <div>
+                  <div className="text-[13px] text-neutral-60 mb-1">Material</div>
+                  <input
+                    type="text"
+                    value={editDraft.material}
+                    onChange={e => setEditDraft(d => ({ ...d, material: e.target.value }))}
+                    className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-[13px] text-neutral-60 mb-1">Supplier</div>
+                  <input
+                    type="text"
+                    value={editDraft.supplier}
+                    onChange={e => setEditDraft(d => ({ ...d, supplier: e.target.value }))}
+                    className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+                  />
+                </div>
+
                 <div>
                   <div className="text-[13px] text-neutral-60 mb-1">Load number</div>
                   <input
@@ -3959,26 +3991,6 @@
                     placeholder="Optional"
                     value={editDraft.container}
                     onChange={e => setEditDraft(d => ({ ...d, container: e.target.value }))}
-                    className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
-                  />
-                </div>
-
-                <div>
-                  <div className="text-[13px] text-neutral-60 mb-1">Material</div>
-                  <input
-                    type="text"
-                    value={editDraft.material}
-                    onChange={e => setEditDraft(d => ({ ...d, material: e.target.value }))}
-                    className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
-                  />
-                </div>
-
-                <div>
-                  <div className="text-[13px] text-neutral-60 mb-1">Supplier</div>
-                  <input
-                    type="text"
-                    value={editDraft.supplier}
-                    onChange={e => setEditDraft(d => ({ ...d, supplier: e.target.value }))}
                     className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
                   />
                 </div>
