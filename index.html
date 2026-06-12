@@ -1152,7 +1152,9 @@
                       )}
                     </div>
                     {/* Simplified minimap - bars only, no axis labels, no numbers.
-                        Height = bay fullness. Hatched = empty. Pure visual signal. */}
+                        Height = bay fullness. Hatched = empty. Pure visual signal.
+                        R56b: bars use the zone's identity colour, matching the dot
+                        and the store-flow minimap when that zone is selected. */}
                     <div
                       className="rounded-md bg-neutral-5 border border-neutral-10 px-3 py-2"
                       role="img"
@@ -1163,9 +1165,10 @@
                           const balesInBay = bayBales[i];
                           const isEmpty = balesInBay === 0;
                           const pct = isEmpty ? 14 : Math.max(8, (balesInBay / maxBayBales) * 100);
+                          const barColor = zc.swatch && zc.swatch !== 'transparent' ? zc.swatch : '#0c87f5';
                           const style = isEmpty
                             ? { height: `${pct}%`, backgroundColor: '#fff', border: '1px solid #d4d4d8', backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, #d4d4d8 3px, #d4d4d8 4px)' }
-                            : { height: `${pct}%`, backgroundColor: '#0c87f5', opacity: 0.85 };
+                            : { height: `${pct}%`, backgroundColor: barColor, opacity: 0.85 };
                           return (
                             <div
                               key={b.id}
@@ -3434,6 +3437,11 @@
                     Click to scroll that bay into view. */}
                 {selectedZone && selectedZone.bays.length > 6 && (() => {
                   const maxBales = Math.max(1, ...selectedZone.bays.map(b => b.loads.reduce((a, l) => a + l.bales, 0)));
+                  // R56b: bars use the selected zone's identity colour so the
+                  // store flow stays visually consistent with the warehouse view
+                  // (where each zone is tagged with the same dot colour).
+                  const zc = getZoneColor(selectedZone.color);
+                  const barColor = zc.swatch && zc.swatch !== 'transparent' ? zc.swatch : '#0c87f5';
                   return (
                     <div className="mb-3 px-3 py-2 rounded-md bg-neutral-5 border border-neutral-10">
                       <div className="flex items-end gap-0.5 h-9 w-full" role="navigation" aria-label="Bay minimap - height = bay fullness">
@@ -3442,12 +3450,9 @@
                           const isEmpty = baleCount === 0;
                           const pct = isEmpty ? 18 : Math.max(8, (baleCount / maxBales) * 100);
                           const isFocus = focusBayId === b.id;
-                          // R56: minimap now uses a neutral blue for "fullness" rather than
-                          // the zone colour - the zone colour is for identity, not status.
-                          // Red was reading as "danger / over capacity"; blue is calmer.
                           const tileStyle = isEmpty
                             ? { height: `${pct}%`, backgroundColor: '#fff', border: '1px solid #d4d4d8', backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, #d4d4d8 3px, #d4d4d8 4px)' }
-                            : { height: `${pct}%`, backgroundColor: '#0c87f5', opacity: 0.85 };
+                            : { height: `${pct}%`, backgroundColor: barColor, opacity: 0.85 };
                           return (
                             <button
                               key={b.id}
@@ -3471,10 +3476,11 @@
                         <span className="text-neutral-40">{selectedZone.bays.length} bays · height = fullness · click to jump</span>
                         <span>{selectedZone.bays[selectedZone.bays.length - 1].name}</span>
                       </div>
-                      {/* R56: Legend - so empty pattern is interpretable, not just guessed at. */}
+                      {/* R56: Legend - so empty pattern is interpretable, not just guessed at.
+                          R56b: "Bales stored" swatch follows the active zone's colour. */}
                       <div className="mt-2 flex items-center gap-4 text-[11px] text-neutral-60">
                         <span className="inline-flex items-center gap-1.5">
-                          <span className="inline-block w-3 h-3 rounded-sm" style={{ backgroundColor: '#0c87f5', opacity: 0.85 }} aria-hidden="true" />
+                          <span className="inline-block w-3 h-3 rounded-sm" style={{ backgroundColor: barColor, opacity: 0.85 }} aria-hidden="true" />
                           Bales stored
                         </span>
                         <span className="inline-flex items-center gap-1.5">
