@@ -304,6 +304,49 @@
   ];
   const getZoneColor = (id) => ZONE_COLORS.find(c => c.id === id) || ZONE_COLORS[0];
 
+  // R58: production-line association. A zone "serves" a line if the line is
+  // listed in zone.lines. Backwards-compat: a zone with no `lines` field (or
+  // empty/undefined) is treated as serving ALL lines — so existing seed data
+  // and pre-R58 zones keep working without modification.
+  const PRODUCTION_LINES_ALL = ['Apan 1', 'Apan 2'];
+  const zoneLines = (zone) =>
+    (zone && Array.isArray(zone.lines) && zone.lines.length > 0)
+      ? zone.lines
+      : PRODUCTION_LINES_ALL;
+  const zoneServesLine = (zone, line) => zoneLines(zone).includes(line);
+  const zoneServesAllLines = (zone) => zoneLines(zone).length === PRODUCTION_LINES_ALL.length;
+  // Tag colour to match the line: Apan 1 = sky, Apan 2 = amber (R57 convention).
+  const lineTagClasses = (line) => line === 'Apan 1'
+    ? 'bg-sky-50 text-sky-800 border-sky-200'
+    : 'bg-amber-50 text-amber-800 border-amber-200';
+
+  // Small inline chip — used wherever a zone surface (card, header, etc.) needs
+  // to declare its line restriction. Returns null when the zone serves all
+  // lines (the default state, no chip needed).
+  const lineRestrictionTag = (zone, lang) => {
+    if (!zone || zoneServesAllLines(zone)) return null;
+    const zLines = zoneLines(zone);
+    // Single-line restriction — render one coloured chip ("Apan 2 only").
+    if (zLines.length === 1) {
+      const line = zLines[0];
+      const onlyTxt = lang === 'es' ? 'solo' : 'only';
+      return (
+        <span
+          className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[12px] font-semibold border whitespace-nowrap ' + lineTagClasses(line)}
+          title={lang === 'es' ? `Material restringido a ${line}` : `Material restricted to ${line}`}
+        >
+          {line} {onlyTxt}
+        </span>
+      );
+    }
+    // Multi-line but not all — render the lines joined.
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-semibold border bg-neutral-5 text-neutral-80 border-neutral-10 whitespace-nowrap">
+        {zLines.join(' · ')}
+      </span>
+    );
+  };
+
   const INITIAL_YARD = [
     {
       // Zone A - no inventory rule. Loads can be selected and picked in any order
@@ -313,6 +356,8 @@
       esName: 'Zone A',
       color: 'red',
       inventoryRule: 'NONE',
+      // R58: serves both production lines (default).
+      lines: ['Apan 1', 'Apan 2'],
       bays: [
         {
           id: 'A1', name: 'Bay A1', esName: 'Bay A1', accessible: true,
@@ -358,6 +403,8 @@
       esName: 'Zone B',
       color: 'yellow',
       inventoryRule: 'LIFO',
+      // R58: serves both production lines (default).
+      lines: ['Apan 1', 'Apan 2'],
       bays: (() => {
         const layout = [
           { id: '1', loadIds: ['B-L123', 'B-L456', 'B-L321', 'B-L654', 'B-L987', 'B-L741', 'B-L852', 'B-L963', 'B-L159'] },
@@ -394,6 +441,11 @@
       esName: 'Zone C',
       color: 'darkBlue',
       inventoryRule: 'FIFO',
+      // R58: this zone is restricted to Apan 2 only — used in the prototype to
+      // demonstrate the line-association feature. The FO sees Zone C only when
+      // their Picker tab is feeding Apan 2; the SL can only put Zone C bays on
+      // an Apan 2 picking list (Apan 1 lists show Zone C as disabled).
+      lines: ['Apan 2'],
       bays: [
         {
           id: 'C2', name: 'Bay C2', esName: 'Bay C2', accessible: true,
@@ -1109,6 +1161,7 @@
                       {/* R55: coloured zone dot for at-a-glance identification. */}
                       {(() => { const zc = getZoneColor(zone.color); return zc.id !== 'none' ? <span className="w-3 h-3 rounded-full" style={{ backgroundColor: zc.swatch }} aria-hidden="true" /> : null; })()}
                       <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
+                      {lineRestrictionTag(zone, lang)}
                       {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80">
                           {zone.inventoryRule}
@@ -1147,6 +1200,7 @@
                     <div className="flex items-center gap-3 mb-3 flex-wrap">
                       {zc.id !== 'none' && <span className="w-3 h-3 rounded-full" style={{ backgroundColor: zc.swatch }} aria-hidden="true" />}
                       <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
+                      {lineRestrictionTag(zone, lang)}
                       {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80">
                           {zone.inventoryRule}
@@ -1202,6 +1256,7 @@
                       {/* R55: coloured zone dot for at-a-glance identification. */}
                       {(() => { const zc = getZoneColor(zone.color); return zc.id !== 'none' ? <span className="w-3 h-3 rounded-full" style={{ backgroundColor: zc.swatch }} aria-hidden="true" /> : null; })()}
                       <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
+                      {lineRestrictionTag(zone, lang)}
                       {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80">
                           {zone.inventoryRule}
@@ -1247,6 +1302,7 @@
                         {/* R55: coloured zone dot for at-a-glance identification. */}
                         {(() => { const zc = getZoneColor(zone.color); return zc.id !== 'none' ? <span className="w-3 h-3 rounded-full" style={{ backgroundColor: zc.swatch }} aria-hidden="true" /> : null; })()}
                         <div className="font-bold text-neutral-100 text-xl">{zoneName(zone, lang)}</div>
+                      {lineRestrictionTag(zone, lang)}
                       </div>
                       <div className="flex items-center gap-6 mt-2 flex-wrap">
                         <Metric2 label={tr('bays',  lang)} value={fmtNum(z.bays)} />
@@ -1331,9 +1387,10 @@
           {/* Tight yard header: title, single-line metrics, then minimap */}
           <div className="mt-2 mb-3 flex items-start justify-between gap-3 flex-wrap">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 {(() => { const zc = getZoneColor(zone.color); return zc.id !== 'none' ? <span className="w-3 h-3 rounded-full" style={{ backgroundColor: zc.swatch }} /> : null; })()}
                 <h3 className="text-2xl font-bold text-neutral-100">{zoneName(zone, lang)}</h3>
+                {lineRestrictionTag(zone, lang)}
               </div>
               <div className="text-[13px] text-neutral-60 mt-1">
                 {z.bays} {tr('bays', lang).toLowerCase()} · {z.loads} {tr('loads', lang).toLowerCase()} · {fmtNum(z.bales)} {tr('bales', lang).toLowerCase()} · {fmtKg(z.weight)}
@@ -1353,6 +1410,28 @@
               </div>
             )}
           </div>
+
+          {/* R58: SL is creating a picking list for a specific creationLine
+              but this zone doesn't serve that line. We show the zone (so the SL
+              keeps spatial context — see UX writeup) but disable bay selection
+              and surface a clear amber banner explaining the constraint. */}
+          {isCreating && !zoneServesLine(zone, creationLine) && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
+              <Icon d={I.warning} className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0 text-[13px]">
+                <div className="font-semibold text-amber-900">
+                  {lang === 'es'
+                    ? `${zoneName(zone, lang)} no alimenta ${creationLine}`
+                    : `${zoneName(zone, lang)} doesn't feed ${creationLine}`}
+                </div>
+                <div className="text-amber-800 mt-0.5">
+                  {lang === 'es'
+                    ? `Esta zona está restringida a ${zoneLines(zone).join(' y ')}. Cambia la línea de tu lista de recolección si quieres añadir cargas desde aquí.`
+                    : `This zone is restricted to ${zoneLines(zone).join(' & ')}. Change the line on your picking list if you want to add loads from here.`}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Directional flow indicator (picking list workflow only) */}
           {isCreating && (
@@ -1463,7 +1542,10 @@
           >
             {reorderedBays.map((bay) => {
               const s = bayStats(bay);
-              const blocked = isCreating && !bay.accessible;
+              // R58: a bay is also "blocked" for selection when the SL is
+              // creating a list for a line this zone doesn't serve.
+              const lineBlocked = isCreating && !zoneServesLine(zone, creationLine);
+              const blocked = isCreating && (!bay.accessible || lineBlocked);
               const empty = s.bales === 0;
               const bayLoadKeys = bay.loads.map(l => `${zone.id}|${bay.id}|${l.id}`);
               const allSelected = isCreating && bay.accessible && bayLoadKeys.length > 0 && bayLoadKeys.every(k => selectionBales[k] != null);
@@ -1492,7 +1574,8 @@
 
               const toggleAllInBay = (e) => {
                 e.stopPropagation();
-                if (!isCreating || !bay.accessible || bayLoadKeys.length === 0) return;
+                // R58: also block when this zone doesn't serve the creationLine.
+                if (!isCreating || !bay.accessible || bayLoadKeys.length === 0 || lineBlocked) return;
                 setSelectionBales(prev => {
                   const next = { ...prev };
                   if (allSelected) {
@@ -1652,8 +1735,10 @@
         );
       }
       const s = bayStats(bay);
+      // R58: lock load selection when SL's creationLine doesn't match the zone.
+      const bayLineBlocked = isCreating && zone && !zoneServesLine(zone, creationLine);
       const toggleLoad = (key) => {
-        if (!isCreating) return;
+        if (!isCreating || bayLineBlocked) return;
         setSelectionBales(prev => {
           if (prev[key] != null) { const n = { ...prev }; delete n[key]; return n; }
           const [zid, bid, lid] = key.split('|');
@@ -1665,6 +1750,25 @@
       };
       return (
         <div className="bg-white border border-neutral-10 rounded-xl">
+          {/* R58: line-mismatch banner — same copy + treatment as the zone view,
+              so the SL who drilled into a bay still sees why selection is off. */}
+          {bayLineBlocked && (
+            <div className="m-5 mb-0 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
+              <Icon d={I.warning} className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0 text-[13px]">
+                <div className="font-semibold text-amber-900">
+                  {lang === 'es'
+                    ? `${zoneName(zone, lang)} no alimenta ${creationLine}`
+                    : `${zoneName(zone, lang)} doesn't feed ${creationLine}`}
+                </div>
+                <div className="text-amber-800 mt-0.5">
+                  {lang === 'es'
+                    ? `Restringida a ${zoneLines(zone).join(' y ')}. Cambia la línea de tu lista para añadir cargas desde aquí.`
+                    : `Restricted to ${zoneLines(zone).join(' & ')}. Change the line on your picking list to add loads from here.`}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="p-5 border-b border-neutral-10">
             <Breadcrumbs zone={zone} bay={bay} />
             <div className="mt-2 flex items-center justify-between gap-6 flex-wrap">
@@ -2201,6 +2305,12 @@
     const CreateZoneForm = () => {
       const [name, setName] = useState('');
       const [colorId, setColorId] = useState('none');
+      // R58: which production lines this zone serves. Default = all lines.
+      // At least one must remain selected (validated below).
+      const [lines, setLines] = useState([...PRODUCTION_LINES_ALL]);
+      const toggleLine = (line) => setLines(prev =>
+        prev.includes(line) ? prev.filter(l => l !== line) : [...prev, line]
+      );
       // R40: bays managed inline. Starts with one bay defaulted to "Bay 1".
       const [bays, setBays] = useState([{ key: 'b1', name: 'Bay 1' }]);
       const addBay = () => {
@@ -2217,7 +2327,10 @@
       const baysAllFilled = bayNames.every(n => n.length > 0);
       const baysUnique = new Set(bayNames.map(n => n.toLowerCase())).size === bayNames.length;
       const baysValid = bays.length > 0 && baysAllFilled && baysUnique;
-      const canSave = !!trimmed && !duplicate && baysValid;
+      // R58: a zone must serve at least one production line; otherwise it's
+      // inaccessible to anyone and there's no purpose to creating it.
+      const linesValid = lines.length > 0;
+      const canSave = !!trimmed && !duplicate && baysValid && linesValid;
       return (
         <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
           <Title>{tEN('Create zone', 'Crear zona')}</Title>
@@ -2247,6 +2360,51 @@
                 ))}
               </div>
               <p className="text-[13px] text-neutral-60 mt-1.5">{getZoneColor(colorId).label}</p>
+            </Field>
+            {/* R58: production-line association. A zone can feed all lines (default)
+                or be restricted to specific lines. Restricted zones only show up for
+                FOs and SLs working on the matching line. */}
+            <Field label={tEN('Production lines', 'Líneas de producción')}>
+              <div className="grid grid-cols-2 gap-2">
+                {PRODUCTION_LINES_ALL.map(line => {
+                  const checked = lines.includes(line);
+                  const accent = line === 'Apan 1'
+                    ? (checked ? 'border-sky-500 bg-sky-50 text-sky-900' : 'border-neutral-10 bg-white text-neutral-100 hover:border-sky-200')
+                    : (checked ? 'border-amber-500 bg-amber-50 text-amber-900' : 'border-neutral-10 bg-white text-neutral-100 hover:border-amber-200');
+                  return (
+                    <button
+                      key={line}
+                      type="button"
+                      onClick={() => toggleLine(line)}
+                      aria-pressed={checked}
+                      className={'min-h-[52px] flex items-center gap-3 px-3 py-2 rounded-lg border-2 transition text-left ' + accent}
+                    >
+                      <span
+                        className={
+                          'w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ' +
+                          (checked
+                            ? (line === 'Apan 1' ? 'bg-sky-600 border-sky-600' : 'bg-amber-600 border-amber-600')
+                            : 'bg-white border-neutral-20')
+                        }
+                        aria-hidden="true"
+                      >
+                        {checked && <Icon d={I.check} className="w-3 h-3 text-white" />}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[15px] font-bold leading-tight">{line}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[13px] text-neutral-60 mt-2">
+                {lines.length === PRODUCTION_LINES_ALL.length
+                  ? tEN('Material from this zone can be fed to any production line.', 'El material de esta zona puede alimentar cualquier línea de producción.')
+                  : lines.length === 0
+                    ? tEN('Select at least one line so this zone is reachable.', 'Selecciona al menos una línea para que la zona sea accesible.')
+                    : tEN(`Material from this zone is restricted to ${lines.join(' & ')}.`, `El material de esta zona está restringido a ${lines.join(' y ')}.`)}
+              </p>
+              {!linesValid && <p className="text-[13px] text-rose-700 mt-1.5">{tEN('Pick at least one production line.', 'Selecciona al menos una línea.')}</p>}
             </Field>
             {/* R40: inline bay editor. Always starts with one default bay. */}
             <Field label={tEN('Bays', 'Filas')}>
@@ -2288,7 +2446,7 @@
             onCancel={onClose}
             onConfirm={() => {
               const finalBays = bayNames.filter(Boolean);
-              yardOps.createZone({ name: trimmed, color: colorId, bays: finalBays });
+              yardOps.createZone({ name: trimmed, color: colorId, bays: finalBays, lines });
               setToast?.({
                 message: tEN(
                   `Zone "${trimmed}" created with ${finalBays.length} bay${finalBays.length === 1 ? '' : 's'}.`,
@@ -2308,12 +2466,18 @@
       const zone = yard.find(z => z.id === editor.zoneId);
       const [name, setName] = useState(zone?.name || '');
       const [colorId, setColorId] = useState(zone?.color || 'none');
+      // R58: lines multi-select. Falls back to all lines for legacy zones.
+      const [lines, setLines] = useState(() => zone ? [...zoneLines(zone)] : [...PRODUCTION_LINES_ALL]);
+      const toggleLine = (line) => setLines(prev =>
+        prev.includes(line) ? prev.filter(l => l !== line) : [...prev, line]
+      );
       const [confirmDelete, setConfirmDelete] = useState(false);
       if (!zone) return null;
       const totalLoads = zone.bays.reduce((a, b) => a + b.loads.length, 0);
       const trimmed = name.trim();
       const duplicate = trimmed && yard.some(z => z.id !== zone.id && (z.name || '').toLowerCase() === trimmed.toLowerCase());
-      const canSave = !!trimmed && !duplicate;
+      const linesValid = lines.length > 0;
+      const canSave = !!trimmed && !duplicate && linesValid;
       const canDelete = totalLoads === 0 && zone.bays.every(b => b.loads.length === 0);
       return (
         <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
@@ -2338,6 +2502,48 @@
                   </button>
                 ))}
               </div>
+            </Field>
+            {/* R58: production-line association — same multi-select pattern as
+                Create Zone, so SLs/managers can adjust constraints over time. */}
+            <Field label={tEN('Production lines', 'Líneas de producción')}>
+              <div className="grid grid-cols-2 gap-2">
+                {PRODUCTION_LINES_ALL.map(line => {
+                  const checked = lines.includes(line);
+                  const accent = line === 'Apan 1'
+                    ? (checked ? 'border-sky-500 bg-sky-50 text-sky-900' : 'border-neutral-10 bg-white text-neutral-100 hover:border-sky-200')
+                    : (checked ? 'border-amber-500 bg-amber-50 text-amber-900' : 'border-neutral-10 bg-white text-neutral-100 hover:border-amber-200');
+                  return (
+                    <button
+                      key={line}
+                      type="button"
+                      onClick={() => toggleLine(line)}
+                      aria-pressed={checked}
+                      className={'min-h-[52px] flex items-center gap-3 px-3 py-2 rounded-lg border-2 transition text-left ' + accent}
+                    >
+                      <span
+                        className={
+                          'w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ' +
+                          (checked
+                            ? (line === 'Apan 1' ? 'bg-sky-600 border-sky-600' : 'bg-amber-600 border-amber-600')
+                            : 'bg-white border-neutral-20')
+                        }
+                        aria-hidden="true"
+                      >
+                        {checked && <Icon d={I.check} className="w-3 h-3 text-white" />}
+                      </span>
+                      <div className="text-[15px] font-bold leading-tight">{line}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[13px] text-neutral-60 mt-2">
+                {lines.length === PRODUCTION_LINES_ALL.length
+                  ? tEN('Material from this zone can be fed to any production line.', 'El material de esta zona puede alimentar cualquier línea de producción.')
+                  : lines.length === 0
+                    ? tEN('Select at least one line so this zone is reachable.', 'Selecciona al menos una línea para que la zona sea accesible.')
+                    : tEN(`Material from this zone is restricted to ${lines.join(' & ')}.`, `El material de esta zona está restringido a ${lines.join(' y ')}.`)}
+              </p>
+              {!linesValid && <p className="text-[13px] text-rose-700 mt-1.5">{tEN('Pick at least one production line.', 'Selecciona al menos una línea.')}</p>}
             </Field>
             <div className="pt-3 border-t border-neutral-10">
               <button
@@ -2368,7 +2574,7 @@
           ) : (
             <Footer
               onCancel={onClose}
-              onConfirm={() => { yardOps.updateZone(zone.id, { name: trimmed, color: colorId }); setToast?.({ message: tEN('Zone updated.', 'Zona actualizada.'), kind: 'success' }); onClose(); }}
+              onConfirm={() => { yardOps.updateZone(zone.id, { name: trimmed, color: colorId, lines }); setToast?.({ message: tEN('Zone updated.', 'Zona actualizada.'), kind: 'success' }); onClose(); }}
               confirmLabel={tEN('Save changes', 'Guardar cambios')}
               confirmDisabled={!canSave}
             />
@@ -4566,11 +4772,12 @@
     const [buffer, setBuffer] = useState(SEED_BUFFER);
     // Mutator helpers - thin wrappers that keep call sites readable.
     const yardOps = {
-      createZone: ({ name, color, bays = [] }) => setYard(prev => {
+      createZone: ({ name, color, bays = [], lines = ['Apan 1', 'Apan 2'] }) => setYard(prev => {
         const id = name.replace(/\s+/g, '').slice(0, 4).toUpperCase() + '-' + Date.now().toString(36).slice(-4);
         // R40: bays passed in are created together with the zone.
         const bayObjs = bays.map(bn => ({ id: bn, name: bn, esName: bn, accessible: true, loads: [] }));
-        return [...prev, { id, name, esName: name, color: color || 'none', inventoryRule: 'NONE', bays: bayObjs }];
+        // R58: lines = which production lines this zone serves. Defaults to all.
+        return [...prev, { id, name, esName: name, color: color || 'none', inventoryRule: 'NONE', bays: bayObjs, lines }];
       }),
       updateZone: (zoneId, patch) => setYard(prev => prev.map(z => z.id === zoneId ? { ...z, ...patch, esName: patch.name || z.esName } : z)),
       deleteZone: (zoneId) => setYard(prev => prev.filter(z => z.id !== zoneId)),
@@ -7127,17 +7334,28 @@
     const bufferWeight = buffer.reduce((a, b) => a + Math.round(b.bales * b.weightPerBale), 0);
 
     // Visible bays after applying all three filters: picking-list-only, bay filter, material filter.
+    // R58: zones not serving the active line are HIDDEN from the FO picker —
+    // per UX call, the FO persona wants radical simplicity ("what can I feed
+    // Apan 1 right now?"), not a list of zones they can't act on. The hidden
+    // count is surfaced as a small caption below so system status stays visible.
+    const lineHiddenZoneCount = useMemo(
+      () => YARD.filter(z => !zoneServesLine(z, activeLine)).length,
+      [activeLine]
+    );
     const visibleZones = useMemo(() => {
-      return YARD.map(zone => {
-        const bays = zone.bays.filter(bay => {
-          if (pickingListOnly && !pickingListBays.has(`${zone.id}|${bay.id}`)) return false;
-          if (bayFilter.size > 0 && !bayFilter.has(`${zone.id}|${bay.id}`)) return false;
-          if (materialFilter.size > 0 && !bay.loads.some(l => materialFilter.has(l.material))) return false;
-          return true;
-        });
-        return { zone, bays };
-      }).filter(z => z.bays.length > 0);
-    }, [pickingListOnly, pickingListBays, bayFilter, materialFilter]);
+      return YARD
+        .filter(zone => zoneServesLine(zone, activeLine))
+        .map(zone => {
+          const bays = zone.bays.filter(bay => {
+            if (pickingListOnly && !pickingListBays.has(`${zone.id}|${bay.id}`)) return false;
+            if (bayFilter.size > 0 && !bayFilter.has(`${zone.id}|${bay.id}`)) return false;
+            if (materialFilter.size > 0 && !bay.loads.some(l => materialFilter.has(l.material))) return false;
+            return true;
+          });
+          return { zone, bays };
+        })
+        .filter(z => z.bays.length > 0);
+    }, [pickingListOnly, pickingListBays, bayFilter, materialFilter, activeLine]);
 
     const anyFilterActive = pickingListOnly || bayFilter.size > 0 || materialFilter.size > 0;
     const clearAllFilters = () => {
@@ -7537,6 +7755,19 @@
             </button>
           )}
         </div>
+
+        {/* R58: hidden-zones caption. Keeps NN/g #1 (visibility of system status)
+            satisfied: the FO sees, in plain text, that some zones aren't shown
+            because they belong to a different line. */}
+        {lineHiddenZoneCount > 0 && (
+          <div className="text-[12px] text-neutral-60 -mt-1.5 flex items-center gap-1.5">
+            <Icon d={I.info} className="w-3.5 h-3.5 text-neutral-40" />
+            {tEN(
+              `${lineHiddenZoneCount} ${lineHiddenZoneCount === 1 ? 'zone' : 'zones'} hidden — only showing zones that feed ${activeLine}.`,
+              `${lineHiddenZoneCount} ${lineHiddenZoneCount === 1 ? 'zona oculta' : 'zonas ocultas'} — solo se muestran zonas que alimentan ${activeLine}.`
+            )}
+          </div>
+        )}
 
         {/* Zones / bays */}
         <div className="space-y-3">
