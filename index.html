@@ -6989,14 +6989,31 @@
   }
 
   function ForkliftPickerMergedView({ pickingLists = [], processed, setProcessed, lang, setToast, bufferEnabled = true, pickerMode = 'load', yard = [], buffer = [], setBuffer = () => {} }) {
-    // R36: FO selects a single picking list via a "Production line" dropdown
-    // showing the (line, shift) combinations that have lists. Default to first available.
-    const [pickingListId, setPickingListId] = useState(() => pickingLists[0]?.id || null);
+    // R57: Production line switch — Apan 1 / Apan 2. Independent of whether
+    // picking lists exist (load-based mode often has none). The chosen line
+    // is reflected on processing toasts so it's always clear which line the
+    // material is being fed to.
+    const [activeLine, setActiveLine] = useState('Apan 1');
+    const PRODUCTION_LINES = ['Apan 1', 'Apan 2'];
+
+    // Picking lists for the currently-selected production line.
+    const linePickingLists = useMemo(
+      () => pickingLists.filter(pl => pl.productionLine === activeLine),
+      [pickingLists, activeLine]
+    );
+
+    // R36/R57: FO selects a picking list via the (now optional) shift dropdown.
+    // When the line switch changes, snap to the first list on that line.
+    const [pickingListId, setPickingListId] = useState(() => linePickingLists[0]?.id || null);
     useEffect(() => {
-      if (pickingLists.length > 0 && !pickingLists.some(pl => pl.id === pickingListId)) {
-        setPickingListId(pickingLists[0].id);
+      if (linePickingLists.length === 0) {
+        if (pickingListId !== null) setPickingListId(null);
+        return;
       }
-    }, [pickingLists]);
+      if (!linePickingLists.some(pl => pl.id === pickingListId)) {
+        setPickingListId(linePickingLists[0].id);
+      }
+    }, [linePickingLists]);
     // Derive the single active list for the legacy logic below.
     const pickingList = pickingLists.find(pl => pl.id === pickingListId) || null;
     // All zones open by default so FO sees everything on landing.
@@ -7213,7 +7230,15 @@
         });
       }
       setModal(null);
-      setToast?.({ message: tEN(`Processed ${bales} bales (${fmtKg(weight)})`, `Procesadas ${bales} pacas (${fmtKg(weight)})`), kind: 'success' });
+      // R57: include the active production line in the confirmation toast so
+      // the FO can verify the material went to the right line at a glance.
+      setToast?.({
+        message: tEN(
+          `Processed ${bales} bales (${fmtKg(weight)}) on ${activeLine}`,
+          `Procesadas ${bales} pacas (${fmtKg(weight)}) en ${activeLine}`
+        ),
+        kind: 'success'
+      });
     };
 
     return (
@@ -7375,23 +7400,84 @@
           </div>
         ))}
 
-        {/* Filter row - R36: Production line dropdown sits LEFT of Bays + Material.
-            Single-select picking list filter (Apan 1 - Shift 1, Apan 1 - Shift 2, ...).
-            Filters the visible loads to ONLY those on the selected picking list. */}
+        {/* Filter row - R57: Production line SWITCH sits LEFT of all filters.
+            Always visible (both bale-based and load-based modes). Tells the FO
+            and the system which line they're feeding. Apan 1 uses sky tones,
+            Apan 2 uses amber — matching the existing load-claim chip palette so
+            the FO can scan-match loads to "their" line. When the line changes,
+            the shift dropdown (if shown) snaps to the first list on that line. */}
         <div className="flex flex-wrap items-center gap-3">
-          {pickingLists.length > 0 && (
-            <div className="bg-white border border-neutral-10 rounded-lg px-3 py-2 min-h-[52px] flex items-center gap-2 min-w-[200px]">
-              <Icon d={I.factory} className="w-4 h-4 text-neutral-60 shrink-0" />
+          {/* R57: Production line switch — the BIG control. Outlined with the
+              active line's accent colour so it stands out from every other
+              filter on the row. */}
+          <div
+            className={
+              'rounded-xl px-4 py-2.5 min-h-[60px] flex items-center gap-3 border-2 shadow-sm ' +
+              (activeLine === 'Apan 1'
+                ? 'bg-sky-50 border-sky-300'
+                : 'bg-amber-50 border-amber-300')
+            }
+            role="group"
+            aria-label={tEN('Feeding production line', 'Línea de producción alimentada')}
+          >
+            <Icon
+              d={I.factory}
+              className={
+                'w-5 h-5 shrink-0 ' +
+                (activeLine === 'Apan 1' ? 'text-sky-700' : 'text-amber-700')
+              }
+            />
+            <div className="flex flex-col gap-1">
+              <div className="text-[11px] uppercase tracking-wider text-neutral-60 font-bold leading-none">
+                {tEN('Feeding line', 'Línea alimentada')}
+              </div>
+              <div className="flex items-center bg-white rounded-lg p-0.5 gap-0.5 border border-neutral-10">
+                {PRODUCTION_LINES.map(line => {
+                  const isActive = activeLine === line;
+                  const activeCls = line === 'Apan 1'
+                    ? 'bg-sky-600 text-white shadow-sm'
+                    : 'bg-amber-600 text-white shadow-sm';
+                  return (
+                    <button
+                      key={line}
+                      type="button"
+                      onClick={() => setActiveLine(line)}
+                      className={
+                        'px-4 py-1.5 rounded-md text-[15px] font-bold transition min-w-[78px] ' +
+                        (isActive ? activeCls : 'text-neutral-60 hover:bg-neutral-5')
+                      }
+                      aria-pressed={isActive}
+                      aria-label={
+                        isActive
+                          ? tEN(`Currently feeding ${line}`, `Alimentando ${line}`)
+                          : tEN(`Switch to ${line}`, `Cambiar a ${line}`)
+                      }
+                    >
+                      {line}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          {/* R57: Shift dropdown — only shown when this line has more than one
+              picking list (e.g. multiple shifts). Sits next to the line switch
+              so the FO can drill into a specific shift if needed. */}
+          {linePickingLists.length > 1 && (
+            <div className="bg-white border border-neutral-10 rounded-lg px-3 py-2 min-h-[60px] flex items-center gap-2 min-w-[180px]">
+              <Icon d={I.list} className="w-4 h-4 text-neutral-60 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] text-neutral-60 leading-none">{tEN('Production line', 'Línea de producción')}</div>
+                <div className="text-[11px] uppercase tracking-wider text-neutral-60 font-semibold leading-none">
+                  {tEN('Picking list / shift', 'Turno / lista')}
+                </div>
                 <select
                   value={pickingListId || ''}
                   onChange={e => setPickingListId(e.target.value)}
-                  className="text-[15px] font-medium text-neutral-100 bg-transparent border-0 focus:outline-none focus:ring-0 cursor-pointer pr-1 mt-0.5 w-full"
+                  className="text-[15px] font-medium text-neutral-100 bg-transparent border-0 focus:outline-none focus:ring-0 cursor-pointer pr-1 mt-1 w-full"
                 >
-                  {pickingLists.map(pl => (
+                  {linePickingLists.map(pl => (
                     <option key={pl.id} value={pl.id}>
-                      {pl.productionLine} - {pl.shift} ({pl.loads.filter(l => !processed[l.loadId]).length})
+                      {pl.shift} ({pl.loads.filter(l => !processed[l.loadId]).length})
                     </option>
                   ))}
                 </select>
