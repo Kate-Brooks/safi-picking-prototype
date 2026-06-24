@@ -2982,8 +2982,501 @@
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // R61 Phase 2 — Zone + bays view (Figma 15987-11388)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Simple Access Pattern picker — used inside each bay edit card.
+  // Reflects bay.accessPattern with a fallback to zone.inventoryRule.
+  function AccessPatternSelect({ value, onChange }) {
+    return (
+      <div className="relative">
+        <label className="absolute -top-2 left-2 bg-white px-1 text-[10px] text-neutral-60 z-10">Access</label>
+        <select
+          value={value || 'NONE'}
+          onChange={e => onChange(e.target.value)}
+          className="h-9 pl-2.5 pr-7 rounded-md border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-safi-600 min-w-[88px]"
+        >
+          <option value="NONE">None</option>
+          <option value="FIFO">FIFO</option>
+          <option value="LIFO">LIFO</option>
+        </select>
+        <Icon d={I.chevron} className="w-3 h-3 text-neutral-60 absolute right-2 top-3 pointer-events-none" />
+      </div>
+    );
+  }
+
+  // Compact quality chip for a single load. Uses the existing load.results
+  // (transparentPET / colouredPET / contaminants); we render the headline
+  // transparent PET % with red/green styling around the 92% spec threshold.
+  function LoadQualityChip({ load }) {
+    const tp = load.results?.transparentPET;
+    if (tp == null) {
+      return (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] text-neutral-60 bg-neutral-5 border border-neutral-10">
+          Not analysed
+        </span>
+      );
+    }
+    const inSpec = tp >= 92;
+    return (
+      <span className={
+        'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border ' +
+        (inSpec ? 'bg-success-50 text-success-700 border-success-100' : 'bg-danger-50 text-danger-700 border-danger-200')
+      }>
+        <span aria-hidden="true">{inSpec ? '✓' : '⚠'}</span>
+        Transparent PET {tp.toFixed(1)}%
+      </span>
+    );
+  }
+
+  // BayEditCard — appears in the horizontal row inside the zone view. Shows
+  // the bay's name, access pattern, lock, optional stack height + the full
+  // list of loads with checkboxes (no drag — per R61 spec, drag for load
+  // reorder only lives in the bay detail view, Phase 3).
+  function BayEditCard({ bay, zone, selectedLoadIds, onToggleSelect, onSelectAllInBay, dispatch }) {
+    const accessPattern = bay.accessPattern || zone.inventoryRule || 'NONE';
+    const allSelected = bay.loads.length > 0 && bay.loads.every(l => selectedLoadIds.has(l.id));
+    const someSelected = bay.loads.some(l => selectedLoadIds.has(l.id));
+    return (
+      <div className="shrink-0 w-[340px] border border-neutral-10 rounded-lg bg-white p-3 flex flex-col">
+        {/* Header: name + access + lock + (optional) stack height */}
+        <div className="space-y-2 pb-3 mb-3 border-b border-neutral-10">
+          <div className="relative">
+            <label className="absolute -top-2 left-2 bg-white px-1 text-[10px] text-neutral-60 z-10">Bay name</label>
+            <input
+              type="text"
+              value={bay.name}
+              onChange={e => dispatch({ type: 'updateBay', zoneId: zone.id, bayId: bay.id, patch: { name: e.target.value } })}
+              className="w-full h-9 px-2.5 border border-neutral-10 rounded-md text-[13px] font-semibold text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
+            />
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <AccessPatternSelect
+              value={accessPattern}
+              onChange={v => dispatch({ type: 'updateBay', zoneId: zone.id, bayId: bay.id, patch: { accessPattern: v } })}
+            />
+            <SplitLock
+              lockedStorage={!!bay.lockedStorage}
+              lockedProcessing={!!bay.lockedProcessing}
+              onChange={({ lockedStorage, lockedProcessing }) => dispatch({
+                type: 'updateBay', zoneId: zone.id, bayId: bay.id,
+                patch: { lockedStorage, lockedProcessing },
+              })}
+            />
+          </div>
+          {zone.stackHeightsEnabled && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[12px] text-neutral-60">Stack height:</span>
+              <input
+                type="number"
+                value={bay.stackLimit ?? ''}
+                onChange={e => dispatch({
+                  type: 'updateBay', zoneId: zone.id, bayId: bay.id,
+                  patch: { stackLimit: e.target.value ? Math.max(1, Number(e.target.value)) : null },
+                })}
+                placeholder="—"
+                min="1"
+                className="w-14 h-7 px-1.5 border border-neutral-10 rounded text-[12px] text-center"
+              />
+              <span className="text-[11px] text-neutral-60">bales high</span>
+            </div>
+          )}
+        </div>
+
+        {/* Select-all row */}
+        <div className="flex items-center justify-between text-[12px] mb-2">
+          <span className="text-neutral-60">{bay.loads.length} {bay.loads.length === 1 ? 'load' : 'loads'}</span>
+          {bay.loads.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onSelectAllInBay(bay, !allSelected)}
+              className="text-safi-700 font-semibold hover:underline"
+            >
+              {allSelected ? 'Deselect all' : 'Select all'}
+            </button>
+          )}
+        </div>
+
+        {/* Loads — full details, no truncation (cards are wide enough) */}
+        <div className="flex-1 space-y-1.5 max-h-[440px] overflow-y-auto pr-1">
+          {bay.loads.length === 0 ? (
+            <div className="text-[12px] text-neutral-60 px-2 py-4 text-center border border-dashed border-neutral-20 rounded">
+              No loads in this bay
+            </div>
+          ) : (
+            bay.loads.map(load => {
+              const isSelected = selectedLoadIds.has(load.id);
+              return (
+                <label
+                  key={load.id}
+                  className={
+                    'flex items-start gap-2 px-2 py-2 rounded border cursor-pointer transition ' +
+                    (isSelected ? 'border-safi-300 bg-safi-50/40' : 'border-neutral-10 hover:bg-neutral-5')
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => onToggleSelect(load.id)}
+                    className="mt-1 shrink-0 cursor-pointer"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-semibold text-neutral-100">{load.supplier}</div>
+                    <div className="text-[11px] text-neutral-60">
+                      #{load.lot} · {load.bales} bales · {fmtKg(load.weight)}
+                    </div>
+                    <div className="mt-1">
+                      <LoadQualityChip load={load} />
+                    </div>
+                  </div>
+                </label>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Floating action bar — appears at the bottom of the zone view when ≥1
+  // load is selected. Lets the SL move the selection to another bay or to a
+  // buffer zone, then clear selection.
+  function MoveLoadsBar({ count, sourceZoneId, sourceBayId, yard, bufferZones, onMove, onCancel }) {
+    const [showPicker, setShowPicker] = useState(false);
+    const [destKind, setDestKind] = useState('bay');
+    const otherZones = yard;
+    const initialZone = otherZones[0]?.id;
+    const initialZoneObj = otherZones.find(z => z.id === initialZone);
+    const [destZoneId, setDestZoneId] = useState(initialZone);
+    const [destBayId, setDestBayId] = useState(
+      initialZoneObj?.bays.find(b => !(initialZone === sourceZoneId && b.id === sourceBayId))?.id ||
+      initialZoneObj?.bays[0]?.id || null
+    );
+    const [destBufferId, setDestBufferId] = useState(bufferZones[0]?.id || null);
+
+    const currentZone = otherZones.find(z => z.id === destZoneId);
+    useEffect(() => {
+      // When zone changes, default bay = first non-source
+      if (!currentZone) return;
+      const valid = currentZone.bays.find(b => !(destZoneId === sourceZoneId && b.id === sourceBayId)) || currentZone.bays[0];
+      setDestBayId(valid?.id || null);
+    }, [destZoneId]);
+
+    const sameAsSource = destKind === 'bay' && destZoneId === sourceZoneId && destBayId === sourceBayId;
+    const canMove = destKind === 'bay' ? (!!destZoneId && !!destBayId && !sameAsSource) : !!destBufferId;
+
+    return (
+      <div className="fixed bottom-14 left-0 right-0 z-40 px-6 pb-2 pointer-events-none">
+        <div className="max-w-[1400px] mx-auto rounded-lg bg-neutral-100 text-white shadow-xl flex items-center justify-between px-4 py-2.5 gap-3 pointer-events-auto flex-wrap">
+          <span className="font-semibold text-[14px]">
+            {count} {count === 1 ? 'load' : 'loads'} selected
+          </span>
+          {!showPicker ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPicker(true)}
+                className="px-3 py-1.5 rounded-md bg-white text-neutral-100 text-[13px] font-semibold hover:bg-neutral-10 inline-flex items-center gap-1.5 min-h-[36px]"
+              >
+                Move to…
+                <Icon d={I.chevron} className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={onCancel}
+                className="px-3 py-1.5 rounded-md text-white/90 text-[13px] hover:bg-white/10 min-h-[36px]"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Destination kind tabs */}
+              <div className="inline-flex bg-neutral-80 rounded-md p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setDestKind('bay')}
+                  className={'px-2.5 py-1 rounded text-[12px] font-semibold ' + (destKind === 'bay' ? 'bg-white text-neutral-100' : 'text-white/80')}
+                >Bay</button>
+                <button
+                  type="button"
+                  onClick={() => setDestKind('buffer')}
+                  className={'px-2.5 py-1 rounded text-[12px] font-semibold ' + (destKind === 'buffer' ? 'bg-white text-neutral-100' : 'text-white/80')}
+                >Buffer</button>
+              </div>
+              {destKind === 'bay' ? (
+                <>
+                  <select
+                    value={destZoneId || ''}
+                    onChange={e => setDestZoneId(e.target.value)}
+                    className="h-8 px-2 rounded text-[12px] bg-white text-neutral-100 border border-neutral-10"
+                  >
+                    {yard.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
+                  </select>
+                  <select
+                    value={destBayId || ''}
+                    onChange={e => setDestBayId(e.target.value)}
+                    className="h-8 px-2 rounded text-[12px] bg-white text-neutral-100 border border-neutral-10"
+                  >
+                    {(currentZone?.bays || []).map(b => {
+                      const isSource = currentZone.id === sourceZoneId && b.id === sourceBayId;
+                      return <option key={b.id} value={b.id} disabled={isSource}>{b.name}{isSource ? ' — source' : ''}</option>;
+                    })}
+                  </select>
+                </>
+              ) : (
+                <select
+                  value={destBufferId || ''}
+                  onChange={e => setDestBufferId(e.target.value)}
+                  className="h-8 px-2 rounded text-[12px] bg-white text-neutral-100 border border-neutral-10"
+                >
+                  {bufferZones.length === 0 && <option value="">No buffers yet</option>}
+                  {bufferZones.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              )}
+              <button
+                type="button"
+                disabled={!canMove}
+                onClick={() => {
+                  if (destKind === 'bay') onMove({ kind: 'bay', zoneId: destZoneId, bayId: destBayId });
+                  else onMove({ kind: 'buffer', bufferId: destBufferId });
+                  setShowPicker(false);
+                }}
+                className={
+                  'px-3 py-1.5 rounded-md text-[12px] font-semibold min-h-[32px] ' +
+                  (canMove ? 'bg-white text-neutral-100 hover:bg-neutral-10' : 'bg-white/30 text-white/60 cursor-not-allowed')
+                }
+              >Move</button>
+              <button
+                type="button"
+                onClick={() => setShowPicker(false)}
+                className="px-2 py-1 rounded text-white/90 text-[12px] hover:underline"
+              >Cancel</button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Zone + bays body — the content rendered inside EditWarehouseOverlay when
+  // a zone has been opened from the yard view.
+  // ─────────────────────────────────────────────────────────────────────────
+  function EditWarehouseZoneBody({ zone, yard, bufferZones, dispatch, onBack, pickingLists }) {
+    const s = zoneStats(zone);
+    const [selectedLoadIds, setSelectedLoadIds] = useState(() => new Set());
+    const [bulkStackInput, setBulkStackInput] = useState(zone.defaultStackHeight ?? 4);
+
+    const onToggleSelect = (loadId) => {
+      setSelectedLoadIds(prev => {
+        const next = new Set(prev);
+        next.has(loadId) ? next.delete(loadId) : next.add(loadId);
+        return next;
+      });
+    };
+    const onSelectAllInBay = (bay, on) => {
+      setSelectedLoadIds(prev => {
+        const next = new Set(prev);
+        bay.loads.forEach(l => {
+          if (on) next.add(l.id);
+          else next.delete(l.id);
+        });
+        return next;
+      });
+    };
+
+    // Resolve where the selected loads currently live (for the move action).
+    const sourceMap = useMemo(() => {
+      const m = {};
+      zone.bays.forEach(b => b.loads.forEach(l => { m[l.id] = { zoneId: zone.id, bayId: b.id }; }));
+      return m;
+    }, [zone]);
+    const firstSelectedSource = selectedLoadIds.size > 0
+      ? sourceMap[Array.from(selectedLoadIds)[0]]
+      : null;
+
+    const onMoveLoads = (dest) => {
+      const ids = Array.from(selectedLoadIds);
+      if (ids.length === 0) return;
+      dispatch({ type: 'moveLoads', loadIds: ids, dest });
+      setSelectedLoadIds(new Set());
+    };
+
+    const hasActiveList = (pickingLists || []).some(pl => pl.loads && pl.loads.length > 0);
+
+    return (
+      <div className="max-w-[1400px] mx-auto px-8 py-6 pb-32">
+        {/* Breadcrumb */}
+        <div className="text-[13px] text-neutral-60 mb-4 flex items-center gap-1.5">
+          <button onClick={onBack} className="hover:text-safi-700 hover:underline">Yard</button>
+          <span aria-hidden="true">›</span>
+          <span className="text-neutral-100 font-semibold">{zone.name}</span>
+        </div>
+
+        {/* Picking-list warning (only in zone view, not yard view, to avoid double-show) */}
+        {hasActiveList && (
+          <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
+            <Icon d={I.errorCircle} className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div className="text-[13px] text-amber-900 leading-relaxed">
+              <strong className="font-semibold">Active picking list:</strong>{' '}
+              changes here may affect FOs currently picking from this zone.
+            </div>
+          </div>
+        )}
+
+        {/* Zone-level edit row */}
+        <div className="border border-neutral-10 rounded-lg bg-white p-4 mb-3">
+          <div className="flex items-center gap-3 flex-wrap mb-3">
+            <span className="text-neutral-40 cursor-grab shrink-0" title="Drag to reorder">
+              <Icon d={I.list} className="w-4 h-4" />
+            </span>
+            <div className="relative">
+              <label className="absolute -top-2 left-2 bg-white px-1 text-[11px] text-neutral-60 z-10">Zone name</label>
+              <input
+                type="text"
+                value={zone.name}
+                onChange={e => dispatch({ type: 'updateZone', id: zone.id, kind: 'zone', patch: { name: e.target.value } })}
+                className="w-[220px] h-9 px-3 border border-neutral-10 rounded-md text-[14px] focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
+              />
+            </div>
+            <ProductionLinesDropdown
+              lines={zone.lines || []}
+              onChange={lines => dispatch({ type: 'updateZone', id: zone.id, kind: 'zone', patch: { lines } })}
+            />
+            <SplitLock
+              lockedStorage={!!zone.lockedStorage}
+              lockedProcessing={!!zone.lockedProcessing}
+              onChange={({ lockedStorage, lockedProcessing }) => dispatch({
+                type: 'updateZone', id: zone.id, kind: 'zone',
+                patch: { lockedStorage, lockedProcessing },
+              })}
+            />
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'addBay', zoneId: zone.id })}
+              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-safi-600 text-white text-[13px] font-semibold hover:bg-safi-700 min-h-[36px]"
+            >
+              <Icon d={I.plus} className="w-3.5 h-3.5" />
+              Bay
+            </button>
+          </div>
+
+          {/* Stats line */}
+          <div className="text-[13px] text-neutral-60">
+            {fmtNum(s.bays)} bays · {fmtNum(s.loads)} loads · {fmtNum(s.bales)} bales · {fmtKg(s.weight)}
+          </div>
+        </div>
+
+        {/* Global stack heights: toggle + bulk apply.
+            "Applicable" = bays show stack-height field; bulk apply pushes a default to every bay. */}
+        <div className="border border-neutral-10 rounded-lg bg-white p-3 mb-3 flex items-center gap-4 flex-wrap">
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!zone.stackHeightsEnabled}
+              onChange={e => dispatch({ type: 'updateZone', id: zone.id, kind: 'zone', patch: { stackHeightsEnabled: e.target.checked } })}
+              className="cursor-pointer"
+            />
+            <span className="text-[13px] font-semibold text-neutral-100">Stack heights apply to this zone</span>
+          </label>
+          {zone.stackHeightsEnabled && (
+            <div className="flex items-center gap-2 ml-auto flex-wrap">
+              <span className="text-[12px] text-neutral-60">Apply to all bays:</span>
+              <input
+                type="number"
+                value={bulkStackInput}
+                onChange={e => setBulkStackInput(e.target.value)}
+                placeholder="—"
+                min="1"
+                className="w-16 h-8 px-2 border border-neutral-10 rounded text-[13px] text-center"
+              />
+              <span className="text-[12px] text-neutral-60">bales high</span>
+              <button
+                type="button"
+                onClick={() => dispatch({
+                  type: 'bulkStackLimit', zoneId: zone.id,
+                  value: bulkStackInput === '' ? null : Math.max(1, Number(bulkStackInput) || 1),
+                })}
+                className="px-3 py-1.5 rounded-md bg-safi-600 text-white text-[12px] font-semibold hover:bg-safi-700"
+              >Apply to all</button>
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'bulkStackLimit', zoneId: zone.id, value: null })}
+                className="px-3 py-1.5 rounded-md border border-neutral-10 text-neutral-100 text-[12px] font-medium hover:bg-neutral-5"
+              >Clear all</button>
+            </div>
+          )}
+        </div>
+
+        {/* Quality minimap — reused pattern from the existing prototype */}
+        {zone.bays.length > 6 && (() => {
+          const max = Math.max(1, ...zone.bays.map(b => bayStats(b).bales));
+          return (
+            <div className="mb-3 rounded-md bg-neutral-5 border border-neutral-10 px-3 py-2">
+              <div className="flex items-end gap-0.5 h-10">
+                {zone.bays.map(b => {
+                  const st = bayStats(b);
+                  const isEmpty = st.bales === 0;
+                  const pct = isEmpty ? 18 : Math.max(8, (st.bales / max) * 100);
+                  const style = isEmpty
+                    ? { height: `${pct}%`, backgroundColor: '#fff', border: '1px solid #d4d4d8', backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 3px, #d4d4d8 3px, #d4d4d8 4px)' }
+                    : { height: `${pct}%`, backgroundColor: '#0c87f5', opacity: 0.85 };
+                  return <span key={b.id} className="flex-1 rounded-t" style={style} title={`${b.name}: ${isEmpty ? 'Empty' : `${st.bales} bales`}`} />;
+                })}
+              </div>
+              <div className="mt-1 flex justify-between text-[11px] text-neutral-60">
+                <span>{zone.bays[0]?.name}</span>
+                <span className="text-neutral-40">{zone.bays.length} bays · height = bales</span>
+                <span>{zone.bays[zone.bays.length - 1]?.name}</span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Bay cards row */}
+        <div className="flex items-stretch gap-3 overflow-x-auto pb-3 -mx-1 px-1">
+          {zone.bays.map(bay => (
+            <BayEditCard
+              key={bay.id}
+              bay={bay}
+              zone={zone}
+              selectedLoadIds={selectedLoadIds}
+              onToggleSelect={onToggleSelect}
+              onSelectAllInBay={onSelectAllInBay}
+              dispatch={dispatch}
+            />
+          ))}
+          {/* + Add bay tile at end (matches the Figma's + Bay button + existing pattern) */}
+          <button
+            type="button"
+            onClick={() => dispatch({ type: 'addBay', zoneId: zone.id })}
+            className="shrink-0 w-[200px] min-h-[200px] border-2 border-dashed border-neutral-20 bg-neutral-5 text-neutral-60 rounded-lg hover:border-safi-300 hover:bg-safi-50 hover:text-safi-700 flex flex-col items-center justify-center gap-1.5"
+          >
+            <Icon d={I.plus} className="w-5 h-5" />
+            <span className="text-[13px] font-semibold">Add bay</span>
+          </button>
+        </div>
+
+        {/* Floating action bar */}
+        {selectedLoadIds.size > 0 && firstSelectedSource && (
+          <MoveLoadsBar
+            count={selectedLoadIds.size}
+            sourceZoneId={firstSelectedSource.zoneId}
+            sourceBayId={firstSelectedSource.bayId}
+            yard={yard}
+            bufferZones={bufferZones}
+            onMove={onMoveLoads}
+            onCancel={() => setSelectedLoadIds(new Set())}
+          />
+        )}
+      </div>
+    );
+  }
+
   // Single row in the Edit Warehouse list. Handles both zones and buffer zones.
-  function EditWarehouseRow({ entity, kind, dispatch }) {
+  function EditWarehouseRow({ entity, kind, dispatch, onOpen }) {
     const stats = kind === 'zone' ? zoneStats(entity) : null;
     return (
       <div className="border border-neutral-10 rounded-lg bg-white p-4 flex items-start gap-3">
@@ -3016,6 +3509,19 @@
                 patch: { lockedStorage, lockedProcessing }
               })}
             />
+            {/* R61 Phase 2: drill into the zone's bay editor.
+                Buffers don't have a detail view yet (Phase 3). */}
+            {kind === 'zone' && onOpen && (
+              <button
+                type="button"
+                onClick={() => onOpen(entity.id)}
+                className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5 min-h-[36px]"
+                aria-label={`Configure bays in ${entity.name}`}
+              >
+                Configure bays
+                <Icon d={I.chevronR} className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
           {/* Stats */}
           {kind === 'zone' && stats && (
@@ -3037,13 +3543,41 @@
     );
   }
 
-  // Full-screen Edit Warehouse overlay.
+  // Full-screen Edit Warehouse overlay. Phase 1 ships the yard landing view;
+  // Phase 2 adds the zone+bays view (drill in via "Configure bays" on any zone
+  // row). View state is tracked here so the navigation lives in one place.
   function EditWarehouseOverlay({ open, onClose, yard, setYard, bufferZones, setBufferZones, pickingLists = [], setToast }) {
     const [searchInv, setSearchInv] = useState('');
+    // 'yard' = list of zones + buffers · 'zone' = drilling into a zone's bays
+    const [view, setView] = useState({ kind: 'yard' });
+
+    // Reset view when overlay closes — next open starts at the yard view
+    useEffect(() => {
+      if (!open) {
+        setView({ kind: 'yard' });
+        setSearchInv('');
+      }
+    }, [open]);
+
     if (!open) return null;
 
     // Active picking list = any list that's been created with loads
     const hasActiveList = (pickingLists || []).some(pl => pl.loads && pl.loads.length > 0);
+
+    // Helper for auto-naming new bays based on the zone's existing pattern.
+    // Detects numerical (Bay 5 → Bay 6) or alphabetical (Bay E → Bay F) and
+    // continues. Falls back to "Bay N" using count.
+    const nextBayName = (z) => {
+      const names = (z.bays || []).map(b => b.name);
+      const nums = names.map(n => (n.match(/(\d+)\s*$/) || [])[1]).filter(Boolean).map(Number);
+      if (nums.length) return `Bay ${Math.max(...nums) + 1}`;
+      const alphas = names.map(n => (n.match(/([A-Z])\s*$/i) || [])[1]).filter(Boolean);
+      if (alphas.length) {
+        const code = Math.max(...alphas.map(a => a.toUpperCase().charCodeAt(0)));
+        return `Bay ${String.fromCharCode(code + 1)}`;
+      }
+      return `Bay ${(z.bays || []).length + 1}`;
+    };
 
     const dispatch = (action) => {
       switch (action.type) {
@@ -3054,6 +3588,16 @@
             setYard(prev => prev.map(z => z.id === action.id ? { ...z, ...action.patch } : z));
           }
           break;
+        case 'updateBay': {
+          setYard(prev => prev.map(z => {
+            if (z.id !== action.zoneId) return z;
+            return {
+              ...z,
+              bays: z.bays.map(b => b.id === action.bayId ? { ...b, ...action.patch } : b),
+            };
+          }));
+          break;
+        }
         case 'addZone': {
           const usedLetters = new Set(yard.map(z => z.name.replace(/^Zone\s+/, '').trim()));
           let letter = 'A';
@@ -3066,6 +3610,7 @@
             id, name: `Zone ${letter}`, esName: `Zone ${letter}`, color: 'none',
             inventoryRule: 'NONE', lines: ['Apan 1', 'Apan 2'],
             lockedStorage: false, lockedProcessing: false,
+            stackHeightsEnabled: false, defaultStackHeight: null,
             bays: [{ id: `${id}-1`, name: 'Bay 1', esName: 'Bay 1', accessible: true, loads: [] }],
           }]);
           setToast?.({ message: `Zone ${letter} added`, kind: 'success' });
@@ -3082,8 +3627,88 @@
           setToast?.({ message: `Buffer ${n} added`, kind: 'success' });
           break;
         }
+        case 'addBay': {
+          // R61 Phase 2: auto-name from existing pattern + inherit zone's
+          // default stack height (if stack heights are enabled for this zone).
+          setYard(prev => prev.map(z => {
+            if (z.id !== action.zoneId) return z;
+            const name = nextBayName(z);
+            const newBay = {
+              id: `${z.id}-${Math.random().toString(36).slice(2, 5)}`,
+              name, esName: name, accessible: true, loads: [],
+              accessPattern: z.inventoryRule || 'NONE',
+              lockedStorage: false, lockedProcessing: false,
+              stackLimit: z.stackHeightsEnabled ? (z.defaultStackHeight ?? null) : null,
+            };
+            return { ...z, bays: [...z.bays, newBay] };
+          }));
+          break;
+        }
+        case 'bulkStackLimit': {
+          // Apply value (or null) as the stackLimit on every bay in the zone.
+          // Also stashes the value as zone.defaultStackHeight so new bays
+          // inherit it.
+          setYard(prev => prev.map(z => {
+            if (z.id !== action.zoneId) return z;
+            return {
+              ...z,
+              defaultStackHeight: action.value,
+              bays: z.bays.map(b => ({ ...b, stackLimit: action.value })),
+            };
+          }));
+          setToast?.({
+            message: action.value == null ? 'Stack heights cleared' : `Stack height ${action.value} applied to all bays`,
+            kind: 'success'
+          });
+          break;
+        }
+        case 'moveLoads': {
+          // Move selected loads to a bay (dest.kind === 'bay') or buffer (dest.kind === 'buffer').
+          // Loads are removed from their source bay; counts/weights update.
+          const idSet = new Set(action.loadIds);
+          let moved = [];
+          // Remove from source
+          setYard(prev => prev.map(z => ({
+            ...z,
+            bays: z.bays.map(b => {
+              const keep = [];
+              for (const l of b.loads) {
+                if (idSet.has(l.id)) moved.push({ ...l });
+                else keep.push(l);
+              }
+              return { ...b, loads: keep };
+            }),
+          })));
+          // Append to destination
+          if (action.dest.kind === 'bay') {
+            setYard(prev => prev.map(z => {
+              if (z.id !== action.dest.zoneId) return z;
+              return {
+                ...z,
+                bays: z.bays.map(b => b.id === action.dest.bayId ? { ...b, loads: [...b.loads, ...moved] } : b),
+              };
+            }));
+          } else if (action.dest.kind === 'buffer') {
+            // Buffer zones track aggregate bales + weight (no full load list in
+            // existing seed). Add the count + weight of moved loads.
+            const addBales = moved.reduce((a, l) => a + (l.bales || 0), 0);
+            const addWeight = moved.reduce((a, l) => a + (l.weight || 0), 0);
+            setBufferZones(prev => prev.map(b => b.id === action.dest.bufferId
+              ? { ...b, bales: (b.bales || 0) + addBales, weight: (b.weight || 0) + addWeight }
+              : b));
+          }
+          setToast?.({ message: `Moved ${moved.length} ${moved.length === 1 ? 'load' : 'loads'}`, kind: 'success' });
+          break;
+        }
       }
     };
+
+    // Resolve the current zone if we're in the zone view
+    const currentZone = view.kind === 'zone' ? yard.find(z => z.id === view.zoneId) : null;
+    // If the zone disappears (e.g. deleted), fall back to yard view
+    useEffect(() => {
+      if (view.kind === 'zone' && !currentZone) setView({ kind: 'yard' });
+    }, [view, currentZone]);
 
     // Buffers first (matching Figma — Buffer appears at top of list), then zones
     const allEntities = [
@@ -3093,72 +3718,90 @@
 
     return (
       <div className="fixed inset-0 z-50 bg-neutral-5 overflow-y-auto" role="dialog" aria-modal="true" aria-label="Edit warehouse">
-        <div className="max-w-[1200px] mx-auto px-8 py-8 pb-28">
-          {/* Header */}
-          <div className="flex items-start justify-between gap-6 mb-6 flex-wrap">
-            <h1 className="text-3xl font-bold text-neutral-100">Edit warehouse</h1>
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="relative w-[280px]">
-                <label className="absolute -top-2 left-2 bg-neutral-5 px-1 text-[11px] text-neutral-60 z-10">Search inventory</label>
-                <input
-                  type="text"
-                  value={searchInv}
-                  onChange={e => setSearchInv(e.target.value)}
-                  placeholder="Load ID, supplier or order ref"
-                  className="w-full h-10 pl-9 pr-3 border border-neutral-10 rounded-md text-[14px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
-                />
-                <span className="absolute left-3 top-3 text-neutral-40 pointer-events-none">
-                  <Icon d={I.search} className="w-4 h-4" />
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => dispatch({ type: 'addZone' })}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5 min-h-[40px]"
-              >
-                <Icon d={I.plus} className="w-3.5 h-3.5" />
-                Zone
-              </button>
-              <button
-                type="button"
-                onClick={() => dispatch({ type: 'addBuffer' })}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5 min-h-[40px]"
-              >
-                <Icon d={I.plus} className="w-3.5 h-3.5" />
-                Buffer
-              </button>
-            </div>
-          </div>
-
-          {/* Active picking list warning */}
-          {hasActiveList && (
-            <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
-              <Icon d={I.errorCircle} className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-              <div className="text-[13px] text-amber-900 leading-relaxed">
-                <strong className="font-semibold">Active picking list:</strong>{' '}
-                changes here may affect Forklift Operators currently picking material from active picking lists.
-                Review any structural changes carefully.
-              </div>
-            </div>
-          )}
-
-          {/* Entity rows */}
-          <div className="space-y-3">
-            {allEntities.map(({ entity, kind }) => (
-              <EditWarehouseRow
-                key={entity.id}
-                entity={entity}
-                kind={kind}
-                dispatch={dispatch}
+        {/* Shared title strip (kept identical across views so the user never
+            loses context that they're in Edit Warehouse mode) */}
+        <div className="max-w-[1400px] mx-auto px-8 pt-8 pb-2 flex items-start justify-between gap-6 flex-wrap">
+          <h1 className="text-3xl font-bold text-neutral-100">Edit warehouse</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative w-[280px]">
+              <label className="absolute -top-2 left-2 bg-neutral-5 px-1 text-[11px] text-neutral-60 z-10">Search inventory</label>
+              <input
+                type="text"
+                value={searchInv}
+                onChange={e => setSearchInv(e.target.value)}
+                placeholder="Load ID, supplier or order ref"
+                className="w-full h-10 pl-9 pr-3 border border-neutral-10 rounded-md text-[14px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
               />
-            ))}
-            {allEntities.length === 0 && (
-              <div className="rounded-lg border-2 border-dashed border-neutral-20 bg-white px-6 py-12 text-center text-[14px] text-neutral-60">
-                No zones or buffers yet. Use the + Zone or + Buffer button above to add one.
-              </div>
+              <span className="absolute left-3 top-3 text-neutral-40 pointer-events-none">
+                <Icon d={I.search} className="w-4 h-4" />
+              </span>
+            </div>
+            {/* Add buttons are yard-view-only */}
+            {view.kind === 'yard' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'addZone' })}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5 min-h-[40px]"
+                >
+                  <Icon d={I.plus} className="w-3.5 h-3.5" />
+                  Zone
+                </button>
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'addBuffer' })}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5 min-h-[40px]"
+                >
+                  <Icon d={I.plus} className="w-3.5 h-3.5" />
+                  Buffer
+                </button>
+              </>
             )}
           </div>
         </div>
+
+        {/* View-specific body */}
+        {view.kind === 'yard' ? (
+          <div className="max-w-[1200px] mx-auto px-8 py-4 pb-28">
+            {/* Active picking list warning — yard view only.
+                Zone view shows its own scoped version (see EditWarehouseZoneBody). */}
+            {hasActiveList && (
+              <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
+                <Icon d={I.errorCircle} className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                <div className="text-[13px] text-amber-900 leading-relaxed">
+                  <strong className="font-semibold">Active picking list:</strong>{' '}
+                  changes here may affect Forklift Operators currently picking material from active picking lists.
+                  Review any structural changes carefully.
+                </div>
+              </div>
+            )}
+            <div className="space-y-3">
+              {allEntities.map(({ entity, kind }) => (
+                <EditWarehouseRow
+                  key={entity.id}
+                  entity={entity}
+                  kind={kind}
+                  dispatch={dispatch}
+                  onOpen={kind === 'zone' ? (id) => setView({ kind: 'zone', zoneId: id }) : null}
+                />
+              ))}
+              {allEntities.length === 0 && (
+                <div className="rounded-lg border-2 border-dashed border-neutral-20 bg-white px-6 py-12 text-center text-[14px] text-neutral-60">
+                  No zones or buffers yet. Use the + Zone or + Buffer button above to add one.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : currentZone ? (
+          <EditWarehouseZoneBody
+            zone={currentZone}
+            yard={yard}
+            bufferZones={bufferZones}
+            dispatch={dispatch}
+            onBack={() => setView({ kind: 'yard' })}
+            pickingLists={pickingLists}
+          />
+        ) : null}
 
         {/* Footer */}
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-neutral-10 px-6 py-3 flex items-center justify-end gap-2 z-10">
