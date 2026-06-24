@@ -841,7 +841,7 @@
   //           single horizontal row, with a heat-mapped minimap above.
   // Bay view:  full load list (LoadRow re-used).
   // ============================================================================
-  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast, yardOps = {}, buffer = [], setBuffer = () => {}, setProcessed = () => {} }) {
+  function SpatialLayoutView({ yard, isCreating, selectionBales, setSelectionBales, pickingList, pickingLists = [], loadClaimMap = {}, creationLine = 'Apan 1', creationShift = 'Shift 1', lang = 'en', bayFilter, setSlMode, pickerMode = 'load', setToast, yardOps = {}, buffer = [], setBuffer = () => {}, setProcessed = () => {}, onEditWarehouse = () => {} }) {
     const [view, setView] = useState({ level: 'overview' });
     // Which bay tile (if any) should appear first + highlighted (from the filter or minimap stepper)
     const [focusBayId, setFocusBayId] = useState(null);
@@ -1089,6 +1089,16 @@
                 >
                   <Icon d={I.plus} className="w-3.5 h-3.5" />
                   {lang === 'es' ? 'Crear zona' : 'Create zone'}
+                </button>
+              )}
+              {/* R61: Edit warehouse — opens the full-screen editor */}
+              {!isCreating && (
+                <button
+                  onClick={onEditWarehouse}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-neutral-10 text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
+                >
+                  <Icon d={I.edit} className="w-3.5 h-3.5" />
+                  {lang === 'es' ? 'Editar almacén' : 'Edit warehouse'}
                 </button>
               )}
             </div>
@@ -1406,6 +1416,14 @@
                 >
                   <Icon d={I.edit} className="w-3.5 h-3.5" />
                   {lang === 'es' ? 'Editar zona' : 'Edit zone'}
+                </button>
+                {/* R61: Edit warehouse CTA also available from inside a zone */}
+                <button
+                  onClick={onEditWarehouse}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
+                >
+                  <Icon d={I.edit} className="w-3.5 h-3.5" />
+                  {lang === 'es' ? 'Editar almacén' : 'Edit warehouse'}
                 </button>
               </div>
             )}
@@ -1801,6 +1819,14 @@
                     >
                       <Icon d={I.edit} className="w-3.5 h-3.5" />
                       {lang === 'es' ? 'Editar fila' : 'Edit bay'}
+                    </button>
+                    {/* R61: Edit warehouse CTA also available from inside a bay */}
+                    <button
+                      onClick={onEditWarehouse}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
+                    >
+                      <Icon d={I.edit} className="w-3.5 h-3.5" />
+                      {lang === 'es' ? 'Editar almacén' : 'Edit warehouse'}
                     </button>
                     {bay.loads.length > 0 && yard.length > 1 && (
                       <button
@@ -2802,6 +2828,351 @@
         {editor.type === 'editBays' && <EditBaysForm />}
         {editor.type === 'editBay' && <EditBayForm />}
         {editor.type === 'moveLoads' && <MoveLoadsForm />}
+      </div>
+    );
+  }
+
+  // ===========================================================================
+  // R61: EDIT WAREHOUSE — Phase 1 (Yard overview)
+  //
+  // Full-screen overlay accessed from the warehouse tab. Mimics the Figma
+  // landing (15987-9401): a flat list of zones + buffer zones with row-level
+  // editing (name, production lines multi-select, locks), a search-inventory
+  // input top-right, +Zone / +Buffer add buttons, footer Cancel/Save.
+  //
+  // Locks improvement: replaces the two separate Figma lock buttons with a
+  // single MUI-style split button. Primary action toggles "Lock entirely";
+  // dropdown exposes Lock for storage / Lock for processing independently.
+  // Stored as zone.lockedStorage + zone.lockedProcessing booleans.
+  // ===========================================================================
+
+  // Split-button lock control. Lockedness is two independent booleans.
+  function SplitLock({ lockedStorage = false, lockedProcessing = false, onChange }) {
+    const [open, setOpen] = useState(false);
+    const both = lockedStorage && lockedProcessing;
+    const none = !lockedStorage && !lockedProcessing;
+    let label = 'Lock';
+    if (both) label = 'Locked';
+    else if (lockedStorage) label = 'Storage locked';
+    else if (lockedProcessing) label = 'Processing locked';
+
+    // Lock state drives the visual treatment
+    const cls = none
+      ? 'bg-white border-neutral-10 text-neutral-100 hover:bg-neutral-5'
+      : 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100';
+
+    return (
+      <div className="relative inline-flex">
+        <button
+          type="button"
+          onClick={() => onChange({ lockedStorage: !both, lockedProcessing: !both })}
+          title={both ? 'Click to unlock entirely' : 'Click to lock entirely'}
+          className={'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-l-md border border-r-0 text-[13px] font-medium min-h-[36px] ' + cls}
+        >
+          <Icon d={I.lock} className="w-3.5 h-3.5" />
+          {label}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          className={'inline-flex items-center px-2 rounded-r-md border text-[13px] font-medium min-h-[36px] ' + cls}
+        >
+          <Icon d={I.chevron} className="w-3 h-3" />
+        </button>
+        {open && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+            <div className="absolute top-full right-0 mt-1 z-40 bg-white border border-neutral-10 rounded-md shadow-lg w-[240px] py-1">
+              <button
+                type="button"
+                onClick={() => { onChange({ lockedStorage: true, lockedProcessing: true }); setOpen(false); }}
+                className="w-full text-left px-3 py-2 text-[13px] hover:bg-neutral-5 flex items-center gap-2"
+              >
+                <Icon d={I.lock} className="w-3.5 h-3.5 text-neutral-80" />
+                <span>Lock entirely</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { onChange({ lockedStorage: !lockedStorage, lockedProcessing }); setOpen(false); }}
+                className="w-full text-left px-3 py-2 text-[13px] hover:bg-neutral-5 flex items-center justify-between"
+              >
+                <span>{lockedStorage ? 'Unlock storage' : 'Lock for storage'}</span>
+                {lockedStorage && <Icon d={I.check} className="w-3.5 h-3.5 text-safi-600" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => { onChange({ lockedStorage, lockedProcessing: !lockedProcessing }); setOpen(false); }}
+                className="w-full text-left px-3 py-2 text-[13px] hover:bg-neutral-5 flex items-center justify-between"
+              >
+                <span>{lockedProcessing ? 'Unlock processing' : 'Lock for processing'}</span>
+                {lockedProcessing && <Icon d={I.check} className="w-3.5 h-3.5 text-safi-600" />}
+              </button>
+              {!none && (
+                <>
+                  <hr className="my-1 border-neutral-10" />
+                  <button
+                    type="button"
+                    onClick={() => { onChange({ lockedStorage: false, lockedProcessing: false }); setOpen(false); }}
+                    className="w-full text-left px-3 py-2 text-[13px] hover:bg-neutral-5 text-neutral-60"
+                  >
+                    Unlock all
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // Production-lines multi-select dropdown shown in the row.
+  function ProductionLinesDropdown({ lines = [], onChange }) {
+    const [open, setOpen] = useState(false);
+    const allLines = ['Apan 1', 'Apan 2'];
+    const toggle = (line) => {
+      const next = lines.includes(line) ? lines.filter(l => l !== line) : [...lines, line];
+      onChange(next);
+    };
+    return (
+      <div className="relative">
+        <label className="absolute -top-2 left-2 bg-white px-1 text-[11px] text-neutral-60 z-10">
+          Production lines
+        </label>
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="min-w-[200px] h-9 pl-2.5 pr-2 border border-neutral-10 rounded-md text-[14px] bg-white flex items-center gap-1.5 hover:bg-neutral-5"
+        >
+          <div className="flex items-center gap-1 flex-1">
+            {lines.length === 0 ? (
+              <span className="text-neutral-40 text-[13px]">Select</span>
+            ) : (
+              lines.map(l => (
+                <span key={l} className="px-2 py-0.5 bg-neutral-5 rounded-full text-[12px] text-neutral-100">{l}</span>
+              ))
+            )}
+          </div>
+          <Icon d={I.chevron} className="w-3 h-3 text-neutral-60 shrink-0" />
+        </button>
+        {open && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+            <div className="absolute top-full left-0 mt-1 z-40 bg-white border border-neutral-10 rounded-md shadow-lg w-full py-1">
+              {allLines.map(line => {
+                const active = lines.includes(line);
+                return (
+                  <button
+                    key={line}
+                    type="button"
+                    onClick={() => toggle(line)}
+                    className="w-full text-left px-3 py-2 text-[13px] hover:bg-neutral-5 flex items-center justify-between"
+                  >
+                    <span>{line}</span>
+                    {active && <Icon d={I.check} className="w-3.5 h-3.5 text-safi-600" />}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // Single row in the Edit Warehouse list. Handles both zones and buffer zones.
+  function EditWarehouseRow({ entity, kind, dispatch }) {
+    const stats = kind === 'zone' ? zoneStats(entity) : null;
+    return (
+      <div className="border border-neutral-10 rounded-lg bg-white p-4 flex items-start gap-3">
+        <span className="text-neutral-40 cursor-grab mt-3 shrink-0 select-none" title="Drag to reorder">
+          <Icon d={I.list} className="w-4 h-4" />
+        </span>
+        <div className="flex-1 min-w-0 space-y-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Name input with floating label */}
+            <div className="relative">
+              <label className="absolute -top-2 left-2 bg-white px-1 text-[11px] text-neutral-60 z-10">
+                {kind === 'zone' ? 'Zone name' : 'Buffer name'}
+              </label>
+              <input
+                type="text"
+                value={entity.name}
+                onChange={e => dispatch({ type: 'updateZone', id: entity.id, kind, patch: { name: e.target.value } })}
+                className="w-[220px] h-9 px-3 border border-neutral-10 rounded-md text-[14px] text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
+              />
+            </div>
+            <ProductionLinesDropdown
+              lines={entity.lines || []}
+              onChange={lines => dispatch({ type: 'updateZone', id: entity.id, kind, patch: { lines } })}
+            />
+            <SplitLock
+              lockedStorage={!!entity.lockedStorage}
+              lockedProcessing={!!entity.lockedProcessing}
+              onChange={({ lockedStorage, lockedProcessing }) => dispatch({
+                type: 'updateZone', id: entity.id, kind,
+                patch: { lockedStorage, lockedProcessing }
+              })}
+            />
+          </div>
+          {/* Stats */}
+          {kind === 'zone' && stats && (
+            <div className="flex items-center gap-8">
+              <Metric2 label="Bays" value={fmtNum(stats.bays)} />
+              <Metric2 label="Loads" value={fmtNum(stats.loads)} />
+              <Metric2 label="Bales" value={fmtNum(stats.bales)} />
+              <Metric2 label="Weight" value={fmtKg(stats.weight)} />
+            </div>
+          )}
+          {kind === 'buffer' && (
+            <div className="flex items-center gap-8">
+              <Metric2 label="Bales" value={fmtNum(entity.bales || 0)} />
+              <Metric2 label="Weight" value={fmtKg(entity.weight || 0)} />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Full-screen Edit Warehouse overlay.
+  function EditWarehouseOverlay({ open, onClose, yard, setYard, bufferZones, setBufferZones, pickingLists = [], setToast }) {
+    const [searchInv, setSearchInv] = useState('');
+    if (!open) return null;
+
+    // Active picking list = any list that's been created with loads
+    const hasActiveList = (pickingLists || []).some(pl => pl.loads && pl.loads.length > 0);
+
+    const dispatch = (action) => {
+      switch (action.type) {
+        case 'updateZone':
+          if (action.kind === 'buffer') {
+            setBufferZones(prev => prev.map(z => z.id === action.id ? { ...z, ...action.patch } : z));
+          } else {
+            setYard(prev => prev.map(z => z.id === action.id ? { ...z, ...action.patch } : z));
+          }
+          break;
+        case 'addZone': {
+          const usedLetters = new Set(yard.map(z => z.name.replace(/^Zone\s+/, '').trim()));
+          let letter = 'A';
+          for (let i = 0; i < 26; i++) {
+            const c = String.fromCharCode(65 + i);
+            if (!usedLetters.has(c)) { letter = c; break; }
+          }
+          const id = `Z${letter}-${Math.random().toString(36).slice(2, 5)}`;
+          setYard(prev => [...prev, {
+            id, name: `Zone ${letter}`, esName: `Zone ${letter}`, color: 'none',
+            inventoryRule: 'NONE', lines: ['Apan 1', 'Apan 2'],
+            lockedStorage: false, lockedProcessing: false,
+            bays: [{ id: `${id}-1`, name: 'Bay 1', esName: 'Bay 1', accessible: true, loads: [] }],
+          }]);
+          setToast?.({ message: `Zone ${letter} added`, kind: 'success' });
+          break;
+        }
+        case 'addBuffer': {
+          const id = `buf-${Math.random().toString(36).slice(2, 5)}`;
+          const n = bufferZones.length + 1;
+          setBufferZones(prev => [...prev, {
+            id, name: `Buffer ${n}`, lines: ['Apan 1', 'Apan 2'],
+            lockedStorage: false, lockedProcessing: false,
+            bales: 0, weight: 0,
+          }]);
+          setToast?.({ message: `Buffer ${n} added`, kind: 'success' });
+          break;
+        }
+      }
+    };
+
+    // Buffers first (matching Figma — Buffer appears at top of list), then zones
+    const allEntities = [
+      ...(bufferZones || []).map(b => ({ entity: b, kind: 'buffer' })),
+      ...yard.map(z => ({ entity: z, kind: 'zone' })),
+    ];
+
+    return (
+      <div className="fixed inset-0 z-50 bg-neutral-5 overflow-y-auto" role="dialog" aria-modal="true" aria-label="Edit warehouse">
+        <div className="max-w-[1200px] mx-auto px-8 py-8 pb-28">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-6 mb-6 flex-wrap">
+            <h1 className="text-3xl font-bold text-neutral-100">Edit warehouse</h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative w-[280px]">
+                <label className="absolute -top-2 left-2 bg-neutral-5 px-1 text-[11px] text-neutral-60 z-10">Search inventory</label>
+                <input
+                  type="text"
+                  value={searchInv}
+                  onChange={e => setSearchInv(e.target.value)}
+                  placeholder="Load ID, supplier or order ref"
+                  className="w-full h-10 pl-9 pr-3 border border-neutral-10 rounded-md text-[14px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
+                />
+                <span className="absolute left-3 top-3 text-neutral-40 pointer-events-none">
+                  <Icon d={I.search} className="w-4 h-4" />
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'addZone' })}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5 min-h-[40px]"
+              >
+                <Icon d={I.plus} className="w-3.5 h-3.5" />
+                Zone
+              </button>
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'addBuffer' })}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5 min-h-[40px]"
+              >
+                <Icon d={I.plus} className="w-3.5 h-3.5" />
+                Buffer
+              </button>
+            </div>
+          </div>
+
+          {/* Active picking list warning */}
+          {hasActiveList && (
+            <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
+              <Icon d={I.errorCircle} className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+              <div className="text-[13px] text-amber-900 leading-relaxed">
+                <strong className="font-semibold">Active picking list:</strong>{' '}
+                changes here may affect Forklift Operators currently picking material from active picking lists.
+                Review any structural changes carefully.
+              </div>
+            </div>
+          )}
+
+          {/* Entity rows */}
+          <div className="space-y-3">
+            {allEntities.map(({ entity, kind }) => (
+              <EditWarehouseRow
+                key={entity.id}
+                entity={entity}
+                kind={kind}
+                dispatch={dispatch}
+              />
+            ))}
+            {allEntities.length === 0 && (
+              <div className="rounded-lg border-2 border-dashed border-neutral-20 bg-white px-6 py-12 text-center text-[14px] text-neutral-60">
+                No zones or buffers yet. Use the + Zone or + Buffer button above to add one.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-neutral-10 px-6 py-3 flex items-center justify-end gap-2 z-10">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-md border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 hover:bg-neutral-5 min-h-[40px]"
+          >Cancel</button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-md bg-safi-600 text-white text-[13px] font-semibold hover:bg-safi-700 min-h-[40px]"
+          >Save</button>
+        </div>
       </div>
     );
   }
@@ -4765,6 +5136,15 @@
     // R39: editable warehouse - yard structure now lives in state so the SL can
     // create / rename / delete zones + bays + move loads at runtime.
     const [yard, setYard] = useState(INITIAL_YARD);
+    // R61: Edit Warehouse mode — full-screen overlay toggleable from the
+    // warehouse tab header, zone header, and bay header.
+    const [editWarehouseOpen, setEditWarehouseOpen] = useState(false);
+    // R61: buffer zones are first-class entities (name, lines, locks). The
+    // existing `buffer` array (loads staged) is unchanged; buffer zones are
+    // the named containers seen in Edit Warehouse + future bay-detail views.
+    const [bufferZones, setBufferZones] = useState([
+      { id: 'buf-default', name: 'Buffer', lines: ['Apan 1', 'Apan 2'], lockedStorage: false, lockedProcessing: false, bales: 22, weight: 14307 },
+    ]);
     // R42: buffer lives at the page level so both the Warehouse tab (Buffer card
     // + buffer detail view) and the Picker (move/return/process actions) can
     // share it. Seeded so the bale-based Warehouse view shows realistic content
@@ -5062,6 +5442,17 @@
             >✕</button>
           </div>
         )}
+        {/* R61: Edit Warehouse overlay — full-screen, on top of everything. */}
+        <EditWarehouseOverlay
+          open={editWarehouseOpen}
+          onClose={() => setEditWarehouseOpen(false)}
+          yard={yard}
+          setYard={setYard}
+          bufferZones={bufferZones}
+          setBufferZones={setBufferZones}
+          pickingLists={pickingLists}
+          setToast={setToast}
+        />
       </AppShell>
       </LangContext.Provider>
     );
@@ -6061,6 +6452,7 @@
               buffer={buffer}
               setBuffer={setBuffer}
               setProcessed={setProcessed}
+              onEditWarehouse={() => setEditWarehouseOpen(true)}
             />
           ) : (
           /* Yard - Zones / Bays / Loads */
