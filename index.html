@@ -3034,7 +3034,7 @@
   // the bay's name, access pattern, lock, optional stack height + the full
   // list of loads with checkboxes (no drag — per R61 spec, drag for load
   // reorder only lives in the bay detail view, Phase 3).
-  function BayEditCard({ bay, zone, selectedLoadIds, onToggleSelect, onSelectAllInBay, dispatch }) {
+  function BayEditCard({ bay, zone, selectedLoadIds, onToggleSelect, onSelectAllInBay, dispatch, onOpen }) {
     const accessPattern = bay.accessPattern || zone.inventoryRule || 'NONE';
     const allSelected = bay.loads.length > 0 && bay.loads.every(l => selectedLoadIds.has(l.id));
     const someSelected = bay.loads.some(l => selectedLoadIds.has(l.id));
@@ -3042,14 +3042,27 @@
       <div className="shrink-0 w-[340px] border border-neutral-10 rounded-lg bg-white p-3 flex flex-col">
         {/* Header: name + access + lock + (optional) stack height */}
         <div className="space-y-2 pb-3 mb-3 border-b border-neutral-10">
-          <div className="relative">
-            <label className="absolute -top-2 left-2 bg-white px-1 text-[10px] text-neutral-60 z-10">Bay name</label>
-            <input
-              type="text"
-              value={bay.name}
-              onChange={e => dispatch({ type: 'updateBay', zoneId: zone.id, bayId: bay.id, patch: { name: e.target.value } })}
-              className="w-full h-9 px-2.5 border border-neutral-10 rounded-md text-[13px] font-semibold text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
-            />
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1">
+              <label className="absolute -top-2 left-2 bg-white px-1 text-[10px] text-neutral-60 z-10">Bay name</label>
+              <input
+                type="text"
+                value={bay.name}
+                onChange={e => dispatch({ type: 'updateBay', zoneId: zone.id, bayId: bay.id, patch: { name: e.target.value } })}
+                className="w-full h-9 px-2.5 border border-neutral-10 rounded-md text-[13px] font-semibold text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
+              />
+            </div>
+            {onOpen && (
+              <button
+                type="button"
+                onClick={() => onOpen(bay.id)}
+                className="shrink-0 h-9 px-2 rounded-md border border-neutral-10 bg-white text-neutral-60 hover:bg-neutral-5 hover:text-neutral-100 inline-flex items-center gap-1"
+                title="Open bay detail to reorder loads"
+                aria-label={`Open ${bay.name} detail`}
+              >
+                <Icon d={I.chevronR} className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             <AccessPatternSelect
@@ -3264,7 +3277,7 @@
   // Zone + bays body — the content rendered inside EditWarehouseOverlay when
   // a zone has been opened from the yard view.
   // ─────────────────────────────────────────────────────────────────────────
-  function EditWarehouseZoneBody({ zone, yard, bufferZones, dispatch, onBack, pickingLists }) {
+  function EditWarehouseZoneBody({ zone, yard, bufferZones, dispatch, onBack, pickingLists, onOpenBay }) {
     const s = zoneStats(zone);
     const [selectedLoadIds, setSelectedLoadIds] = useState(() => new Set());
     const [bulkStackInput, setBulkStackInput] = useState(zone.defaultStackHeight ?? 4);
@@ -3446,6 +3459,7 @@
               onToggleSelect={onToggleSelect}
               onSelectAllInBay={onSelectAllInBay}
               dispatch={dispatch}
+              onOpen={onOpenBay}
             />
           ))}
           {/* + Add bay tile at end (matches the Figma's + Bay button + existing pattern) */}
@@ -3475,9 +3489,314 @@
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // R61 Phase 3 — Bay / Buffer detail view (Figma 15987-13253)
+  //
+  // Same shape for both: a focused view of one container's loads. Drag-to-
+  // reorder loads (the only place drag survives), multi-select checkboxes,
+  // and the standard Move-to-Bay/Buffer action bar. Buffer detail re-uses
+  // the same body — the only branches are the breadcrumb path and the
+  // moveLoadsFromBuffer dispatch (since the source is a buffer).
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Compact multi-chip quality display — Figma 3 shows three chips per load
+  // (Transparent PET / Coloured PET / Contaminants). 92% threshold for green.
+  function LoadQualityChips({ load }) {
+    const r = load.results;
+    if (!r) {
+      return <span className="text-[11px] text-neutral-60">Not analysed</span>;
+    }
+    const chip = (label, value, inSpec) => (
+      <span className={
+        'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap ' +
+        (inSpec ? 'bg-success-50 text-success-700 border-success-100' : 'bg-danger-50 text-danger-700 border-danger-200')
+      }>
+        <span aria-hidden="true">{inSpec ? '✓' : '⚠'}</span>
+        {label} {value.toFixed(1)}%
+      </span>
+    );
+    return (
+      <div className="flex flex-wrap gap-1">
+        {r.transparentPET != null && chip('Transparent PET', r.transparentPET, r.transparentPET >= 92)}
+        {r.colouredPET   != null && chip('Coloured PET', r.colouredPET, r.colouredPET <= 6)}
+        {r.contaminants  != null && chip('Contaminants', r.contaminants, r.contaminants <= 2)}
+      </div>
+    );
+  }
+
+  // EditWarehouseDetailBody — renders a bay or a buffer in detail.
+  // - container.kind = 'bay' | 'buffer'
+  // - container.entity = the bay or buffer
+  // - container.parentZone (for bay only) = the parent zone
+  function EditWarehouseDetailBody({ container, yard, bufferZones, dispatch, onBack, onBackToZone, pickingLists }) {
+    const isBay = container.kind === 'bay';
+    const entity = container.entity;
+    const parentZone = container.parentZone || null;
+    const loads = entity.loads || [];
+    const [selectedLoadIds, setSelectedLoadIds] = useState(() => new Set());
+
+    // Drag state for load reordering
+    const [dragLoadId, setDragLoadId] = useState(null);
+    const [dropTarget, setDropTarget] = useState(null); // { loadId, position }
+
+    const onToggleSelect = (loadId) => {
+      setSelectedLoadIds(prev => {
+        const next = new Set(prev);
+        next.has(loadId) ? next.delete(loadId) : next.add(loadId);
+        return next;
+      });
+    };
+    const allSelected = loads.length > 0 && loads.every(l => selectedLoadIds.has(l.id));
+    const onSelectAll = () => {
+      if (allSelected) setSelectedLoadIds(new Set());
+      else setSelectedLoadIds(new Set(loads.map(l => l.id)));
+    };
+
+    // Drag handlers — uses native HTML5 dnd
+    const onLoadDragStart = (loadId) => (e) => {
+      setDragLoadId(loadId);
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', loadId);
+    };
+    const onLoadDragEnd = () => { setDragLoadId(null); setDropTarget(null); };
+    const onLoadDragOver = (loadId) => (e) => {
+      if (!dragLoadId || dragLoadId === loadId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const r = e.currentTarget.getBoundingClientRect();
+      const position = (e.clientY - r.top) < r.height / 2 ? 'before' : 'after';
+      setDropTarget({ loadId, position });
+    };
+    const onLoadDrop = (loadId) => (e) => {
+      if (!dragLoadId || !dropTarget) return;
+      e.preventDefault();
+      dispatch({
+        type: 'reorderLoad',
+        container: isBay
+          ? { kind: 'bay', zoneId: parentZone.id, bayId: entity.id }
+          : { kind: 'buffer', bufferId: entity.id },
+        loadId: dragLoadId,
+        targetLoadId: loadId,
+        position: dropTarget.position,
+      });
+      setDragLoadId(null);
+      setDropTarget(null);
+    };
+
+    const onMoveLoads = (dest) => {
+      const ids = Array.from(selectedLoadIds);
+      if (ids.length === 0) return;
+      if (isBay) {
+        dispatch({ type: 'moveLoads', loadIds: ids, dest });
+      } else {
+        dispatch({ type: 'moveLoadsFromBuffer', loadIds: ids, sourceBufferId: entity.id, dest });
+      }
+      setSelectedLoadIds(new Set());
+    };
+
+    // Field updaters
+    const updateEntity = (patch) => {
+      if (isBay) dispatch({ type: 'updateBay', zoneId: parentZone.id, bayId: entity.id, patch });
+      else dispatch({ type: 'updateZone', id: entity.id, kind: 'buffer', patch });
+    };
+
+    const totalBales = loads.reduce((a, l) => a + (l.bales || 0), 0);
+    const totalWeight = loads.reduce((a, l) => a + (l.weight || 0), 0);
+    const accessPattern = entity.accessPattern || parentZone?.inventoryRule || 'NONE';
+    const showStackHeight = isBay && parentZone?.stackHeightsEnabled;
+
+    const hasActiveList = (pickingLists || []).some(pl => pl.loads && pl.loads.length > 0);
+
+    return (
+      <div className="max-w-[1100px] mx-auto px-8 py-6 pb-32">
+        {/* Breadcrumb */}
+        <div className="text-[13px] text-neutral-60 mb-4 flex items-center gap-1.5 flex-wrap">
+          <button onClick={onBack} className="hover:text-safi-700 hover:underline">Yard</button>
+          {isBay && parentZone && (
+            <>
+              <span aria-hidden="true">›</span>
+              <button onClick={onBackToZone} className="hover:text-safi-700 hover:underline">{parentZone.name}</button>
+            </>
+          )}
+          <span aria-hidden="true">›</span>
+          <span className="text-neutral-100 font-semibold">{entity.name}</span>
+        </div>
+
+        {hasActiveList && (
+          <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
+            <Icon d={I.errorCircle} className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div className="text-[13px] text-amber-900 leading-relaxed">
+              <strong className="font-semibold">Active picking list:</strong>{' '}
+              reordering loads may affect FOs currently picking from {isBay ? `this bay` : `this buffer`}.
+            </div>
+          </div>
+        )}
+
+        {/* Detail header — name + lines + lock + (bay-only) access + stack */}
+        <div className="border border-neutral-10 rounded-lg bg-white p-4 mb-4">
+          <div className="flex items-center gap-3 flex-wrap mb-2">
+            <span className="text-neutral-40 cursor-grab shrink-0" title="Drag to reorder">
+              <Icon d={I.list} className="w-4 h-4" />
+            </span>
+            <div className="relative">
+              <label className="absolute -top-2 left-2 bg-white px-1 text-[11px] text-neutral-60 z-10">
+                {isBay ? 'Bay name' : 'Buffer name'}
+              </label>
+              <input
+                type="text"
+                value={entity.name}
+                onChange={e => updateEntity({ name: e.target.value })}
+                className="w-[220px] h-9 px-3 border border-neutral-10 rounded-md text-[14px] focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
+              />
+            </div>
+            {/* For bays, production lines are inherited from the parent zone (read-only).
+                For buffers, they're editable here. */}
+            {isBay ? (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-neutral-5 border border-neutral-10">
+                <span className="text-[11px] text-neutral-60">Lines (from zone):</span>
+                {(parentZone?.lines || []).map(l => (
+                  <span key={l} className="px-2 py-0.5 bg-white rounded-full text-[12px] border border-neutral-10">{l}</span>
+                ))}
+              </div>
+            ) : (
+              <ProductionLinesDropdown
+                lines={entity.lines || []}
+                onChange={lines => updateEntity({ lines })}
+              />
+            )}
+            <SplitLock
+              lockedStorage={!!entity.lockedStorage}
+              lockedProcessing={!!entity.lockedProcessing}
+              onChange={({ lockedStorage, lockedProcessing }) => updateEntity({ lockedStorage, lockedProcessing })}
+            />
+          </div>
+          {/* Bay-only: access pattern + stack height */}
+          {isBay && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <AccessPatternSelect
+                value={accessPattern}
+                onChange={v => updateEntity({ accessPattern: v })}
+              />
+              {showStackHeight && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[12px] text-neutral-60">Stack height:</span>
+                  <input
+                    type="number"
+                    value={entity.stackLimit ?? ''}
+                    onChange={e => updateEntity({ stackLimit: e.target.value ? Math.max(1, Number(e.target.value)) : null })}
+                    placeholder="—"
+                    min="1"
+                    className="w-14 h-7 px-1.5 border border-neutral-10 rounded text-[12px] text-center"
+                  />
+                  <span className="text-[11px] text-neutral-60">bales high</span>
+                </div>
+              )}
+            </div>
+          )}
+          {/* Stats line */}
+          <div className="mt-3 text-[12px] text-neutral-60">
+            {loads.length} {loads.length === 1 ? 'load' : 'loads'} · {fmtNum(totalBales)} bales · {fmtKg(totalWeight)}
+          </div>
+        </div>
+
+        {/* Select-all toolbar */}
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[13px] text-neutral-60">{loads.length} {loads.length === 1 ? 'load' : 'loads'}</span>
+          {loads.length > 0 && (
+            <button
+              type="button"
+              onClick={onSelectAll}
+              className="text-[13px] text-safi-700 font-semibold hover:underline"
+            >
+              {allSelected ? 'Deselect all' : 'Select all'}
+            </button>
+          )}
+        </div>
+
+        {/* Load list — drag-to-reorder is enabled here (Phase 3) */}
+        {loads.length === 0 ? (
+          <div className="rounded-lg border-2 border-dashed border-neutral-20 bg-white px-6 py-12 text-center text-[13px] text-neutral-60">
+            {isBay ? 'No loads in this bay yet.' : 'No material in the buffer.'}
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {loads.map((load, idx) => {
+              const isSelected = selectedLoadIds.has(load.id);
+              const isDragging = dragLoadId === load.id;
+              const showBefore = dropTarget?.loadId === load.id && dropTarget.position === 'before';
+              const showAfter  = dropTarget?.loadId === load.id && dropTarget.position === 'after' && idx === loads.length - 1;
+              return (
+                <React.Fragment key={load.id}>
+                  {showBefore && <li className="h-[2px] rounded-full bg-safi-600" aria-hidden="true" />}
+                  <li
+                    draggable
+                    onDragStart={onLoadDragStart(load.id)}
+                    onDragEnd={onLoadDragEnd}
+                    onDragOver={onLoadDragOver(load.id)}
+                    onDrop={onLoadDrop(load.id)}
+                    className={
+                      'flex items-start gap-3 px-3 py-2.5 rounded-md border bg-white transition cursor-pointer ' +
+                      (isDragging ? 'opacity-40 ' : '') +
+                      (isSelected ? 'border-safi-300 bg-safi-50/40' : 'border-neutral-10 hover:bg-neutral-5')
+                    }
+                  >
+                    {/* Drag handle */}
+                    <span className="text-neutral-40 cursor-grab active:cursor-grabbing shrink-0 pt-0.5" title="Drag to reorder">
+                      <Icon d={I.list} className="w-3.5 h-4" />
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => onToggleSelect(load.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="mt-1 shrink-0 cursor-pointer"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="text-[14px] font-semibold text-neutral-100">{load.supplier}</span>
+                        <span className="text-[12px] text-neutral-60">#{load.lot}</span>
+                      </div>
+                      <div className="mt-1">
+                        <LoadQualityChips load={load} />
+                      </div>
+                      <div className="mt-1 text-[12px] text-neutral-60">
+                        {load.bales} bales · {fmtKg(load.weight)}
+                      </div>
+                    </div>
+                  </li>
+                  {showAfter && <li className="h-[2px] rounded-full bg-safi-600" aria-hidden="true" />}
+                </React.Fragment>
+              );
+            })}
+          </ul>
+        )}
+
+        {/* Floating action bar — move selected loads out */}
+        {selectedLoadIds.size > 0 && (
+          <MoveLoadsBar
+            count={selectedLoadIds.size}
+            sourceZoneId={isBay ? parentZone.id : null}
+            sourceBayId={isBay ? entity.id : null}
+            yard={yard}
+            bufferZones={bufferZones}
+            onMove={onMoveLoads}
+            onCancel={() => setSelectedLoadIds(new Set())}
+          />
+        )}
+      </div>
+    );
+  }
+
   // Single row in the Edit Warehouse list. Handles both zones and buffer zones.
   function EditWarehouseRow({ entity, kind, dispatch, onOpen }) {
-    const stats = kind === 'zone' ? zoneStats(entity) : null;
+    const stats = kind === 'zone'
+      ? zoneStats(entity)
+      // Buffer aggregates are derived from its loads array (R61 Phase 3)
+      : {
+          loads: (entity.loads || []).length,
+          bales: (entity.loads || []).reduce((a, l) => a + (l.bales || 0), 0),
+          weight: (entity.loads || []).reduce((a, l) => a + (l.weight || 0), 0),
+        };
     return (
       <div className="border border-neutral-10 rounded-lg bg-white p-4 flex items-start gap-3">
         <span className="text-neutral-40 cursor-grab mt-3 shrink-0 select-none" title="Drag to reorder">
@@ -3509,16 +3828,15 @@
                 patch: { lockedStorage, lockedProcessing }
               })}
             />
-            {/* R61 Phase 2: drill into the zone's bay editor.
-                Buffers don't have a detail view yet (Phase 3). */}
-            {kind === 'zone' && onOpen && (
+            {/* R61 Phase 2/3: drill into the zone or buffer detail. */}
+            {onOpen && (
               <button
                 type="button"
                 onClick={() => onOpen(entity.id)}
                 className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5 min-h-[36px]"
-                aria-label={`Configure bays in ${entity.name}`}
+                aria-label={kind === 'zone' ? `Configure bays in ${entity.name}` : `Configure loads in ${entity.name}`}
               >
-                Configure bays
+                {kind === 'zone' ? 'Configure bays' : 'Configure loads'}
                 <Icon d={I.chevronR} className="w-3.5 h-3.5" />
               </button>
             )}
@@ -3534,8 +3852,9 @@
           )}
           {kind === 'buffer' && (
             <div className="flex items-center gap-8">
-              <Metric2 label="Bales" value={fmtNum(entity.bales || 0)} />
-              <Metric2 label="Weight" value={fmtKg(entity.weight || 0)} />
+              <Metric2 label="Loads" value={fmtNum(stats.loads || 0)} />
+              <Metric2 label="Bales" value={fmtNum(stats.bales || 0)} />
+              <Metric2 label="Weight" value={fmtKg(stats.weight || 0)} />
             </div>
           )}
         </div>
@@ -3689,26 +4008,90 @@
               };
             }));
           } else if (action.dest.kind === 'buffer') {
-            // Buffer zones track aggregate bales + weight (no full load list in
-            // existing seed). Add the count + weight of moved loads.
-            const addBales = moved.reduce((a, l) => a + (l.bales || 0), 0);
-            const addWeight = moved.reduce((a, l) => a + (l.weight || 0), 0);
+            // R61 Phase 3: buffers now carry full loads[] so the moved loads
+            // remain selectable + reorderable inside the buffer detail view.
             setBufferZones(prev => prev.map(b => b.id === action.dest.bufferId
-              ? { ...b, bales: (b.bales || 0) + addBales, weight: (b.weight || 0) + addWeight }
+              ? { ...b, loads: [...(b.loads || []), ...moved] }
               : b));
           }
           setToast?.({ message: `Moved ${moved.length} ${moved.length === 1 ? 'load' : 'loads'}`, kind: 'success' });
           break;
         }
+        case 'moveLoadsFromBuffer': {
+          // Move loads OUT of a buffer to a destination (bay or another buffer).
+          // Used by the buffer detail view's multi-select Move action.
+          const idSet = new Set(action.loadIds);
+          let moved = [];
+          setBufferZones(prev => prev.map(b => {
+            if (b.id !== action.sourceBufferId) return b;
+            const keep = [];
+            for (const l of (b.loads || [])) {
+              if (idSet.has(l.id)) moved.push({ ...l });
+              else keep.push(l);
+            }
+            return { ...b, loads: keep };
+          }));
+          if (action.dest.kind === 'bay') {
+            setYard(prev => prev.map(z => {
+              if (z.id !== action.dest.zoneId) return z;
+              return {
+                ...z,
+                bays: z.bays.map(b => b.id === action.dest.bayId ? { ...b, loads: [...b.loads, ...moved] } : b),
+              };
+            }));
+          } else if (action.dest.kind === 'buffer') {
+            setBufferZones(prev => prev.map(b => b.id === action.dest.bufferId
+              ? { ...b, loads: [...(b.loads || []), ...moved] }
+              : b));
+          }
+          setToast?.({ message: `Moved ${moved.length} ${moved.length === 1 ? 'load' : 'loads'}`, kind: 'success' });
+          break;
+        }
+        case 'reorderLoad': {
+          // R61 Phase 3: reorder a load within its container (bay or buffer).
+          // position = 'before' | 'after' relative to targetLoadId.
+          const reorder = (arr) => {
+            const fromIdx = arr.findIndex(l => l.id === action.loadId);
+            let toIdx = arr.findIndex(l => l.id === action.targetLoadId);
+            if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return arr;
+            const next = [...arr];
+            const [m] = next.splice(fromIdx, 1);
+            if (action.position === 'after') toIdx = fromIdx < toIdx ? toIdx : toIdx + 1;
+            else                              toIdx = fromIdx < toIdx ? toIdx - 1 : toIdx;
+            next.splice(toIdx, 0, m);
+            return next;
+          };
+          if (action.container.kind === 'bay') {
+            setYard(prev => prev.map(z => {
+              if (z.id !== action.container.zoneId) return z;
+              return {
+                ...z,
+                bays: z.bays.map(b => b.id === action.container.bayId ? { ...b, loads: reorder(b.loads) } : b),
+              };
+            }));
+          } else if (action.container.kind === 'buffer') {
+            setBufferZones(prev => prev.map(b => b.id === action.container.bufferId
+              ? { ...b, loads: reorder(b.loads || []) }
+              : b));
+          }
+          break;
+        }
       }
     };
 
-    // Resolve the current zone if we're in the zone view
-    const currentZone = view.kind === 'zone' ? yard.find(z => z.id === view.zoneId) : null;
-    // If the zone disappears (e.g. deleted), fall back to yard view
+    // Resolve current view targets (zone | bay | buffer)
+    const currentZone = view.kind === 'zone' || view.kind === 'bay'
+      ? yard.find(z => z.id === view.zoneId) : null;
+    const currentBay = view.kind === 'bay' && currentZone
+      ? currentZone.bays.find(b => b.id === view.bayId) : null;
+    const currentBuffer = view.kind === 'buffer'
+      ? (bufferZones || []).find(b => b.id === view.bufferId) : null;
+    // If a target disappears (e.g. deleted), fall back gracefully
     useEffect(() => {
       if (view.kind === 'zone' && !currentZone) setView({ kind: 'yard' });
-    }, [view, currentZone]);
+      if (view.kind === 'bay' && !currentBay) setView(currentZone ? { kind: 'zone', zoneId: currentZone.id } : { kind: 'yard' });
+      if (view.kind === 'buffer' && !currentBuffer) setView({ kind: 'yard' });
+    }, [view, currentZone, currentBay, currentBuffer]);
 
     // Buffers first (matching Figma — Buffer appears at top of list), then zones
     const allEntities = [
@@ -3782,7 +4165,11 @@
                   entity={entity}
                   kind={kind}
                   dispatch={dispatch}
-                  onOpen={kind === 'zone' ? (id) => setView({ kind: 'zone', zoneId: id }) : null}
+                  onOpen={(id) => setView(
+                    kind === 'zone'
+                      ? { kind: 'zone', zoneId: id }
+                      : { kind: 'buffer', bufferId: id }
+                  )}
                 />
               ))}
               {allEntities.length === 0 && (
@@ -3792,9 +4179,29 @@
               )}
             </div>
           </div>
-        ) : currentZone ? (
+        ) : view.kind === 'zone' && currentZone ? (
           <EditWarehouseZoneBody
             zone={currentZone}
+            yard={yard}
+            bufferZones={bufferZones}
+            dispatch={dispatch}
+            onBack={() => setView({ kind: 'yard' })}
+            pickingLists={pickingLists}
+            onOpenBay={(bayId) => setView({ kind: 'bay', zoneId: currentZone.id, bayId })}
+          />
+        ) : view.kind === 'bay' && currentBay && currentZone ? (
+          <EditWarehouseDetailBody
+            container={{ kind: 'bay', entity: currentBay, parentZone: currentZone }}
+            yard={yard}
+            bufferZones={bufferZones}
+            dispatch={dispatch}
+            onBack={() => setView({ kind: 'yard' })}
+            onBackToZone={() => setView({ kind: 'zone', zoneId: currentZone.id })}
+            pickingLists={pickingLists}
+          />
+        ) : view.kind === 'buffer' && currentBuffer ? (
+          <EditWarehouseDetailBody
+            container={{ kind: 'buffer', entity: currentBuffer }}
             yard={yard}
             bufferZones={bufferZones}
             dispatch={dispatch}
@@ -5786,7 +6193,14 @@
     // existing `buffer` array (loads staged) is unchanged; buffer zones are
     // the named containers seen in Edit Warehouse + future bay-detail views.
     const [bufferZones, setBufferZones] = useState([
-      { id: 'buf-default', name: 'Buffer', lines: ['Apan 1', 'Apan 2'], lockedStorage: false, lockedProcessing: false, bales: 22, weight: 14307 },
+      // R61 Phase 3: buffers carry a full loads[] array (Phase 2 used
+      // aggregate bales/weight counters; the detail view needs the loads
+      // themselves so they can be selected, reordered, and moved out).
+      // Aggregates shown elsewhere are derived from this array.
+      { id: 'buf-default', name: 'Buffer', lines: ['Apan 1', 'Apan 2'], lockedStorage: false, lockedProcessing: false, loads: [
+        { id: 'buf-l-1', supplier: 'rPet India', lot: 'LOT-buf-001', bales: 10, weight: 6500, results: { transparentPET: 98.5, colouredPET: 1.4, contaminants: 0.1 } },
+        { id: 'buf-l-2', supplier: 'CLYNK Scotia', lot: 'LOT-buf-002', bales: 12, weight: 7807, results: { transparentPET: 94.2, colouredPET: 4.8, contaminants: 1.0 } },
+      ] },
     ]);
     // R42: buffer lives at the page level so both the Warehouse tab (Buffer card
     // + buffer detail view) and the Picker (move/return/process actions) can
