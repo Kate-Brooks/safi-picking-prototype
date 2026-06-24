@@ -1,0 +1,10 @@
+# Standalone Chrome preview mockups — open these locally in a browser to
+# review designs without ever committing them to the live prototype.
+# Any file matching this pattern is invisible to git, including the existing
+# warehouse-config-brainstorm.html / warehouse-edit-spatial-brainstorm.html
+# and any future *-brainstorm.html files.
+*-brainstorm.html
+
+# OS / editor noise
+.DS_Store
+*.swp
