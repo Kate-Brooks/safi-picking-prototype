@@ -1081,16 +1081,7 @@
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <ViewToggle />
-              {!isCreating && yardOps?.createZone && (
-                // R43: secondary styling per Safi UI Kit - white bg, neutral border, neutral text.
-                <button
-                  onClick={() => setEditor({ type: 'createZone' })}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-neutral-10 text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
-                >
-                  <Icon d={I.plus} className="w-3.5 h-3.5" />
-                  {lang === 'es' ? 'Crear zona' : 'Create zone'}
-                </button>
-              )}
+              {/* R62: legacy Create zone button removed — use Edit warehouse instead */}
               {/* R61: Edit warehouse — opens the full-screen editor */}
               {!isCreating && (
                 <button
@@ -1408,16 +1399,9 @@
             </div>
             {/* R52: zone-level actions trimmed to just "Edit zone" (secondary).
                 Create bays / Edit bays moved out of this header. */}
-            {!isCreating && yardOps?.updateZone && (
+            {/* R62: legacy "Edit zone" button removed — use Edit warehouse instead */}
+            {!isCreating && (
               <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  onClick={() => setEditor({ type: 'editZone', zoneId: zone.id })}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
-                >
-                  <Icon d={I.edit} className="w-3.5 h-3.5" />
-                  {lang === 'es' ? 'Editar zona' : 'Edit zone'}
-                </button>
-                {/* R61: Edit warehouse CTA also available from inside a zone */}
                 <button
                   onClick={onEditWarehouse}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
@@ -1811,16 +1795,9 @@
               <div className="flex items-center gap-2 flex-wrap">
                 <CapacityChip bales={s.bales} />
                 {/* R39: bay-level edit + bulk-select actions, default mode only. */}
-                {!isCreating && yardOps?.updateBay && (
+                {!isCreating && (
                   <>
-                    <button
-                      onClick={() => setEditor({ type: 'editBay', zoneId: zone.id, bayId: bay.id })}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
-                    >
-                      <Icon d={I.edit} className="w-3.5 h-3.5" />
-                      {lang === 'es' ? 'Editar fila' : 'Edit bay'}
-                    </button>
-                    {/* R61: Edit warehouse CTA also available from inside a bay */}
+                    {/* R62: legacy "Edit bay" button removed — use Edit warehouse instead */}
                     <button
                       onClick={onEditWarehouse}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
@@ -2822,11 +2799,9 @@
 
     return (
       <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-        {editor.type === 'createZone' && <CreateZoneForm />}
-        {editor.type === 'editZone' && <EditZoneForm />}
-        {editor.type === 'createBays' && <CreateBaysForm />}
-        {editor.type === 'editBays' && <EditBaysForm />}
-        {editor.type === 'editBay' && <EditBayForm />}
+        {/* R62: legacy create/edit zone & bay modals removed — Edit Warehouse
+            overlay is now the single editing surface. MoveLoadsForm stays
+            because it's still triggered from the bulk-move bay action. */}
         {editor.type === 'moveLoads' && <MoveLoadsForm />}
       </div>
     );
@@ -3870,6 +3845,16 @@
     // 'yard' = list of zones + buffers · 'zone' = drilling into a zone's bays
     const [view, setView] = useState({ kind: 'yard' });
 
+    // R62 fix: ALL hooks must be called unconditionally. Compute view targets
+    // here (before the early return) so the fallback-useEffect below can be
+    // declared without violating the Rules of Hooks.
+    const currentZone = (view.kind === 'zone' || view.kind === 'bay')
+      ? yard.find(z => z.id === view.zoneId) : null;
+    const currentBay = view.kind === 'bay' && currentZone
+      ? currentZone.bays.find(b => b.id === view.bayId) : null;
+    const currentBuffer = view.kind === 'buffer'
+      ? (bufferZones || []).find(b => b.id === view.bufferId) : null;
+
     // Reset view when overlay closes — next open starts at the yard view
     useEffect(() => {
       if (!open) {
@@ -3877,6 +3862,14 @@
         setSearchInv('');
       }
     }, [open]);
+
+    // Fall back gracefully if the targeted zone/bay/buffer disappears
+    useEffect(() => {
+      if (!open) return;
+      if (view.kind === 'zone' && !currentZone) setView({ kind: 'yard' });
+      if (view.kind === 'bay' && !currentBay) setView(currentZone ? { kind: 'zone', zoneId: currentZone.id } : { kind: 'yard' });
+      if (view.kind === 'buffer' && !currentBuffer) setView({ kind: 'yard' });
+    }, [open, view, currentZone, currentBay, currentBuffer]);
 
     if (!open) return null;
 
@@ -4079,19 +4072,8 @@
       }
     };
 
-    // Resolve current view targets (zone | bay | buffer)
-    const currentZone = view.kind === 'zone' || view.kind === 'bay'
-      ? yard.find(z => z.id === view.zoneId) : null;
-    const currentBay = view.kind === 'bay' && currentZone
-      ? currentZone.bays.find(b => b.id === view.bayId) : null;
-    const currentBuffer = view.kind === 'buffer'
-      ? (bufferZones || []).find(b => b.id === view.bufferId) : null;
-    // If a target disappears (e.g. deleted), fall back gracefully
-    useEffect(() => {
-      if (view.kind === 'zone' && !currentZone) setView({ kind: 'yard' });
-      if (view.kind === 'bay' && !currentBay) setView(currentZone ? { kind: 'zone', zoneId: currentZone.id } : { kind: 'yard' });
-      if (view.kind === 'buffer' && !currentBuffer) setView({ kind: 'yard' });
-    }, [view, currentZone, currentBay, currentBuffer]);
+    // (currentZone / currentBay / currentBuffer + their fallback useEffect
+    //  are now declared above the early return to satisfy the Rules of Hooks.)
 
     // Buffers first (matching Figma — Buffer appears at top of list), then zones
     const allEntities = [
