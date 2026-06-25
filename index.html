@@ -7120,14 +7120,39 @@
     }));
   }
 
+  // R65c: per-bale quality chips. BMP processes one bale at a time, so each
+  // bale carries its own AI breakdown: Bottles/Jars (target, higher is better)
+  // + Thermoforms, Non PET, Metal (contaminants, lower is better). Values are
+  // synthesised deterministically from the bale id so they're stable across
+  // renders and vary plausibly bale-to-bale.
+  function perBaleChips(bale) {
+    const seed = (bale.id || '').split('').reduce((s, c) => s + c.charCodeAt(0), 0) || 1;
+    const r = (n) => ((seed * (n + 3) * 31) % 1000) / 1000;
+    const bottles     = Math.round(80 + r(0) * 12);    // 80..92
+    const thermoforms = Math.round(2 + r(1) * 13);     // 2..14
+    const nonPet      = Math.round(1 + r(2) * 6);      // 1..7
+    const metal       = Math.round(r(3) * 3);          // 0..3
+    return [
+      { name: 'Bottles/Jars', pct: bottles,     status: bottles     >= 85 ? 'ok' : bottles     >= 80 ? 'warn' : 'bad' },
+      { name: 'Thermoforms',  pct: thermoforms, status: thermoforms <= 5  ? 'ok' : thermoforms <= 9  ? 'warn' : 'bad' },
+      { name: 'Non PET',      pct: nonPet,      status: nonPet      <= 2  ? 'ok' : nonPet      <= 4  ? 'warn' : 'bad' },
+      { name: 'Metal',        pct: metal,       status: metal       <= 1  ? 'ok' : metal       <= 2  ? 'warn' : 'bad' },
+    ];
+  }
+
   // R65b: derive a row per processing event (every bale or load that was put
   // through the line). Sorted by timestamp descending (most recent first) so
   // the drawer reads as a chronological activity log.
+  //
+  // R65c: bale rows now carry their own per-bale chip breakdown (Bottles/Jars,
+  // Thermoforms, Non PET, Metal) rather than the window-level averages. Load
+  // rows still show the load-level breakdown (Clear PET / Coloured PET /
+  // Contaminants) because a load is the aggregate unit.
   function deriveProcessingEvents(pw) {
     const sa = pw.specAverages;
     const items = [...pw.recentItems].sort((a, b) => new Date(b.at) - new Date(a.at));
     if (items.length === 0) return [];
-    const chips = sa ? [
+    const loadChips = sa ? [
       { name: 'Clear PET',    pct: sa.transparent.toFixed(1), status: sa.transparent >= 92 ? 'ok' : (sa.transparent >= 88 ? 'warn' : 'bad') },
       { name: 'Coloured PET', pct: sa.coloured.toFixed(1),    status: sa.coloured     <= 6 ? 'ok' : (sa.coloured     <= 9 ? 'warn' : 'bad') },
       { name: 'Contaminants', pct: sa.contaminants.toFixed(1),status: sa.contaminants <= 2 ? 'ok' : (sa.contaminants <= 4 ? 'warn' : 'bad') },
@@ -7142,7 +7167,7 @@
       kg: item.weight,
       processedBy: item.processedBy,
       processedAt: item.at,
-      chips,
+      chips: item.kind === 'bale' ? perBaleChips(item) : loadChips,
       note: item.note,
     }));
   }
