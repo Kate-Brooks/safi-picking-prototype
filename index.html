@@ -6981,17 +6981,342 @@
     );
   }
 
-  // R29/R30: HistoryView - one row per production window (active first, then most-recent-first).
-  // Supplier filter sits above; clicking a row opens the side drawer with per-window detail.
+  // =========================================================================
+  // R65: HISTORY TAB REDESIGN — helpers, components, and derivation functions.
+  // Production windows are rendered as collapsible cards with a nested shifts
+  // × lines table. Clicking a row opens the side drawer (Figma-aligned data
+  // table view) showing the loads processed for that specific shift+line.
+  // =========================================================================
+
+  // Status thresholds for deviation %, quality %, and aggregate row status.
+  const devStatusFor = (dev) => {
+    const a = Math.abs(dev);
+    if (a <= 1) return 'ok';
+    if (a <= 3) return 'warn';
+    return 'bad';
+  };
+  const qualityStatusFor = (q, target = 90) => {
+    if (q >= target) return 'ok';
+    if (q >= target - 3) return 'warn';
+    return 'bad';
+  };
+  const rowsAggregateStatus = (rows) => {
+    let s = 'ok';
+    for (const r of rows) {
+      if (r.alerts > 0 || devStatusFor(r.deviation) === 'bad' || qualityStatusFor(r.quality) === 'bad') return 'bad';
+      if (devStatusFor(r.deviation) === 'warn' || qualityStatusFor(r.quality) === 'warn') s = 'warn';
+    }
+    return s;
+  };
+
+  // Tailwind class lookups for the three status tones.
+  const STATUS_BAR_BG = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-rose-500' };
+  const STATUS_TEXT   = { ok: 'text-success-300', warn: 'text-amber-700', bad: 'text-rose-900' };
+  const STATUS_CHIP   = {
+    ok:   'bg-success-100 text-success-300',
+    warn: 'bg-amber-50 text-amber-900',
+    bad:  'bg-rose-100 text-rose-900',
+  };
+
+  // Format helpers.
+  const fmtPctSigned = (n) => (n > 0 ? '+' : '') + n.toFixed(1) + '%';
+  const fmtKgFull    = (n) => fmtNum(n) + ' kg';
+
+  // Quality chip used in the drawer's loads table — green/amber/red per spec status.
+  const HistoryQualityChip = ({ name, pct, status = 'ok' }) => (
+    <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[12px] font-semibold whitespace-nowrap ' + STATUS_CHIP[status]}>
+      <Icon d={status === 'ok' ? I.checkCircle : I.errorCircle} className="w-3 h-3" />
+      {name} {pct}%
+    </span>
+  );
+
+  // Target input by window — fixed per window so the prototype's deviation values
+  // demo a mix of in-spec, warning, and out-of-spec rows.
+  const TARGET_INPUT_BY_WINDOW = {
+    'pw-active': 92, 'pw-1': 70, 'pw-2': 95, 'pw-3': 75,
+    'pw-4': 75, 'pw-5': 80, 'pw-6': 75, 'pw-7': 75, 'pw-8': 85,
+  };
+  const targetFor = (pw) => TARGET_INPUT_BY_WINDOW[pw.id] || Math.round((pw.actualInputPct + 5) / 5) * 5;
+
+  // Derive shifts × lines for a production window.
+  //   <  18 hrs       → 1 shift, no label
+  //   18–36 hrs       → 3 shifts (day/evening/night)
+  //   >  36 hrs       → day+night × up to 3 days
+  // Each shift has 1–2 lines depending on bale count. Totals are distributed
+  // deterministically so the table looks plausible without needing real data.
+  const NOW_FROZEN = new Date('2026-05-26T17:00:00Z');
+  function deriveShifts(pw) {
+    const start = new Date(pw.startedAt);
+    const end = pw.endedAt ? new Date(pw.endedAt) : NOW_FROZEN;
+    const durHrs = Math.max(1, (end - start) / 36e5);
+
+    let shiftDefs;
+    if (durHrs < 18) {
+      shiftDefs = [{ id: pw.id + '-main', label: null }];
+    } else if (durHrs <= 36) {
+      shiftDefs = [
+        { id: pw.id + '-shift-day',     label: '09:00 – 17:00' },
+        { id: pw.id + '-shift-evening', label: '17:00 – 01:00' },
+        { id: pw.id + '-shift-night',   label: '01:00 – 09:00' },
+      ];
+    } else {
+      const days = Math.min(3, Math.ceil(durHrs / 24));
+      shiftDefs = [];
+      for (let d = 0; d < days; d++) {
+        shiftDefs.push({ id: `${pw.id}-d${d}-day`,   label: `Day ${d + 1} · Day shift` });
+        shiftDefs.push({ id: `${pw.id}-d${d}-night`, label: `Day ${d + 1} · Night shift` });
+      }
+    }
+
+    const numShifts = shiftDefs.length;
+    const numLines = pw.balesProcessed >= 8 ? 2 : 1;
+    const shiftFrac = 1 / numShifts;
+    const lineFracs = numLines === 1 ? [1] : [0.55, 0.45];
+
+    const target = targetFor(pw);
+    const actual = pw.actualInputPct;
+    const quality = (pw.specAverages && (pw.specAverages.transparent || pw.specAverages.light)) || 88;
+    const hasIssues = pw.mismatches.length + pw.rejectedBales.length > 0;
+
+    return shiftDefs.map((sd, sIdx) => ({
+      ...sd,
+      rows: Array.from({ length: numLines }, (_, lIdx) => {
+        const variance = ((sIdx + lIdx) % 3) - 1; // -1, 0, +1
+        const lineActual = Math.max(40, Math.min(100, +(actual + variance).toFixed(1)));
+        const deviation = +(lineActual - target).toFixed(1);
+        const baleFrac = shiftFrac * lineFracs[lIdx];
+        const bales = Math.max(1, Math.round(pw.balesProcessed * baleFrac));
+        const kg = Math.max(1, Math.round(pw.weightProcessed * baleFrac));
+        const isAlertLine = hasIssues && sIdx === 0 && lIdx === 0;
+        const alerts = isAlertLine ? (pw.mismatches.length + pw.rejectedBales.length) : 0;
+
+        // R65: per-line quality chips. Line 1 (primary line) gets a single
+        // Clear PET chip; Line 2 (secondary line, processes off-spec/contaminant
+        // streams in the prototype) gets Green PET + Thermoforms chips.
+        const chips = (() => {
+          if (lIdx === 0) {
+            const clearPct = Math.round(quality + variance);
+            return [{
+              name: 'Clear PET',
+              pct: clearPct,
+              status: clearPct >= 92 ? 'ok' : clearPct >= 88 ? 'warn' : 'bad',
+            }];
+          }
+          const greenPct = Math.round(((pw.specAverages && pw.specAverages.coloured) || 11) + (sIdx % 2) * 2);
+          const thermoPct = 3 + (sIdx % 3);
+          return [
+            { name: 'Green PET',   pct: greenPct,  status: greenPct  <= 6 ? 'ok' : greenPct  <= 9 ? 'warn' : 'bad' },
+            { name: 'Thermoforms', pct: thermoPct, status: thermoPct <= 2 ? 'ok' : thermoPct <= 5 ? 'warn' : 'bad' },
+          ];
+        })();
+
+        return {
+          line: numLines === 1 ? 'Line 1' : (lIdx === 0 ? 'Line 1' : 'Line 2'),
+          lineId: `${sd.id}-l${lIdx}`,
+          target, actual: lineActual, deviation, quality, bales, kg, alerts,
+          chips,
+        };
+      }),
+    }));
+  }
+
+  // Derive load rows for the drawer's loads table. Pulls from the window's
+  // recentItems (loads only — bales are not shown here) and synthesises chips
+  // from the window's spec averages. In production, each load would carry its
+  // own AI result chips; this is a prototype simplification.
+  function deriveLoadsForLine(pw) {
+    const sa = pw.specAverages;
+    const loads = pw.recentItems.filter(i => i.kind === 'load');
+    if (loads.length === 0) return [];
+    return loads.map(item => {
+      const chips = sa ? [
+        { name: 'Clear PET',    pct: sa.transparent.toFixed(1), status: sa.transparent >= 92 ? 'ok' : (sa.transparent >= 88 ? 'warn' : 'bad') },
+        { name: 'Coloured PET', pct: sa.coloured.toFixed(1),    status: sa.coloured     <= 6 ? 'ok' : (sa.coloured     <= 9 ? 'warn' : 'bad') },
+        { name: 'Contaminants', pct: sa.contaminants.toFixed(1),status: sa.contaminants <= 2 ? 'ok' : (sa.contaminants <= 4 ? 'warn' : 'bad') },
+      ] : null;
+      return {
+        id: item.id,
+        orderRef: item.lot,
+        supplier: item.supplier,
+        material: pw.material,
+        bales: item.bales || 0,
+        kg: item.weight,
+        pickedBy: item.processedBy,
+        processedBy: item.processedBy,
+        chips,
+        note: item.note,
+      };
+    });
+  }
+
+  // Aggregate totals across shifts × lines. Average deviation is kg-weighted.
+  function totalsFromShifts(shifts) {
+    const rows = shifts.flatMap(s => s.rows);
+    const bales  = rows.reduce((s, r) => s + r.bales,  0);
+    const kg     = rows.reduce((s, r) => s + r.kg,     0);
+    const alerts = rows.reduce((s, r) => s + r.alerts, 0);
+    const totalKg = rows.reduce((s, r) => s + r.kg, 0);
+    const avgDev = totalKg
+      ? +(rows.reduce((s, r) => s + r.deviation * r.kg, 0) / totalKg).toFixed(1)
+      : 0;
+    return { bales, kg, alerts, avgDev, status: rowsAggregateStatus(rows) };
+  }
+
+  // HistoryWindowCard — collapsible window summary header + nested shift × line
+  // table. Replaces the prior single-table row.
+  function HistoryWindowCard({ pw, shifts, open, onToggle, onRowClick, lang, fmtDateRange, isActive }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const totals = totalsFromShifts(shifts);
+    const range = fmtDateRange(pw.startedAt, pw.endedAt);
+
+    return (
+      <div className="relative bg-white border border-neutral-10 rounded-xl overflow-hidden">
+        <div className={'absolute left-0 top-0 bottom-0 w-1 ' + STATUS_BAR_BG[totals.status]} aria-hidden="true" />
+
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="w-full text-left flex items-center gap-4 pl-6 pr-5 py-4 hover:bg-neutral-5 transition-colors focus:outline-none focus:bg-safi-50"
+        >
+          <Icon d={open ? I.chevron : I.chevronR} className="w-4 h-4 text-neutral-60 shrink-0" />
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[15px] font-bold text-neutral-100">
+                {tEN('Production window', 'Ventana de producción')}: {range}
+              </span>
+              {isActive && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[12px] font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  {tEN('Active', 'Activa')}
+                </span>
+              )}
+              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-semibold border bg-neutral-5 text-neutral-80 border-neutral-10">{pw.material}</span>
+            </div>
+            <div className="mt-1.5 flex items-center gap-5 flex-wrap text-[13px]">
+              <span><span className="text-neutral-60">{tEN('Bales', 'Pacas')}</span> <span className="font-semibold text-neutral-100">{fmtNum(totals.bales)}</span></span>
+              <span><span className="text-neutral-60">{tEN('Weight', 'Peso')}</span> <span className="font-semibold text-neutral-100">{fmtKgFull(totals.kg)}</span></span>
+              <span><span className="text-neutral-60">{tEN('Avg deviation', 'Desviación media')}</span> <span className={'font-semibold ' + STATUS_TEXT[devStatusFor(totals.avgDev)]}>{fmtPctSigned(totals.avgDev)}</span></span>
+              <span><span className="text-neutral-60">{tEN('Alerts', 'Alertas')}</span> <span className={'font-semibold ' + (totals.alerts ? STATUS_TEXT.bad : 'text-neutral-100')}>{totals.alerts === 0 ? tEN('None', 'Ninguna') : totals.alerts}</span></span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => alert(tEN('Export window report — opens the report builder.', 'Exportar informe — abre el constructor de informes.'))}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-10 text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+            >
+              <Icon d={I.list} className="w-4 h-4" />
+              {tEN('Export report', 'Exportar informe')}
+            </button>
+          </div>
+        </button>
+
+        {open && (
+          <div className="border-t border-neutral-10">
+            <HistoryShiftLineTable pw={pw} shifts={shifts} onRowClick={onRowClick} lang={lang} />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function HistoryShiftLineTable({ pw, shifts, onRowClick, lang }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const showShiftCol = shifts.some(s => s.label);
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="bg-neutral-5 text-neutral-60 text-left">
+              {showShiftCol && <th className="font-semibold px-5 py-2 w-[200px]">{tEN('Shift', 'Turno')}</th>}
+              <th className="font-semibold px-3 py-2 w-[110px]">{tEN('Line', 'Línea')}</th>
+              <th className="font-semibold px-3 py-2 w-[80px] text-right">{tEN('Target', 'Objetivo')}</th>
+              <th className="font-semibold px-3 py-2 w-[80px] text-right">{tEN('Actual', 'Real')}</th>
+              <th className="font-semibold px-3 py-2 w-[100px] text-right">{tEN('Deviation', 'Desviación')}</th>
+              <th className="font-semibold px-3 py-2 min-w-[180px]">{tEN('Quality data', 'Datos de calidad')}</th>
+              <th className="font-semibold px-3 py-2 w-[90px] text-right">{tEN('Bales', 'Pacas')}</th>
+              <th className="font-semibold px-3 py-2 w-[120px] text-right">{tEN('Material kg', 'Material kg')}</th>
+              <th className="font-semibold px-3 py-2 w-[90px]">{tEN('Alerts', 'Alertas')}</th>
+              <th className="font-semibold px-3 py-2 w-[40px]" />
+            </tr>
+          </thead>
+          <tbody>
+            {shifts.map(shift => (
+              <Fragment key={shift.id}>
+                {shift.rows.map((row, rIdx) => {
+                  const ds = devStatusFor(row.deviation);
+                  return (
+                    <tr
+                      key={row.lineId}
+                      onClick={() => onRowClick(pw, shift, row)}
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(pw, shift, row); } }}
+                      className="border-t border-neutral-10 hover:bg-safi-50 cursor-pointer focus:outline-none focus:bg-safi-50 group"
+                    >
+                      {showShiftCol && (
+                        <td className="px-5 py-2.5 align-top">
+                          {rIdx === 0 ? (
+                            <span className="font-semibold text-neutral-100">{shift.label}</span>
+                          ) : (
+                            <span className="text-neutral-40">·</span>
+                          )}
+                        </td>
+                      )}
+                      <td className="px-3 py-2.5 align-top font-medium text-neutral-100">{row.line}</td>
+                      <td className="px-3 py-2.5 align-top text-right text-neutral-60">{row.target}%</td>
+                      <td className="px-3 py-2.5 align-top text-right text-neutral-100 font-medium">{row.actual}%</td>
+                      <td className={'px-3 py-2.5 align-top text-right font-semibold ' + STATUS_TEXT[ds]}>{fmtPctSigned(row.deviation)}</td>
+                      <td className="px-3 py-2.5 align-top">
+                        <div className="flex flex-wrap gap-1">
+                          {row.chips.map(c => (
+                            <HistoryQualityChip key={c.name} name={c.name} pct={c.pct} status={c.status} />
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 align-top text-right text-neutral-100">{fmtNum(row.bales)}</td>
+                      <td className="px-3 py-2.5 align-top text-right text-neutral-100">{fmtKgFull(row.kg)}</td>
+                      <td className="px-3 py-2.5 align-top">
+                        {row.alerts === 0 ? <span className="text-neutral-40">—</span> : (
+                          <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-rose-900">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                            {row.alerts}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 align-top text-neutral-40 group-hover:text-safi-600">
+                        <Icon d={I.chevronR} className="w-4 h-4" />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // R29/R30/R65: HistoryView — collapsible window cards with nested shift × line tables.
+  // Supplier filter sits above; clicking a row opens the side drawer with per-shift detail.
   function HistoryView({ processed, pickerMode = 'load', lang = 'en', yard = [] }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
     const [supplierQuery, setSupplierQuery] = useState('');
-    const [selectedWindow, setSelectedWindow] = useState(null);
+    const [drawerSel, setDrawerSel] = useState(null); // { pw, shift, row }
     const [page, setPage] = useState(0);
     const perPage = 5;
-    const isBale = pickerMode === 'bale';
+    const cardRefs = useRef({});
+    // Active window expanded by default; others collapsed for breadth-on-demand.
+    const [openWindowIds, setOpenWindowIds] = useState(() => {
+      const active = PRODUCTION_WINDOWS.find(w => w.endedAt === null);
+      return active ? new Set([active.id]) : new Set();
+    });
 
-    // Filter by supplier - matches against any supplier in recentItems / mismatches / rejectedBales.
+    // Filter by supplier — matches against any supplier in recentItems / mismatches / rejectedBales.
     const matchesSupplier = (w) => {
       if (!supplierQuery.trim()) return true;
       const q = supplierQuery.trim().toLowerCase();
@@ -7012,12 +7337,11 @@
     const visibleWindows = orderedWindows.filter(matchesSupplier);
     const pagedWindows = visibleWindows.slice(page * perPage, (page + 1) * perPage);
 
-    // Reset to first page whenever the filter changes
+    // Reset to first page whenever the filter changes.
     useEffect(() => { setPage(0); }, [supplierQuery]);
 
     const active = orderedWindows.find(w => w.endedAt === null);
     // R31: load-based processing doesn't weigh material, so mismatches don't apply.
-    // Suppress them everywhere on the History tab when in load-based mode.
     const showMismatches = pickerMode === 'bale';
     const activeAlerts = active
       ? { mismatches: showMismatches ? active.mismatches.length : 0, rejected: active.rejectedBales.length }
@@ -7032,6 +7356,28 @@
       if (!ended) return `${fmt(started)} - ${tEN('ongoing', 'en curso')}`;
       return `${fmt(started)} - ${fmt(ended)}`;
     };
+
+    const toggleWindow = (id) => {
+      setOpenWindowIds(prev => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      });
+    };
+
+    // Review (active-window banner): expand the active window's card AND scroll
+    // it into view. Lets the user see the alert in context rather than opening
+    // a drawer prematurely.
+    const reviewActive = () => {
+      if (!active) return;
+      setOpenWindowIds(prev => new Set([...prev, active.id]));
+      setTimeout(() => {
+        const el = cardRefs.current[active.id];
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    };
+
+    const handleRowClick = (pw, shift, row) => setDrawerSel({ pw, shift, row });
 
     return (
       <Fragment>
@@ -7054,7 +7400,7 @@
           </FieldsetInput>
         </div>
 
-        {/* Active window alert - mismatches or rejected bales need the SL's eyes */}
+        {/* Active window alert — mismatches or rejected bales need the SL's eyes */}
         {hasActiveAlert && (
           <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-3">
             <Icon d={I.errorCircle} className="w-5 h-5 text-amber-700 mt-0.5 shrink-0" />
@@ -7074,7 +7420,7 @@
               </div>
             </div>
             <button
-              onClick={() => setSelectedWindow(active)}
+              onClick={reviewActive}
               className="shrink-0 px-3 py-2 rounded border border-amber-300 bg-white text-amber-900 text-[13px] font-medium hover:bg-amber-100"
             >
               {tEN('Review', 'Revisar')}
@@ -7082,111 +7428,47 @@
           </div>
         )}
 
-        {/* Previous windows table */}
-        <div className="bg-white border border-neutral-10 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-neutral-10">
-            <h3 className="font-bold text-neutral-100 text-lg">{tEN('Previous production windows', 'Ventanas de producción anteriores')}</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm table-fixed">
-              <colgroup>
-                <col className="w-[300px]" />
-                <col className="w-[160px]" />
-                <col className="w-[160px]" />
-                <col className="w-[140px]" />
-                <col className="w-[120px]" />
-                <col />
-              </colgroup>
-              <thead>
-                <tr className="text-left text-[13px] font-medium text-neutral-60 border-b border-neutral-10">
-                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Time period', 'Período')}</th>
-                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Material', 'Material')}</th>
-                  <th className="px-5 py-3 whitespace-nowrap font-medium">{isBale ? tEN('Bales processed', 'Pacas procesadas') : tEN('Loads processed', 'Lotes procesados')}</th>
-                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Weight processed', 'Peso procesado')}</th>
-                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Actual input', 'Entrada real')}</th>
-                  <th className="px-5 py-3 whitespace-nowrap font-medium">{tEN('Spec averages', 'Promedios')}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-10">
-                {pagedWindows.map(w => {
-                  const range = fmtDateRange(w.startedAt, w.endedAt);
-                  const isActive = w.endedAt === null;
-                  const counted = isBale ? w.balesProcessed : w.loadsProcessed;
-                  const issuesText = [
-                    w.rejectedBales.length > 0 && tEN(
-                      `${w.rejectedBales.length} rejected`,
-                      `${w.rejectedBales.length} rechazadas`),
-                    showMismatches && w.mismatches.length > 0 && tEN(
-                      `${w.mismatches.length} mismatch${w.mismatches.length === 1 ? '' : 'es'}`,
-                      `${w.mismatches.length} discrepancia${w.mismatches.length === 1 ? '' : 's'}`),
-                  ].filter(Boolean).join(' · ');
-                  return (
-                    <tr
-                      key={w.id}
-                      onClick={() => setSelectedWindow(w)}
-                      tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedWindow(w); } }}
-                      className="hover:bg-safi-50/50 cursor-pointer focus:outline-none focus:bg-safi-50"
-                    >
-                      <td className="px-5 py-3 align-top text-[13px] text-neutral-100">
-                        <div className="leading-snug">{range}</div>
-                        {isActive && (
-                          <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[13px] font-medium">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            {tEN('Active', 'Activa')}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-neutral-100 align-top">{w.material}</td>
-                      <td className="px-5 py-3 align-top">
-                        <div className="text-neutral-100">{fmtNum(counted)}</div>
-                        {issuesText && (
-                          <div className="mt-0.5 inline-flex items-center gap-1 text-[13px] text-amber-800">
-                            <Icon d={I.errorCircle} className="w-3.5 h-3.5 text-amber-700" />
-                            {issuesText}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-neutral-100 align-top whitespace-nowrap">{fmtKg(w.weightProcessed)}</td>
-                      <td className="px-5 py-3 text-neutral-100 align-top">{w.actualInputPct.toFixed(1)}%</td>
-                      <td className="px-5 py-3 align-top">
-                        {w.specAverages ? (
-                          <div className="flex items-center gap-1 flex-wrap">
-                            {Object.entries(w.specAverages).map(([k, v]) => (
-                              <span key={k} className="text-[13px] px-1.5 py-0.5 rounded bg-safi-50 text-safi-700">
-                                {k === 'transparent' && 'Transparent PET'}
-                                {k === 'light' && 'Light'}
-                                {k === 'coloured' && 'Coloured PET'}
-                                {k === 'contaminants' && 'Contaminants'}
-                                {' '}{v.toFixed(1)}%
-                              </span>
-                            ))}
-                          </div>
-                        ) : <span className="text-neutral-40 text-[13px]">-</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-                {visibleWindows.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-5 py-10 text-center text-[13px] text-neutral-60">
-                      {tEN('No windows match this supplier search.', 'Ninguna ventana coincide con esta búsqueda.')}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <TablePagination total={visibleWindows.length} page={page} perPage={perPage} onPage={setPage} lang={lang} />
+        {/* Production window cards */}
+        <div className="space-y-3">
+          {pagedWindows.map(w => {
+            const shifts = deriveShifts(w);
+            return (
+              <div key={w.id} ref={el => { cardRefs.current[w.id] = el; }}>
+                <HistoryWindowCard
+                  pw={w}
+                  shifts={shifts}
+                  open={openWindowIds.has(w.id)}
+                  onToggle={() => toggleWindow(w.id)}
+                  onRowClick={handleRowClick}
+                  lang={lang}
+                  fmtDateRange={fmtDateRange}
+                  isActive={w.endedAt === null}
+                />
+              </div>
+            );
+          })}
+          {visibleWindows.length === 0 && (
+            <div className="bg-white border border-neutral-10 rounded-xl px-5 py-12 text-center text-[13px] text-neutral-60">
+              {tEN('No windows match this supplier search.', 'Ninguna ventana coincide con esta búsqueda.')}
+            </div>
+          )}
         </div>
 
-        {/* Right-side drawer */}
-        {selectedWindow && (
+        {/* Pagination — rendered only when there's more than one page of windows. */}
+        {visibleWindows.length > perPage && (
+          <div className="mt-3 bg-white border border-neutral-10 rounded-xl overflow-hidden">
+            <TablePagination total={visibleWindows.length} page={page} perPage={perPage} onPage={setPage} lang={lang} />
+          </div>
+        )}
+
+        {/* Right-side drawer for a specific shift × line */}
+        {drawerSel && (
           <ProductionWindowDrawer
-            window={selectedWindow}
-            pickerMode={pickerMode}
+            pw={drawerSel.pw}
+            shift={drawerSel.shift}
+            row={drawerSel.row}
             lang={lang}
-            onClose={() => setSelectedWindow(null)}
+            onClose={() => setDrawerSel(null)}
             fmtDateRange={fmtDateRange}
           />
         )}
@@ -7194,35 +7476,42 @@
     );
   }
 
-  // R29/R30: ProductionWindowDrawer - right-slide-in panel showing per-window detail.
-  // Sections: time period summary, recent processed items (bales or loads per
-  // pickerMode), identified mismatches (visually emphasised - rendered ONLY when
-  // there are any), rejected bales (rendered ONLY when there are any). Tables use
-  // MUI-aligned styling (sentence-case headers) and merge processed-by + timestamp
-  // into a single column. Pagination provided by the shared TablePagination.
-  function ProductionWindowDrawer({ window: pw, pickerMode, lang, onClose, fmtDateRange }) {
+  // R65: ProductionWindowDrawer — Figma-aligned shift × line detail drawer.
+  // Header carries window + shift + line, high-level stats (target/actual/
+  // deviation/bales/weight), then the alert banner (when applicable, at the
+  // TOP of the body because alerts matter most), then a wide loads data table
+  // with AI quality chips per load (Clear PET / Coloured PET / Contaminants).
+  function ProductionWindowDrawer({ pw, shift, row, lang, onClose, fmtDateRange }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
-    const isBale = pickerMode === 'bale';
-    const isActive = pw.endedAt === null;
-    const fmtAt = (d) => new Date(d).toLocaleString('en-GB', {
-      day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
-    });
+    const range = fmtDateRange(pw.startedAt, pw.endedAt);
+    const hasShiftLabel = !!shift.label;
+    const loads = deriveLoadsForLine(pw);
+    const ds = devStatusFor(row.deviation);
 
-    const processedItems = pw.recentItems.filter(i => isBale ? i.kind === 'bale' : i.kind === 'load');
-
-    // Per-table pagination state (5 rows each).
-    const [pageProcessed, setPageProcessed] = useState(0);
-    const [pageMismatch,  setPageMismatch]  = useState(0);
-    const [pageReject,    setPageReject]    = useState(0);
-    const perPage = 5;
-    const slice = (arr, page) => arr.slice(page * perPage, (page + 1) * perPage);
-
-    const ByLine = ({ name, at }) => (
-      <div>
-        <div className="text-neutral-100">{name}</div>
-        <div className="text-[13px] text-neutral-60">{fmtAt(at)}</div>
-      </div>
-    );
+    // Build the alert list from the window's mismatches + rejected bales when
+    // the clicked row carries any alerts. Severity: 'warn' for weight mismatch,
+    // 'bad' for a rejected bale.
+    const alerts = [];
+    if (row.alerts > 0) {
+      pw.mismatches.forEach(m => {
+        alerts.push({
+          severity: 'warn',
+          message: tEN(
+            `Weight mismatch on order ${m.lot} — ${fmtKg(m.totalReceived)} declared, ${fmtKg(m.processedWeight)} processed (loss ${m.lossPct.toFixed(1)}%)`,
+            `Discrepancia de peso en pedido ${m.lot} — ${fmtKg(m.totalReceived)} declarado, ${fmtKg(m.processedWeight)} procesado (pérdida ${m.lossPct.toFixed(1)}%)`
+          ),
+        });
+      });
+      pw.rejectedBales.forEach(r => {
+        alerts.push({
+          severity: 'bad',
+          message: tEN(
+            `Bale rejected — ${r.reason} (order ${r.lot}, ${fmtKg(r.weight)})`,
+            `Paca rechazada — ${r.reason} (pedido ${r.lot}, ${fmtKg(r.weight)})`
+          ),
+        });
+      });
+    }
 
     return (
       <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
@@ -7231,181 +7520,145 @@
           role="dialog"
           aria-label={tEN('Production window detail', 'Detalle de ventana de producción')}
           onClick={e => e.stopPropagation()}
-          className="relative bg-white w-full max-w-[820px] h-full overflow-y-auto shadow-2xl"
+          className="relative bg-white w-full max-w-[960px] h-full overflow-y-auto shadow-2xl"
         >
-          {/* Header */}
-          <div className="sticky top-0 bg-white border-b border-neutral-10 px-6 py-4 flex items-start justify-between gap-3 z-10">
-            <div className="min-w-0">
-              <div className="text-[13px] font-medium text-neutral-60">
-                {tEN('Production window', 'Ventana de producción')}
+          {/* Header — window label, shift + line subtitle, export + close */}
+          <div className="sticky top-0 bg-white border-b border-neutral-10 px-6 py-5 z-10">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-[20px] font-medium text-neutral-100 leading-tight">
+                  {tEN('Production window', 'Ventana de producción')}: {range}
+                </div>
+                <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                  {hasShiftLabel && <span className="text-[16px] font-bold text-neutral-100">{tEN('Shift', 'Turno')} {shift.label}</span>}
+                  {hasShiftLabel && <span className="text-neutral-40">·</span>}
+                  <span className="text-[16px] font-bold text-neutral-100">{row.line}</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-semibold border bg-neutral-5 text-neutral-80 border-neutral-10">{pw.material}</span>
+                </div>
               </div>
-              <div className="mt-0.5 text-xl font-bold text-neutral-100 leading-tight">
-                {fmtDateRange(pw.startedAt, pw.endedAt)}
-              </div>
-              <div className="mt-1 flex items-center gap-3 flex-wrap text-[13px] text-neutral-60">
-                <span>{pw.material}</span>
-                <span>·</span>
-                <span>{isBale ? `${fmtNum(pw.balesProcessed)} ${tEN('bales', 'pacas')}` : `${fmtNum(pw.loadsProcessed)} ${tEN('loads', 'lotes')}`}</span>
-                <span>·</span>
-                <span>{fmtKg(pw.weightProcessed)}</span>
-                <span>·</span>
-                <span>{pw.actualInputPct.toFixed(1)}% {tEN('actual input', 'entrada real')}</span>
-                {isActive && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[13px] font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    {tEN('Active', 'Activa')}
-                  </span>
-                )}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-10 text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+                >
+                  <Icon d={I.download} className="w-4 h-4" />
+                  {tEN('Export CSV', 'Exportar CSV')}
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label={tEN('Close drawer', 'Cerrar panel')}
+                  className="w-9 h-9 inline-flex items-center justify-center rounded-md hover:bg-neutral-5 text-neutral-60"
+                >
+                  <Icon d={I.close} className="w-4 h-4" />
+                </button>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              aria-label={tEN('Close drawer', 'Cerrar panel')}
-              className="p-2 rounded-lg hover:bg-neutral-5 shrink-0"
-            >
-              <Icon d={I.close} className="w-5 h-5 text-neutral-80" />
-            </button>
+
+            {/* High-level stats — kept at the top */}
+            <div className="mt-4 grid grid-cols-5 gap-3">
+              <div className="rounded-md border border-neutral-10 px-3 py-2.5">
+                <div className="text-[11px] text-neutral-60 uppercase tracking-wide">{tEN('Target', 'Objetivo')}</div>
+                <div className="text-[18px] font-bold text-neutral-100">{row.target}%</div>
+              </div>
+              <div className="rounded-md border border-neutral-10 px-3 py-2.5">
+                <div className="text-[11px] text-neutral-60 uppercase tracking-wide">{tEN('Actual', 'Real')}</div>
+                <div className="text-[18px] font-bold text-neutral-100">{row.actual}%</div>
+              </div>
+              <div className="rounded-md border border-neutral-10 px-3 py-2.5">
+                <div className="text-[11px] text-neutral-60 uppercase tracking-wide">{tEN('Deviation', 'Desviación')}</div>
+                <div className={'text-[18px] font-bold ' + STATUS_TEXT[ds]}>{fmtPctSigned(row.deviation)}</div>
+              </div>
+              <div className="rounded-md border border-neutral-10 px-3 py-2.5">
+                <div className="text-[11px] text-neutral-60 uppercase tracking-wide">{tEN('Bales', 'Pacas')}</div>
+                <div className="text-[18px] font-bold text-neutral-100">{fmtNum(row.bales)}</div>
+              </div>
+              <div className="rounded-md border border-neutral-10 px-3 py-2.5">
+                <div className="text-[11px] text-neutral-60 uppercase tracking-wide">{tEN('Weight', 'Peso')}</div>
+                <div className="text-[18px] font-bold text-neutral-100">{fmtKgFull(row.kg)}</div>
+              </div>
+            </div>
           </div>
 
-          <div className="px-6 py-5 space-y-6">
-            {/* Recent processed */}
-            <section>
-              <h4 className="text-base font-bold text-neutral-100 mb-2">
-                {isBale ? tEN('Recent processed bales', 'Pacas procesadas recientes') : tEN('Recent processed loads', 'Lotes procesados recientes')}
-              </h4>
-              {processedItems.length === 0 ? (
-                <div className="rounded-lg border border-neutral-10 px-4 py-6 text-center text-[13px] text-neutral-60">
-                  {tEN('No items recorded for this window yet.', 'No hay elementos registrados para esta ventana todavía.')}
+          {/* Alerts banner — top of body. Alerts are critical so they lead. */}
+          {alerts.length > 0 && (
+            <div className="px-6 pt-5">
+              {alerts.map((a, i) => (
+                <div
+                  key={i}
+                  className={'rounded-lg px-4 py-3 mb-2 flex items-start gap-3 border ' + (a.severity === 'bad' ? 'bg-rose-50 border-rose-300' : 'bg-amber-50 border-amber-300')}
+                >
+                  <Icon d={I.warning} className={'w-5 h-5 mt-0.5 shrink-0 ' + (a.severity === 'bad' ? 'text-rose-700' : 'text-amber-700')} />
+                  <div className="min-w-0 text-[14px]">
+                    <span className={'font-bold ' + (a.severity === 'bad' ? 'text-rose-900' : 'text-amber-900')}>
+                      {a.severity === 'bad' ? tEN('Alert', 'Alerta') : tEN('Warning', 'Aviso')}
+                    </span>
+                    <span className="text-neutral-100"> · {a.message}</span>
+                  </div>
                 </div>
-              ) : (
-                <div className="rounded-lg border border-neutral-10 overflow-hidden">
-                  <table className="w-full text-[13px]">
-                    <thead>
-                      <tr className="text-left text-[13px] font-medium text-neutral-60 border-b border-neutral-10">
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Supplier · order ref', 'Proveedor · ref. de pedido')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{isBale ? tEN('Bale weight', 'Peso de la paca') : tEN('Load weight', 'Peso del lote')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Processed by', 'Procesado por')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Note', 'Nota')}</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-10">
-                      {slice(processedItems, pageProcessed).map(it => (
-                        <tr key={it.id}>
-                          <td className="px-3 py-2.5">
-                            <div className="text-neutral-100">{it.supplier}</div>
-                            <a
-                              href="#"
-                              onClick={(e) => e.preventDefault()}
-                              className="text-safi-700 hover:underline font-medium text-[13px]"
-                            >#{it.lot}</a>
-                          </td>
-                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{fmtKg(it.weight)}</td>
-                          <td className="px-3 py-2.5"><ByLine name={it.processedBy} at={it.at} /></td>
-                          <td className="px-3 py-2.5 text-neutral-60">{it.note || '-'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <TablePagination total={processedItems.length} page={pageProcessed} perPage={perPage} onPage={setPageProcessed} lang={lang} />
-                </div>
-              )}
-            </section>
+              ))}
+            </div>
+          )}
 
-            {/* Identified mismatches - rendered ONLY when there are any AND we're in bale-based mode.
-                Load-based processing doesn't weigh material so the mismatch concept doesn't apply. */}
-            {!isBale ? null : pw.mismatches.length > 0 && (
-              <section>
-                <div className="flex items-center gap-2 mb-2">
-                  <Icon d={I.errorCircle} className="w-4 h-4 text-amber-700" />
-                  <h4 className="text-base font-bold text-amber-900">
-                    {tEN('Identified weight mismatches', 'Discrepancias de peso identificadas')}
-                  </h4>
-                </div>
-                <div className="rounded-lg border-2 border-amber-200 bg-amber-50/30 overflow-hidden">
-                  <table className="w-full text-[13px]">
-                    <thead>
-                      <tr className="text-left text-[13px] font-medium text-amber-900 border-b border-amber-200">
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Order reference', 'Lote')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Total received', 'Total recibido')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Processed weight', 'Peso procesado')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Weight loss', 'Pérdida de peso')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Loss %', 'Pérdida %')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Identified by', 'Identificado por')}</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-amber-100">
-                      {slice(pw.mismatches, pageMismatch).map(m => (
-                        <tr key={m.id}>
-                          <td className="px-3 py-2.5">
-                            <a
-                              href="#"
-                              onClick={(e) => e.preventDefault()}
-                              className="text-safi-700 hover:underline font-medium"
-                            >#{m.lot}</a>
-                            <div className="text-neutral-60">{m.supplier}</div>
-                          </td>
-                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{fmtKg(m.totalReceived)}</td>
-                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{fmtKg(m.processedWeight)}</td>
-                          <td className="px-3 py-2.5 text-neutral-100 font-semibold whitespace-nowrap">{fmtKg(m.weightLoss)}</td>
-                          <td className="px-3 py-2.5 text-amber-900 font-bold whitespace-nowrap">{m.lossPct.toFixed(1)}%</td>
-                          <td className="px-3 py-2.5"><ByLine name={m.processedBy} at={m.at} /></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <TablePagination total={pw.mismatches.length} page={pageMismatch} perPage={perPage} onPage={setPageMismatch} lang={lang} />
-                </div>
-              </section>
-            )}
+          {/* Loads data table — one row per load processed in this shift+line */}
+          <div className="px-6 py-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[14px] font-bold text-neutral-100">
+                {tEN('Loads processed', 'Lotes procesados')}
+                <span className="ml-2 text-neutral-60 font-normal">{loads.length} {tEN('loads', 'lotes')}</span>
+              </h3>
+            </div>
 
-            {/* Rejected bales - rendered ONLY when there are any */}
-            {pw.rejectedBales.length > 0 && (
-              <section>
-                <h4 className="text-base font-bold text-neutral-100 mb-2">
-                  {tEN('Rejected bales', 'Pacas rechazadas')}
-                </h4>
-                <div className="rounded-lg border border-neutral-10 overflow-hidden">
+            {loads.length === 0 ? (
+              <div className="rounded-lg border border-neutral-10 px-4 py-8 text-center text-[13px] text-neutral-60">
+                {tEN('No loads recorded for this shift yet.', 'No hay lotes registrados para este turno todavía.')}
+              </div>
+            ) : (
+              <div className="border border-neutral-10 rounded-lg overflow-hidden">
+                <div className="overflow-x-auto">
                   <table className="w-full text-[13px]">
                     <thead>
-                      <tr className="text-left text-[13px] font-medium text-neutral-60 border-b border-neutral-10">
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Order reference', 'Lote')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Supplier', 'Proveedor')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Storage location', 'Ubicación')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Reason', 'Motivo')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Weight', 'Peso')}</th>
-                        <th className="px-3 py-2.5 font-medium whitespace-nowrap">{tEN('Rejected by', 'Rechazado por')}</th>
+                      <tr className="bg-neutral-5 text-neutral-60 text-left">
+                        <th className="font-semibold px-3 py-2.5 w-[140px]">{tEN('Material', 'Material')}</th>
+                        <th className="font-semibold px-3 py-2.5">{tEN('Quality data', 'Datos de calidad')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[100px]">{tEN('Order ref', 'Ref. pedido')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[140px]">{tEN('Supplier', 'Proveedor')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[80px] text-right">{tEN('Bales', 'Pacas')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[100px] text-right">{tEN('Weight', 'Peso')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[150px]">{tEN('Picked / processed by', 'Recogido / procesado por')}</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-neutral-10">
-                      {slice(pw.rejectedBales, pageReject).map(r => (
-                        <tr key={r.id}>
-                          <td className="px-3 py-2.5">
-                            <a
-                              href="#"
-                              onClick={(e) => { e.preventDefault(); /* would open the load in a new window in production */ }}
-                              className="text-safi-700 hover:underline font-medium inline-flex items-center gap-1"
-                              title={tEN('Open load in new window', 'Abrir lote en nueva ventana')}
-                            >
-                              #{r.lot}
-                              <Icon d={I.external} className="w-3 h-3" />
-                            </a>
+                    <tbody>
+                      {loads.map(load => (
+                        <tr key={load.id} className="border-t border-neutral-10 hover:bg-safi-50">
+                          <td className="px-3 py-3 align-top text-neutral-100">{load.material}</td>
+                          <td className="px-3 py-3 align-top">
+                            {load.chips ? (
+                              <div className="flex flex-wrap gap-1">
+                                {load.chips.map(c => (
+                                  <HistoryQualityChip key={c.name} name={c.name} pct={c.pct} status={c.status} />
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-[13px] text-neutral-60">{tEN('Not analysed yet', 'No analizado todavía')}</span>
+                            )}
                           </td>
-                          <td className="px-3 py-2.5 text-neutral-100">{r.supplier}</td>
-                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{r.sourceBay}</td>
-                          <td className="px-3 py-2.5">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 text-[13px] font-medium">
-                              {r.reason}
-                            </span>
+                          <td className="px-3 py-3 align-top">
+                            <a href="#" onClick={(e) => e.preventDefault()} className="text-safi-700 hover:underline font-medium">#{load.orderRef}</a>
                           </td>
-                          <td className="px-3 py-2.5 text-neutral-100 whitespace-nowrap">{fmtKg(r.weight)}</td>
-                          <td className="px-3 py-2.5"><ByLine name={r.rejectedBy} at={r.at} /></td>
+                          <td className="px-3 py-3 align-top text-neutral-100">{load.supplier}</td>
+                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtNum(load.bales)}</td>
+                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtKgFull(load.kg)}</td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="text-neutral-100">{load.pickedBy}</div>
+                            <div className="text-neutral-60 text-[12px]">{load.processedBy}</div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  <TablePagination total={pw.rejectedBales.length} page={pageReject} perPage={perPage} onPage={setPageReject} lang={lang} />
                 </div>
-              </section>
+              </div>
             )}
           </div>
         </aside>
