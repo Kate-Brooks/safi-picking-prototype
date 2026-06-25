@@ -3873,6 +3873,8 @@
           bales: (entity.loads || []).reduce((a, l) => a + (l.bales || 0), 0),
           weight: (entity.loads || []).reduce((a, l) => a + (l.weight || 0), 0),
         };
+    // R63: can delete only when nothing is stored.
+    const canDelete = stats.loads === 0;
     // R63: whole row is a clickable card. Click anywhere outside the inner
     // controls drills into the zone/buffer detail. Hover shows a purple border
     // to match the warehouse zone cards (familiar interaction pattern).
