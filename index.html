@@ -6416,7 +6416,8 @@
                                     windowActive={windowActive} setWindowActive={setWindowActive}
                                     setToast={setToast} processed={processed} setProcessed={setProcessed} lang={lang}
                                     selectionBales={selectionBales} setSelectionBales={setSelectionBales}
-                                    pickerMode={pickerMode} />}
+                                    pickerMode={pickerMode}
+                                    onEditWarehouse={() => setEditWarehouseOpen(true)} />}
           {/* tab === 'picker' (original load-only Picker) is no longer routed - ForkliftPickerView retained in source */}
           {/* R42: buffer + setBuffer lifted from inside the picker so the Warehouse tab can share it. */}
           {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={pickingLists} processed={processed}
@@ -7157,7 +7158,7 @@
   // SHIFT LEADER VIEW - progressive disclosure + picking-list creation
   // ============================================================================
 
-  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, setProcessed = () => {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load', yard = [], yardOps = {}, buffer = [], setBuffer = () => {} }) {
+  function ShiftLeaderView({ layout = 'accordion', pickingLists = [], upsertList, creationLine = 'Apan 1', setCreationLine, creationShift = 'Shift 1', setCreationShift, loadClaimMap = {}, setTab, setRole, slMode, setSlMode, windowActive, setWindowActive, setToast, processed = {}, setProcessed = () => {}, lang = 'en', selectionBales, setSelectionBales, pickerMode = 'load', yard = [], yardOps = {}, buffer = [], setBuffer = () => {}, onEditWarehouse = () => {} }) {
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
@@ -7491,7 +7492,7 @@
               buffer={buffer}
               setBuffer={setBuffer}
               setProcessed={setProcessed}
-              onEditWarehouse={() => setEditWarehouseOpen(true)}
+              onEditWarehouse={onEditWarehouse}
             />
           ) : (
           /* Yard - Zones / Bays / Loads */
