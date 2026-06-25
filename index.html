@@ -7120,33 +7120,31 @@
     }));
   }
 
-  // Derive load rows for the drawer's loads table. Pulls from the window's
-  // recentItems (loads only — bales are not shown here) and synthesises chips
-  // from the window's spec averages. In production, each load would carry its
-  // own AI result chips; this is a prototype simplification.
-  function deriveLoadsForLine(pw) {
+  // R65b: derive a row per processing event (every bale or load that was put
+  // through the line). Sorted by timestamp descending (most recent first) so
+  // the drawer reads as a chronological activity log.
+  function deriveProcessingEvents(pw) {
     const sa = pw.specAverages;
-    const loads = pw.recentItems.filter(i => i.kind === 'load');
-    if (loads.length === 0) return [];
-    return loads.map(item => {
-      const chips = sa ? [
-        { name: 'Clear PET',    pct: sa.transparent.toFixed(1), status: sa.transparent >= 92 ? 'ok' : (sa.transparent >= 88 ? 'warn' : 'bad') },
-        { name: 'Coloured PET', pct: sa.coloured.toFixed(1),    status: sa.coloured     <= 6 ? 'ok' : (sa.coloured     <= 9 ? 'warn' : 'bad') },
-        { name: 'Contaminants', pct: sa.contaminants.toFixed(1),status: sa.contaminants <= 2 ? 'ok' : (sa.contaminants <= 4 ? 'warn' : 'bad') },
-      ] : null;
-      return {
-        id: item.id,
-        orderRef: item.lot,
-        supplier: item.supplier,
-        material: pw.material,
-        bales: item.bales || 0,
-        kg: item.weight,
-        pickedBy: item.processedBy,
-        processedBy: item.processedBy,
-        chips,
-        note: item.note,
-      };
-    });
+    const items = [...pw.recentItems].sort((a, b) => new Date(b.at) - new Date(a.at));
+    if (items.length === 0) return [];
+    const chips = sa ? [
+      { name: 'Clear PET',    pct: sa.transparent.toFixed(1), status: sa.transparent >= 92 ? 'ok' : (sa.transparent >= 88 ? 'warn' : 'bad') },
+      { name: 'Coloured PET', pct: sa.coloured.toFixed(1),    status: sa.coloured     <= 6 ? 'ok' : (sa.coloured     <= 9 ? 'warn' : 'bad') },
+      { name: 'Contaminants', pct: sa.contaminants.toFixed(1),status: sa.contaminants <= 2 ? 'ok' : (sa.contaminants <= 4 ? 'warn' : 'bad') },
+    ] : null;
+    return items.map(item => ({
+      id: item.id,
+      kind: item.kind,
+      orderRef: item.lot,
+      supplier: item.supplier,
+      material: pw.material,
+      bales: item.kind === 'bale' ? 1 : (item.bales || 0),
+      kg: item.weight,
+      processedBy: item.processedBy,
+      processedAt: item.at,
+      chips,
+      note: item.note,
+    }));
   }
 
   // Aggregate totals across shifts × lines. Average deviation is kg-weighted.
@@ -7192,7 +7190,8 @@
                   {tEN('Active', 'Activa')}
                 </span>
               )}
-              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-semibold border bg-neutral-5 text-neutral-80 border-neutral-10">{pw.material}</span>
+              {/* R65b: material chip removed from the summary header — each line now carries
+                  its own material chips in the Material column inside the table. */}
             </div>
             <div className="mt-1.5 flex items-center gap-5 flex-wrap text-[13px]">
               <span><span className="text-neutral-60">{tEN('Bales', 'Pacas')}</span> <span className="font-semibold text-neutral-100">{fmtNum(totals.bales)}</span></span>
@@ -7237,7 +7236,7 @@
               <th className="font-semibold px-3 py-2 w-[80px] text-right">{tEN('Target', 'Objetivo')}</th>
               <th className="font-semibold px-3 py-2 w-[80px] text-right">{tEN('Actual', 'Real')}</th>
               <th className="font-semibold px-3 py-2 w-[100px] text-right">{tEN('Deviation', 'Desviación')}</th>
-              <th className="font-semibold px-3 py-2 min-w-[180px]">{tEN('Quality data', 'Datos de calidad')}</th>
+              <th className="font-semibold px-3 py-2 min-w-[180px]">{tEN('Material', 'Material')}</th>
               <th className="font-semibold px-3 py-2 w-[90px] text-right">{tEN('Bales', 'Pacas')}</th>
               <th className="font-semibold px-3 py-2 w-[120px] text-right">{tEN('Material kg', 'Material kg')}</th>
               <th className="font-semibold px-3 py-2 w-[90px]">{tEN('Alerts', 'Alertas')}</th>
@@ -7428,6 +7427,40 @@
           </div>
         )}
 
+        {/* R65b: Filter bar — date range, material, line, alerts toggle.
+            Non-functional placeholders in the prototype; chevron implies a dropdown. */}
+        <div className="mb-3 flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+          >
+            <Icon d={I.calendar} className="w-4 h-4 text-neutral-60" />
+            {tEN('Last 30 days', 'Últimos 30 días')}
+            <Icon d={I.chevron} className="w-3.5 h-3.5 text-neutral-60" />
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+          >
+            {tEN('All materials', 'Todos los materiales')}
+            <Icon d={I.chevron} className="w-3.5 h-3.5 text-neutral-60" />
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+          >
+            {tEN('All lines', 'Todas las líneas')}
+            <Icon d={I.chevron} className="w-3.5 h-3.5 text-neutral-60" />
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+          >
+            <Icon d={I.warning} className="w-4 h-4 text-neutral-60" />
+            {tEN('Has alerts', 'Con alertas')}
+          </button>
+        </div>
+
         {/* Production window cards */}
         <div className="space-y-3">
           {pagedWindows.map(w => {
@@ -7485,8 +7518,11 @@
     const tEN = (en, es) => lang === 'es' ? es : en;
     const range = fmtDateRange(pw.startedAt, pw.endedAt);
     const hasShiftLabel = !!shift.label;
-    const loads = deriveLoadsForLine(pw);
+    const events = deriveProcessingEvents(pw);
     const ds = devStatusFor(row.deviation);
+    const fmtAt = (d) => new Date(d).toLocaleString('en-GB', {
+      day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+    });
 
     // Build the alert list from the window's mismatches + rejected bales when
     // the clicked row carries any alerts. Severity: 'warn' for weight mismatch,
@@ -7600,18 +7636,21 @@
             </div>
           )}
 
-          {/* Loads data table — one row per load processed in this shift+line */}
+          {/* Processing events table — one row per processing event
+              (each bale or load put through the line), sorted most-recent-first. */}
           <div className="px-6 py-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[14px] font-bold text-neutral-100">
-                {tEN('Loads processed', 'Lotes procesados')}
-                <span className="ml-2 text-neutral-60 font-normal">{loads.length} {tEN('loads', 'lotes')}</span>
+                {tEN('Material processed', 'Material procesado')}
+                <span className="ml-2 text-neutral-60 font-normal">
+                  {events.length} {events.length === 1 ? tEN('event', 'evento') : tEN('events', 'eventos')}
+                </span>
               </h3>
             </div>
 
-            {loads.length === 0 ? (
+            {events.length === 0 ? (
               <div className="rounded-lg border border-neutral-10 px-4 py-8 text-center text-[13px] text-neutral-60">
-                {tEN('No loads recorded for this shift yet.', 'No hay lotes registrados para este turno todavía.')}
+                {tEN('No processing events recorded for this shift yet.', 'No hay eventos registrados para este turno todavía.')}
               </div>
             ) : (
               <div className="border border-neutral-10 rounded-lg overflow-hidden">
@@ -7619,23 +7658,34 @@
                   <table className="w-full text-[13px]">
                     <thead>
                       <tr className="bg-neutral-5 text-neutral-60 text-left">
-                        <th className="font-semibold px-3 py-2.5 w-[140px]">{tEN('Material', 'Material')}</th>
-                        <th className="font-semibold px-3 py-2.5">{tEN('Quality data', 'Datos de calidad')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[120px]">{tEN('Processed at', 'Procesado a las')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[70px]">{tEN('Type', 'Tipo')}</th>
+                        <th className="font-semibold px-3 py-2.5">{tEN('Material', 'Material')}</th>
                         <th className="font-semibold px-3 py-2.5 w-[100px]">{tEN('Order ref', 'Ref. pedido')}</th>
                         <th className="font-semibold px-3 py-2.5 w-[140px]">{tEN('Supplier', 'Proveedor')}</th>
-                        <th className="font-semibold px-3 py-2.5 w-[80px] text-right">{tEN('Bales', 'Pacas')}</th>
-                        <th className="font-semibold px-3 py-2.5 w-[100px] text-right">{tEN('Weight', 'Peso')}</th>
-                        <th className="font-semibold px-3 py-2.5 w-[150px]">{tEN('Picked / processed by', 'Recogido / procesado por')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[70px] text-right">{tEN('Bales', 'Pacas')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[90px] text-right">{tEN('Weight', 'Peso')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[130px]">{tEN('Processed by', 'Procesado por')}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {loads.map(load => (
-                        <tr key={load.id} className="border-t border-neutral-10 hover:bg-safi-50">
-                          <td className="px-3 py-3 align-top text-neutral-100">{load.material}</td>
+                      {events.map(ev => (
+                        <tr key={ev.id} className="border-t border-neutral-10 hover:bg-safi-50">
+                          <td className="px-3 py-3 align-top text-neutral-100 whitespace-nowrap">{fmtAt(ev.processedAt)}</td>
                           <td className="px-3 py-3 align-top">
-                            {load.chips ? (
+                            <span className={
+                              'inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-semibold border ' +
+                              (ev.kind === 'load'
+                                ? 'bg-safi-50 text-safi-700 border-safi-100'
+                                : 'bg-neutral-5 text-neutral-80 border-neutral-10')
+                            }>
+                              {ev.kind === 'load' ? tEN('Load', 'Lote') : tEN('Bale', 'Paca')}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            {ev.chips ? (
                               <div className="flex flex-wrap gap-1">
-                                {load.chips.map(c => (
+                                {ev.chips.map(c => (
                                   <HistoryQualityChip key={c.name} name={c.name} pct={c.pct} status={c.status} />
                                 ))}
                               </div>
@@ -7644,15 +7694,12 @@
                             )}
                           </td>
                           <td className="px-3 py-3 align-top">
-                            <a href="#" onClick={(e) => e.preventDefault()} className="text-safi-700 hover:underline font-medium">#{load.orderRef}</a>
+                            <a href="#" onClick={(e) => e.preventDefault()} className="text-safi-700 hover:underline font-medium">#{ev.orderRef}</a>
                           </td>
-                          <td className="px-3 py-3 align-top text-neutral-100">{load.supplier}</td>
-                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtNum(load.bales)}</td>
-                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtKgFull(load.kg)}</td>
-                          <td className="px-3 py-3 align-top">
-                            <div className="text-neutral-100">{load.pickedBy}</div>
-                            <div className="text-neutral-60 text-[12px]">{load.processedBy}</div>
-                          </td>
+                          <td className="px-3 py-3 align-top text-neutral-100">{ev.supplier}</td>
+                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtNum(ev.bales)}</td>
+                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtKgFull(ev.kg)}</td>
+                          <td className="px-3 py-3 align-top text-neutral-100">{ev.processedBy}</td>
                         </tr>
                       ))}
                     </tbody>
