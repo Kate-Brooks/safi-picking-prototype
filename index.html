@@ -7140,36 +7140,36 @@
     ];
   }
 
-  // R65b: derive a row per processing event (every bale or load that was put
-  // through the line). Sorted by timestamp descending (most recent first) so
-  // the drawer reads as a chronological activity log.
-  //
-  // R65c: bale rows now carry their own per-bale chip breakdown (Bottles/Jars,
-  // Thermoforms, Non PET, Metal) rather than the window-level averages. Load
-  // rows still show the load-level breakdown (Clear PET / Coloured PET /
-  // Contaminants) because a load is the aggregate unit.
-  function deriveProcessingEvents(pw) {
-    const sa = pw.specAverages;
-    const items = [...pw.recentItems].sort((a, b) => new Date(b.at) - new Date(a.at));
-    if (items.length === 0) return [];
-    const loadChips = sa ? [
-      { name: 'Clear PET',    pct: sa.transparent.toFixed(1), status: sa.transparent >= 92 ? 'ok' : (sa.transparent >= 88 ? 'warn' : 'bad') },
-      { name: 'Coloured PET', pct: sa.coloured.toFixed(1),    status: sa.coloured     <= 6 ? 'ok' : (sa.coloured     <= 9 ? 'warn' : 'bad') },
-      { name: 'Contaminants', pct: sa.contaminants.toFixed(1),status: sa.contaminants <= 2 ? 'ok' : (sa.contaminants <= 4 ? 'warn' : 'bad') },
-    ] : null;
-    return items.map(item => ({
-      id: item.id,
-      kind: item.kind,
-      orderRef: item.lot,
-      supplier: item.supplier,
-      material: pw.material,
-      bales: item.kind === 'bale' ? 1 : (item.bales || 0),
-      kg: item.weight,
-      processedBy: item.processedBy,
-      processedAt: item.at,
-      chips: item.kind === 'bale' ? perBaleChips(item) : loadChips,
-      note: item.note,
-    }));
+  // R65d: derive the drawer's load-row data. Each row = one load processed
+  // during the shift+line. Quality chips use BMP's material categories
+  // (Bottles/Jars, Thermoforms, Non PET, Metal) — driven deterministically
+  // from the load id so per-load values vary plausibly. Total bales and
+  // source bay are synthesised for the prototype.
+  function deriveProcessedLoads(pw) {
+    const loads = pw.recentItems
+      .filter(i => i.kind === 'load')
+      .sort((a, b) => new Date(b.at) - new Date(a.at));
+    return loads.map(load => {
+      const seed = (load.id || '').split('').reduce((s, c) => s + c.charCodeAt(0), 0) || 1;
+      const processed = load.bales || 1;
+      // Total bales is plausibly larger than the count processed in this shift
+      // — a load can span multiple shifts.
+      const totalBales = Math.max(processed, processed + ((seed * 7) % 38) + 4);
+      const sourceBay = `Bay ${(seed % 8) + 1}`;
+      return {
+        id: load.id,
+        orderRef: load.lot,
+        supplier: load.supplier,
+        processed,
+        totalBales,
+        sourceBay,
+        processedBy: load.processedBy,
+        processedAt: load.at,
+        kg: load.weight,
+        chips: perBaleChips(load),
+        note: load.note,
+      };
+    });
   }
 
   // Aggregate totals across shifts × lines. Average deviation is kg-weighted.
@@ -7543,15 +7543,15 @@
     const tEN = (en, es) => lang === 'es' ? es : en;
     const range = fmtDateRange(pw.startedAt, pw.endedAt);
     const hasShiftLabel = !!shift.label;
-    const events = deriveProcessingEvents(pw);
+    const loads = deriveProcessedLoads(pw);
     const ds = devStatusFor(row.deviation);
     const fmtAt = (d) => new Date(d).toLocaleString('en-GB', {
       day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
     });
 
-    // Build the alert list from the window's mismatches + rejected bales when
-    // the clicked row carries any alerts. Severity: 'warn' for weight mismatch,
-    // 'bad' for a rejected bale.
+    // Build the alert list from the window's mismatches. R65d: rejected-bale
+    // alerts are no longer surfaced here — the table itself carries the load
+    // detail, and the rejected-bales workflow is handled elsewhere.
     const alerts = [];
     if (row.alerts > 0) {
       pw.mismatches.forEach(m => {
@@ -7560,15 +7560,6 @@
           message: tEN(
             `Weight mismatch on order ${m.lot} — ${fmtKg(m.totalReceived)} declared, ${fmtKg(m.processedWeight)} processed (loss ${m.lossPct.toFixed(1)}%)`,
             `Discrepancia de peso en pedido ${m.lot} — ${fmtKg(m.totalReceived)} declarado, ${fmtKg(m.processedWeight)} procesado (pérdida ${m.lossPct.toFixed(1)}%)`
-          ),
-        });
-      });
-      pw.rejectedBales.forEach(r => {
-        alerts.push({
-          severity: 'bad',
-          message: tEN(
-            `Bale rejected — ${r.reason} (order ${r.lot}, ${fmtKg(r.weight)})`,
-            `Paca rechazada — ${r.reason} (pedido ${r.lot}, ${fmtKg(r.weight)})`
           ),
         });
       });
@@ -7661,21 +7652,23 @@
             </div>
           )}
 
-          {/* Processing events table — one row per processing event
-              (each bale or load put through the line), sorted most-recent-first. */}
+          {/* Loads processed table — one row per load processed in this shift+line.
+              Columns match the agreed schema: Order ref · Supplier · Quality (chips)
+              · Processed · Total bales · Production line · Source bay · Processed by
+              · Processed at. */}
           <div className="px-6 py-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[14px] font-bold text-neutral-100">
-                {tEN('Material processed', 'Material procesado')}
+                {tEN('Loads processed', 'Lotes procesados')}
                 <span className="ml-2 text-neutral-60 font-normal">
-                  {events.length} {events.length === 1 ? tEN('event', 'evento') : tEN('events', 'eventos')}
+                  {loads.length} {loads.length === 1 ? tEN('load', 'lote') : tEN('loads', 'lotes')}
                 </span>
               </h3>
             </div>
 
-            {events.length === 0 ? (
+            {loads.length === 0 ? (
               <div className="rounded-lg border border-neutral-10 px-4 py-8 text-center text-[13px] text-neutral-60">
-                {tEN('No processing events recorded for this shift yet.', 'No hay eventos registrados para este turno todavía.')}
+                {tEN('No loads recorded for this shift yet.', 'No hay lotes registrados para este turno todavía.')}
               </div>
             ) : (
               <div className="border border-neutral-10 rounded-lg overflow-hidden">
@@ -7683,48 +7676,37 @@
                   <table className="w-full text-[13px]">
                     <thead>
                       <tr className="bg-neutral-5 text-neutral-60 text-left">
-                        <th className="font-semibold px-3 py-2.5 w-[120px]">{tEN('Processed at', 'Procesado a las')}</th>
-                        <th className="font-semibold px-3 py-2.5 w-[70px]">{tEN('Type', 'Tipo')}</th>
-                        <th className="font-semibold px-3 py-2.5">{tEN('Material', 'Material')}</th>
-                        <th className="font-semibold px-3 py-2.5 w-[100px]">{tEN('Order ref', 'Ref. pedido')}</th>
-                        <th className="font-semibold px-3 py-2.5 w-[140px]">{tEN('Supplier', 'Proveedor')}</th>
-                        <th className="font-semibold px-3 py-2.5 w-[70px] text-right">{tEN('Bales', 'Pacas')}</th>
-                        <th className="font-semibold px-3 py-2.5 w-[90px] text-right">{tEN('Weight', 'Peso')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[120px]">{tEN('Order reference', 'Ref. pedido')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[130px]">{tEN('Supplier', 'Proveedor')}</th>
+                        <th className="font-semibold px-3 py-2.5 min-w-[280px]">{tEN('Quality', 'Calidad')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[80px] text-right">{tEN('Processed', 'Procesadas')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[90px] text-right">{tEN('Total bales', 'Total pacas')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[90px]">{tEN('Production line', 'Línea')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[90px]">{tEN('Source bay', 'Bahía')}</th>
                         <th className="font-semibold px-3 py-2.5 w-[130px]">{tEN('Processed by', 'Procesado por')}</th>
+                        <th className="font-semibold px-3 py-2.5 w-[110px]">{tEN('Processed at', 'Procesado a las')}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {events.map(ev => (
-                        <tr key={ev.id} className="border-t border-neutral-10 hover:bg-safi-50">
-                          <td className="px-3 py-3 align-top text-neutral-100 whitespace-nowrap">{fmtAt(ev.processedAt)}</td>
+                      {loads.map(load => (
+                        <tr key={load.id} className="border-t border-neutral-10 hover:bg-safi-50">
                           <td className="px-3 py-3 align-top">
-                            <span className={
-                              'inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-semibold border ' +
-                              (ev.kind === 'load'
-                                ? 'bg-safi-50 text-safi-700 border-safi-100'
-                                : 'bg-neutral-5 text-neutral-80 border-neutral-10')
-                            }>
-                              {ev.kind === 'load' ? tEN('Load', 'Lote') : tEN('Bale', 'Paca')}
-                            </span>
+                            <a href="#" onClick={(e) => e.preventDefault()} className="text-safi-700 hover:underline font-medium whitespace-nowrap">#{load.orderRef}</a>
                           </td>
+                          <td className="px-3 py-3 align-top text-neutral-100">{load.supplier}</td>
                           <td className="px-3 py-3 align-top">
-                            {ev.chips ? (
-                              <div className="flex flex-wrap gap-1">
-                                {ev.chips.map(c => (
-                                  <HistoryQualityChip key={c.name} name={c.name} pct={c.pct} status={c.status} />
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-[13px] text-neutral-60">{tEN('Not analysed yet', 'No analizado todavía')}</span>
-                            )}
+                            <div className="flex flex-wrap gap-1">
+                              {load.chips.map(c => (
+                                <HistoryQualityChip key={c.name} name={c.name} pct={c.pct} status={c.status} />
+                              ))}
+                            </div>
                           </td>
-                          <td className="px-3 py-3 align-top">
-                            <a href="#" onClick={(e) => e.preventDefault()} className="text-safi-700 hover:underline font-medium">#{ev.orderRef}</a>
-                          </td>
-                          <td className="px-3 py-3 align-top text-neutral-100">{ev.supplier}</td>
-                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtNum(ev.bales)}</td>
-                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtKgFull(ev.kg)}</td>
-                          <td className="px-3 py-3 align-top text-neutral-100">{ev.processedBy}</td>
+                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtNum(load.processed)}</td>
+                          <td className="px-3 py-3 align-top text-right text-neutral-100">{fmtNum(load.totalBales)}</td>
+                          <td className="px-3 py-3 align-top text-neutral-100">{row.line}</td>
+                          <td className="px-3 py-3 align-top text-neutral-100">{load.sourceBay}</td>
+                          <td className="px-3 py-3 align-top text-neutral-100">{load.processedBy}</td>
+                          <td className="px-3 py-3 align-top text-neutral-100 whitespace-nowrap">{fmtAt(load.processedAt)}</td>
                         </tr>
                       ))}
                     </tbody>
