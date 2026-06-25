@@ -3023,14 +3023,28 @@
   // the bay's name, access pattern, lock, optional stack height + the full
   // list of loads with checkboxes (no drag — per R61 spec, drag for load
   // reorder only lives in the bay detail view, Phase 3).
+  // R64: whole card is click-to-open (same pattern as the zone cards). Inner
+  // controls stopPropagation so they don't trigger the navigation. The
+  // chevron button is gone.
   function BayEditCard({ bay, zone, selectedLoadIds, onToggleSelect, onSelectAllInBay, dispatch, onOpen }) {
     const accessPattern = bay.accessPattern || zone.inventoryRule || 'NONE';
     const allSelected = bay.loads.length > 0 && bay.loads.every(l => selectedLoadIds.has(l.id));
     const someSelected = bay.loads.some(l => selectedLoadIds.has(l.id));
+    const stop = (e) => e.stopPropagation();
     return (
-      <div className="shrink-0 w-[340px] border border-neutral-10 rounded-lg bg-white p-3 flex flex-col">
+      <div
+        role={onOpen ? 'button' : undefined}
+        tabIndex={onOpen ? 0 : undefined}
+        onClick={onOpen ? () => onOpen(bay.id) : undefined}
+        onKeyDown={onOpen ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(bay.id); } } : undefined}
+        data-bay-id={bay.id}
+        className={
+          'shrink-0 w-[340px] border border-neutral-10 rounded-lg bg-white p-3 flex flex-col transition ' +
+          (onOpen ? 'cursor-pointer hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600' : '')
+        }
+      >
         {/* Header: name + access + lock + (optional) stack height */}
-        <div className="space-y-2 pb-3 mb-3 border-b border-neutral-10">
+        <div className="space-y-2 pb-3 mb-3 border-b border-neutral-10" onClick={stop}>
           <div className="flex items-center gap-1.5">
             <div className="relative flex-1">
               <label className="absolute -top-2 left-2 bg-white px-1 text-[10px] text-neutral-60 z-10">Bay name</label>
@@ -3038,20 +3052,10 @@
                 type="text"
                 value={bay.name}
                 onChange={e => dispatch({ type: 'updateBay', zoneId: zone.id, bayId: bay.id, patch: { name: e.target.value } })}
+                onClick={stop}
                 className="w-full h-9 px-2.5 border border-neutral-10 rounded-md text-[13px] font-semibold text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 focus:border-safi-600"
               />
             </div>
-            {onOpen && (
-              <button
-                type="button"
-                onClick={() => onOpen(bay.id)}
-                className="shrink-0 h-9 px-2 rounded-md border border-neutral-10 bg-white text-neutral-60 hover:bg-neutral-5 hover:text-neutral-100 inline-flex items-center gap-1"
-                title="Open bay detail to reorder loads"
-                aria-label={`Open ${bay.name} detail`}
-              >
-                <Icon d={I.chevronR} className="w-3.5 h-3.5" />
-              </button>
-            )}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             <AccessPatternSelect
@@ -3086,13 +3090,14 @@
           )}
         </div>
 
-        {/* Select-all row */}
-        <div className="flex items-center justify-between text-[12px] mb-2">
+        {/* R64: Select-all + loads — stopPropagation so clicking a load
+            checkbox doesn't trigger the card-level navigation. */}
+        <div className="flex items-center justify-between text-[12px] mb-2" onClick={stop}>
           <span className="text-neutral-60">{bay.loads.length} {bay.loads.length === 1 ? 'load' : 'loads'}</span>
           {bay.loads.length > 0 && (
             <button
               type="button"
-              onClick={() => onSelectAllInBay(bay, !allSelected)}
+              onClick={(e) => { e.stopPropagation(); onSelectAllInBay(bay, !allSelected); }}
               className="text-safi-700 font-semibold hover:underline"
             >
               {allSelected ? 'Deselect all' : 'Select all'}
@@ -3101,7 +3106,7 @@
         </div>
 
         {/* Loads — full details, no truncation (cards are wide enough) */}
-        <div className="flex-1 space-y-1.5 max-h-[440px] overflow-y-auto pr-1">
+        <div className="flex-1 space-y-1.5 max-h-[440px] overflow-y-auto pr-1" onClick={stop}>
           {bay.loads.length === 0 ? (
             <div className="text-[12px] text-neutral-60 px-2 py-4 text-center border border-dashed border-neutral-20 rounded">
               No loads in this bay
@@ -3112,6 +3117,7 @@
               return (
                 <label
                   key={load.id}
+                  onClick={stop}
                   className={
                     'flex items-start gap-2 px-2 py-2 rounded border cursor-pointer transition ' +
                     (isSelected ? 'border-safi-300 bg-safi-50/40' : 'border-neutral-10 hover:bg-neutral-5')
@@ -3121,6 +3127,7 @@
                     type="checkbox"
                     checked={isSelected}
                     onChange={() => onToggleSelect(load.id)}
+                    onClick={stop}
                     className="mt-1 shrink-0 cursor-pointer"
                   />
                   <div className="flex-1 min-w-0">
@@ -3312,6 +3319,16 @@
     const zoneIsEmpty = (zone.bays || []).every(b => (b.loads || []).length === 0);
     // Max bales used for warehouse-style minimap scaling
     const maxBalesInZone = Math.max(1, ...zone.bays.map(b => bayStats(b).bales));
+    // R64: bay-row ref + scroll-to-bay so the minimap can jump to a clicked bar
+    const bayRowRef = useRef(null);
+    const scrollToBay = (bayId) => {
+      setTimeout(() => {
+        const wrap = bayRowRef.current;
+        if (!wrap) return;
+        const child = wrap.querySelector(`[data-bay-id="${bayId}"]`);
+        if (child) child.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }, 0);
+    };
 
     return (
       <div className="max-w-[1400px] mx-auto px-8 py-6 pb-32">
@@ -3358,6 +3375,18 @@
                 patch: { lockedStorage, lockedProcessing },
               })}
             />
+            {/* R64: stack-heights toggle moved to the right of the lock so it
+                sits in the primary control row (was previously below the
+                minimap with a grey bg that made it visually disappear). */}
+            <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 cursor-pointer hover:bg-neutral-5 min-h-[36px]">
+              <input
+                type="checkbox"
+                checked={!!zone.stackHeightsEnabled}
+                onChange={e => dispatch({ type: 'updateZone', id: zone.id, kind: 'zone', patch: { stackHeightsEnabled: e.target.checked } })}
+                className="cursor-pointer"
+              />
+              Stack heights
+            </label>
             <button
               type="button"
               onClick={() => dispatch({ type: 'addBay', zoneId: zone.id })}
@@ -3366,22 +3395,18 @@
               <Icon d={I.plus} className="w-3.5 h-3.5" />
               Bay
             </button>
-            {/* R63: zone-level delete — only when zone is empty */}
-            <button
-              type="button"
-              disabled={!zoneIsEmpty}
-              onClick={() => zoneIsEmpty && dispatch({ type: 'deleteZone', id: zone.id })}
-              title={zoneIsEmpty ? `Delete ${zone.name}` : `Can't delete — ${fmtNum(s.loads)} loads stored`}
-              aria-label={`Delete ${zone.name}`}
-              className={
-                'inline-flex items-center justify-center w-9 h-9 rounded-md border ' +
-                (zoneIsEmpty
-                  ? 'border-danger-200 text-danger-700 bg-white hover:bg-danger-50'
-                  : 'border-neutral-10 text-neutral-20 bg-neutral-5 cursor-not-allowed')
-              }
-            >
-              <Icon d={I.trash} className="w-3.5 h-3.5" />
-            </button>
+            {/* R64: zone-level delete — only renders when zone is empty */}
+            {zoneIsEmpty && (
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'deleteZone', id: zone.id })}
+                title={`Delete ${zone.name} — no loads stored`}
+                aria-label={`Delete ${zone.name}`}
+                className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-danger-200 text-danger-700 bg-white hover:bg-danger-50"
+              >
+                <Icon d={I.trash} className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Stats line (matches the warehouse zone-header stats line) */}
@@ -3426,10 +3451,12 @@
                     : { height: `${pct}%`, backgroundColor: q.color };
                   return (
                     <Tooltip key={b.id} content={tipContent} className="flex-1 flex items-end h-full">
-                      <div
-                        className="w-full rounded-t"
+                      <button
+                        type="button"
+                        onClick={() => scrollToBay(b.id)}
+                        aria-label={`Jump to ${b.name} - ${isEmpty ? 'Empty bay' : q.label}`}
+                        className="w-full rounded-t transition-opacity hover:opacity-80 cursor-pointer"
                         style={tileStyle}
-                        aria-label={`${b.name} - ${isEmpty ? 'Empty bay' : q.label}`}
                       />
                     </Tooltip>
                   );
@@ -3458,48 +3485,39 @@
             </div>
           )}
 
-          {/* Global stack heights — toggle + bulk apply, now inside the zone card */}
-          <div className="mb-3 rounded-md bg-neutral-5 border border-neutral-10 px-3 py-2.5 flex items-center gap-4 flex-wrap">
-            <label className="inline-flex items-center gap-2 cursor-pointer">
+          {/* R64: stack-heights bulk-apply controls — only when enabled.
+              No grey background; reads as a primary control row in the same
+              visual weight as the header row. */}
+          {zone.stackHeightsEnabled && (
+            <div className="mb-3 flex items-center gap-2 flex-wrap text-[12px]">
+              <span className="text-neutral-60">Stack height for all bays:</span>
               <input
-                type="checkbox"
-                checked={!!zone.stackHeightsEnabled}
-                onChange={e => dispatch({ type: 'updateZone', id: zone.id, kind: 'zone', patch: { stackHeightsEnabled: e.target.checked } })}
-                className="cursor-pointer"
+                type="number"
+                value={bulkStackInput}
+                onChange={e => setBulkStackInput(e.target.value)}
+                placeholder="—"
+                min="1"
+                className="w-16 h-8 px-2 border border-neutral-10 rounded text-[13px] text-center bg-white"
               />
-              <span className="text-[13px] font-semibold text-neutral-100">Stack heights apply to this zone</span>
-            </label>
-            {zone.stackHeightsEnabled && (
-              <div className="flex items-center gap-2 ml-auto flex-wrap">
-                <span className="text-[12px] text-neutral-60">Apply to all bays:</span>
-                <input
-                  type="number"
-                  value={bulkStackInput}
-                  onChange={e => setBulkStackInput(e.target.value)}
-                  placeholder="—"
-                  min="1"
-                  className="w-16 h-8 px-2 border border-neutral-10 rounded text-[13px] text-center bg-white"
-                />
-                <span className="text-[12px] text-neutral-60">bales high</span>
-                <button
-                  type="button"
-                  onClick={() => dispatch({
-                    type: 'bulkStackLimit', zoneId: zone.id,
-                    value: bulkStackInput === '' ? null : Math.max(1, Number(bulkStackInput) || 1),
-                  })}
-                  className="px-3 py-1.5 rounded-md bg-safi-600 text-white text-[12px] font-semibold hover:bg-safi-700"
-                >Apply to all</button>
-                <button
-                  type="button"
-                  onClick={() => dispatch({ type: 'bulkStackLimit', zoneId: zone.id, value: null })}
-                  className="px-3 py-1.5 rounded-md border border-neutral-10 text-neutral-100 text-[12px] font-medium hover:bg-white"
-                >Clear all</button>
-              </div>
-            )}
-          </div>
+              <span className="text-neutral-60">bales high</span>
+              <button
+                type="button"
+                onClick={() => dispatch({
+                  type: 'bulkStackLimit', zoneId: zone.id,
+                  value: bulkStackInput === '' ? null : Math.max(1, Number(bulkStackInput) || 1),
+                })}
+                className="px-3 py-1.5 rounded-md bg-safi-600 text-white font-semibold hover:bg-safi-700"
+              >Apply to all</button>
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'bulkStackLimit', zoneId: zone.id, value: null })}
+                className="px-3 py-1.5 rounded-md border border-neutral-10 text-neutral-100 font-medium hover:bg-neutral-5"
+              >Clear all</button>
+            </div>
+          )}
 
           {/* Bay cards row (inside the same outer card) */}
-          <div className="flex items-stretch gap-3 overflow-x-auto pb-3 -mx-1 px-1">
+          <div ref={bayRowRef} className="flex items-stretch gap-3 overflow-x-auto pb-3 -mx-1 px-1">
             {zone.bays.map(bay => (
               <BayEditCard
                 key={bay.id}
@@ -3718,26 +3736,23 @@
               lockedProcessing={!!entity.lockedProcessing}
               onChange={({ lockedStorage, lockedProcessing }) => updateEntity({ lockedStorage, lockedProcessing })}
             />
-            {/* R63: delete affordance — only when no loads */}
-            <button
-              type="button"
-              disabled={loads.length > 0}
-              onClick={() => {
-                if (loads.length > 0) return;
-                if (isBay) dispatch({ type: 'deleteBay', zoneId: parentZone.id, bayId: entity.id });
-                else dispatch({ type: 'deleteBuffer', id: entity.id });
-              }}
-              title={loads.length === 0 ? `Delete ${entity.name}` : `Can't delete — ${loads.length} loads stored`}
-              aria-label={`Delete ${entity.name}`}
-              className={
-                'ml-auto inline-flex items-center justify-center w-9 h-9 rounded-md border ' +
-                (loads.length === 0
-                  ? 'border-danger-200 text-danger-700 bg-white hover:bg-danger-50'
-                  : 'border-neutral-10 text-neutral-20 bg-neutral-5 cursor-not-allowed')
-              }
-            >
-              <Icon d={I.trash} className="w-3.5 h-3.5" />
-            </button>
+            {/* R64: delete only when empty. Tooltip explains why it's available. */}
+            {loads.length === 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isBay) dispatch({ type: 'deleteBay', zoneId: parentZone.id, bayId: entity.id });
+                  else dispatch({ type: 'deleteBuffer', id: entity.id });
+                }}
+                title={`Delete ${entity.name} — no loads stored`}
+                aria-label={`Delete ${entity.name}`}
+                className="ml-auto inline-flex items-center justify-center w-9 h-9 rounded-md border border-danger-200 text-danger-700 bg-white hover:bg-danger-50"
+              >
+                <Icon d={I.trash} className="w-3.5 h-3.5" />
+              </button>
+            ) : (
+              <span className="ml-auto" aria-hidden="true" />
+            )}
           </div>
           {/* Bay-only: access pattern + stack height */}
           {isBay && (
@@ -3818,22 +3833,49 @@
                         aria-label={`Select load ${load.lot}`}
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-neutral-100 group-hover:text-safi-600 transition-colors">{load.supplier}</span>
-                          <span className="text-neutral-40 text-sm">#{load.lot}</span>
-                          {/* R63: use the warehouse's existing AIResultChips so the load styling matches */}
-                          <AIResultChips load={load} />
-                        </div>
-                        {/* Operator description note (when present) */}
-                        {load.description && (
-                          <div className="text-[13px] text-amber-900 bg-amber-50/50 border border-amber-200/60 rounded px-2 py-1 mt-1 inline-flex items-start gap-1.5 max-w-full">
-                            <Icon d={I.info} className="w-3.5 h-3.5 mt-0.5 text-amber-700 shrink-0" />
-                            <span className="break-words">{load.description}</span>
-                          </div>
+                        {/* R64: buffer rows lead with the bale-count from the load,
+                            because the buffer is a partial holding area — knowing
+                            how many bales of that load are staged here is the key
+                            datum for bale-based processing. Bay rows keep the
+                            existing supplier-first title since the bay holds the
+                            full load (or what's left of it). */}
+                        {isBay ? (
+                          <>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-neutral-100 group-hover:text-safi-600 transition-colors">{load.supplier}</span>
+                              <span className="text-neutral-40 text-sm">#{load.lot}</span>
+                              <AIResultChips load={load} />
+                            </div>
+                            {load.description && (
+                              <div className="text-[13px] text-amber-900 bg-amber-50/50 border border-amber-200/60 rounded px-2 py-1 mt-1 inline-flex items-start gap-1.5 max-w-full">
+                                <Icon d={I.info} className="w-3.5 h-3.5 mt-0.5 text-amber-700 shrink-0" />
+                                <span className="break-words">{load.description}</span>
+                              </div>
+                            )}
+                            <div className="text-[13px] text-neutral-60 mt-1">
+                              {fmtNum(load.bales)} bales · {fmtKg(load.weight)}
+                            </div>
+                          </>
+                        ) : (
+                          // Buffer context — emphasise the partial-from-load semantics
+                          <>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-neutral-100 font-medium group-hover:text-safi-600 transition-colors">
+                                {fmtNum(load.bales)} bales ({fmtKg(load.weight)}) from load {load.supplier}
+                              </span>
+                              <span className="text-neutral-40 text-sm">#{load.lot}</span>
+                            </div>
+                            <div className="mt-1">
+                              <AIResultChips load={load} />
+                            </div>
+                            {load.description && (
+                              <div className="text-[13px] text-amber-900 bg-amber-50/50 border border-amber-200/60 rounded px-2 py-1 mt-1 inline-flex items-start gap-1.5 max-w-full">
+                                <Icon d={I.info} className="w-3.5 h-3.5 mt-0.5 text-amber-700 shrink-0" />
+                                <span className="break-words">{load.description}</span>
+                              </div>
+                            )}
+                          </>
                         )}
-                        <div className="text-[13px] text-neutral-60 mt-1">
-                          {fmtNum(load.bales)} bales · {fmtKg(load.weight)}
-                        </div>
                       </div>
                     </li>
                     {showAfter && <li className="h-[2px] rounded-full bg-safi-600 list-none" aria-hidden="true" />}
@@ -3923,23 +3965,23 @@
                 patch: { lockedStorage, lockedProcessing }
               })}
             />
-            {/* R63: delete affordance (when empty) — replaces the Configure button.
-                Click-anywhere on the card handles navigation. */}
-            <button
-              type="button"
-              disabled={!canDelete}
-              onClick={(e) => { e.stopPropagation(); if (canDelete) dispatch({ type: kind === 'buffer' ? 'deleteBuffer' : 'deleteZone', id: entity.id }); }}
-              title={canDelete ? `Delete ${entity.name}` : `Can't delete — ${stats.loads} loads stored`}
-              aria-label={`Delete ${entity.name}`}
-              className={
-                'ml-auto inline-flex items-center justify-center w-9 h-9 rounded-md border ' +
-                (canDelete
-                  ? 'border-danger-200 text-danger-700 bg-white hover:bg-danger-50'
-                  : 'border-neutral-10 text-neutral-20 bg-neutral-5 cursor-not-allowed')
-              }
-            >
-              <Icon d={I.trash} className="w-3.5 h-3.5" />
-            </button>
+            {/* R64: delete only renders when empty. The presence of the button
+                IS the affordance — no need for a disabled state with conflicting
+                tooltip. Tooltip clarifies why the button is available. */}
+            {canDelete ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); dispatch({ type: kind === 'buffer' ? 'deleteBuffer' : 'deleteZone', id: entity.id }); }}
+                title={`Delete ${entity.name} — no loads stored`}
+                aria-label={`Delete ${entity.name}`}
+                className="ml-auto inline-flex items-center justify-center w-9 h-9 rounded-md border border-danger-200 text-danger-700 bg-white hover:bg-danger-50"
+              >
+                <Icon d={I.trash} className="w-3.5 h-3.5" />
+              </button>
+            ) : (
+              // Keep the right-aligned spacing consistent
+              <span className="ml-auto" aria-hidden="true" />
+            )}
           </div>
           {/* Stats */}
           {kind === 'zone' && stats && (
