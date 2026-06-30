@@ -321,10 +321,22 @@
     : 'bg-amber-50 text-amber-800 border-amber-200';
 
   // Small inline chip — used wherever a zone surface (card, header, etc.) needs
-  // to declare its line restriction. Returns null when the zone serves all
-  // lines (the default state, no chip needed).
+  // to declare its line restriction. R66: when a zone serves all production
+  // lines (the default "Any" state), render an "Any production line" badge in
+  // a neutral tone so it's still visible at-a-glance — previously this case
+  // rendered nothing, which was easy to miss.
   const lineRestrictionTag = (zone, lang) => {
-    if (!zone || zoneServesAllLines(zone)) return null;
+    if (!zone) return null;
+    if (zoneServesAllLines(zone)) {
+      return (
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-semibold border bg-neutral-5 text-neutral-80 border-neutral-10 whitespace-nowrap"
+          title={lang === 'es' ? 'Cualquier línea de producción puede recibir material de esta zona' : 'Any production line can receive material from this zone'}
+        >
+          {lang === 'es' ? 'Cualquier línea' : 'Any production line'}
+        </span>
+      );
+    }
     const zLines = zoneLines(zone);
     // Single-line restriction — render one coloured chip ("Apan 2 only").
     if (zLines.length === 1) {
@@ -1777,6 +1789,10 @@
               <div>
                 <div className="flex items-center gap-3 flex-wrap">
                   <h3 className="text-2xl font-bold text-neutral-100">{bayName(bay, lang)}</h3>
+                  {/* R66: production-line badge inherited from the parent zone.
+                      Surfaces "Any production line" when the zone is unrestricted,
+                      or the specific line restriction otherwise. */}
+                  {lineRestrictionTag(zone, lang)}
                   {zone.inventoryRule && zone.inventoryRule !== 'NONE' && (
                     <span
                       className="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-5 border border-neutral-10 text-[13px] font-semibold text-neutral-80"
