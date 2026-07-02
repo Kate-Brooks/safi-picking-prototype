@@ -7756,6 +7756,34 @@
     const isCreating = slMode === 'create';
     const isSticky = layout === 'sticky';
     const isSpatial = layout === 'spatial';
+
+    // R67: auto-generate picking-list configuration. When enabled, Safi picks
+    // loads that (a) fit the requested load count and (b) whose aggregated
+    // material breakdown satisfies every threshold. In this prototype the
+    // controls persist within the session but don't yet drive the auto-pick
+    // algorithm — the design is what we're validating.
+    const AUTO_GEN_MATERIALS = [
+      'Thermoforms', 'Contaminants', 'Coloured PET', 'Green PET',
+      'Non PET', 'Metal', 'Bottles/Jars', 'Clear PET',
+    ];
+    const [autoGenEnabled,     setAutoGenEnabled]     = useState(false);
+    const [autoGenLoadCount,   setAutoGenLoadCount]   = useState(5);
+    const [autoGenThresholds,  setAutoGenThresholds]  = useState([
+      { id: 't1', material: 'Thermoforms',  operator: '<=', pct: 20 },
+      { id: 't2', material: 'Contaminants', operator: '<=', pct: 2  },
+    ]);
+    const addAutoGenThreshold = () => {
+      const usedMaterials = new Set(autoGenThresholds.map(t => t.material));
+      const nextMaterial = AUTO_GEN_MATERIALS.find(m => !usedMaterials.has(m)) || AUTO_GEN_MATERIALS[0];
+      setAutoGenThresholds(prev => [
+        ...prev,
+        { id: 't' + Date.now(), material: nextMaterial, operator: '<=', pct: 10 },
+      ]);
+    };
+    const updateAutoGenThreshold = (id, patch) =>
+      setAutoGenThresholds(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
+    const removeAutoGenThreshold = (id) =>
+      setAutoGenThresholds(prev => prev.filter(t => t.id !== id));
     // R35: composite key helper - picking lists are unique on (productionLine, shift).
     const PLKEY = (line, shift) => `${line}||${shift}`;
     // R37: bay-level claim summary helper - mirrors SpatialLayoutView's. Returns
@@ -8472,6 +8500,143 @@
                       ))}
                     </select>
                   </div>
+                </div>
+
+                {/* R67: Auto-generate picking list from quality data. Safi picks
+                    a set of loads whose aggregated material breakdown satisfies
+                    every threshold. Toggle collapses the settings when off. */}
+                <div className={
+                  'rounded-lg border transition-colors ' +
+                  (autoGenEnabled ? 'border-safi-300 bg-safi-50/40' : 'border-neutral-10 bg-white')
+                }>
+                  <label className="flex items-start gap-3 px-4 py-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoGenEnabled}
+                      onChange={e => setAutoGenEnabled(e.target.checked)}
+                      className="mt-0.5 rounded text-safi-600 focus:ring-safi-500 h-4 w-4"
+                    />
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[14px] font-semibold text-neutral-100">
+                        {lang === 'es'
+                          ? 'Generar automáticamente desde datos de calidad'
+                          : 'Auto-generate from quality data'}
+                      </span>
+                      <span className="mt-0.5 block text-[12px] text-neutral-60">
+                        {lang === 'es'
+                          ? 'Safi seleccionará lotes cuya calidad combinada cumpla los umbrales que definas.'
+                          : 'Safi picks loads whose aggregated quality meets the thresholds you define.'}
+                      </span>
+                    </span>
+                  </label>
+
+                  {autoGenEnabled && (
+                    <div className="px-4 pb-4 pl-11 space-y-4">
+                      {/* Loads-in-list count */}
+                      <div>
+                        <label className="block text-[13px] font-semibold text-neutral-80 mb-1.5">
+                          {lang === 'es' ? 'Lotes en la lista' : 'Loads in list'}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="1"
+                            value={autoGenLoadCount}
+                            onChange={e => setAutoGenLoadCount(Math.max(1, Number(e.target.value) || 1))}
+                            className="w-24 h-9 px-2 border border-neutral-10 rounded-md text-[13px] text-center bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                          />
+                          <span className="text-[12px] text-neutral-60">
+                            {lang === 'es' ? 'lotes' : 'loads'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Material thresholds */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-[13px] font-semibold text-neutral-80">
+                            {lang === 'es' ? 'Umbrales de material' : 'Material thresholds'}
+                          </label>
+                        </div>
+                        <p className="text-[12px] text-neutral-60 mb-2">
+                          {lang === 'es'
+                            ? 'El total agregado de los lotes elegidos debe cumplir cada umbral (p. ej. Termoformas ≤ 20 %).'
+                            : 'The aggregated content across the picked loads must meet each threshold (e.g. Thermoforms ≤ 20%).'}
+                        </p>
+
+                        <div className="space-y-2">
+                          {autoGenThresholds.length === 0 && (
+                            <div className="text-[13px] text-neutral-60 border border-dashed border-neutral-10 rounded-md px-3 py-3 text-center">
+                              {lang === 'es' ? 'Aún no hay umbrales.' : 'No thresholds yet.'}
+                            </div>
+                          )}
+                          {autoGenThresholds.map(t => (
+                            <div key={t.id} className="flex items-center gap-2 flex-wrap">
+                              <select
+                                value={t.material}
+                                onChange={e => updateAutoGenThreshold(t.id, { material: e.target.value })}
+                                className="h-9 px-2 border border-neutral-10 rounded-md text-[13px] bg-white min-w-[160px] focus:outline-none focus:ring-2 focus:ring-safi-600"
+                                aria-label={lang === 'es' ? 'Material' : 'Material'}
+                              >
+                                {AUTO_GEN_MATERIALS.map(m => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))}
+                              </select>
+                              <select
+                                value={t.operator}
+                                onChange={e => updateAutoGenThreshold(t.id, { operator: e.target.value })}
+                                className="h-9 px-2 border border-neutral-10 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                                aria-label={lang === 'es' ? 'Comparador' : 'Operator'}
+                              >
+                                <option value="<=">{'≤'}</option>
+                                <option value=">=">{'≥'}</option>
+                              </select>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="0.1"
+                                  value={t.pct}
+                                  onChange={e => updateAutoGenThreshold(t.id, { pct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                                  className="h-9 w-24 pl-2 pr-7 border border-neutral-10 rounded-md text-[13px] text-right bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                                  aria-label={lang === 'es' ? 'Porcentaje' : 'Percentage'}
+                                />
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[13px] text-neutral-60 pointer-events-none">%</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeAutoGenThreshold(t.id)}
+                                className="p-1.5 rounded text-neutral-60 hover:bg-white hover:text-rose-700 shrink-0"
+                                aria-label={lang === 'es' ? 'Eliminar umbral' : 'Remove threshold'}
+                                title={lang === 'es' ? 'Eliminar umbral' : 'Remove threshold'}
+                              >
+                                <Icon d={I.close} className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={addAutoGenThreshold}
+                          disabled={autoGenThresholds.length >= AUTO_GEN_MATERIALS.length}
+                          className={
+                            'mt-3 inline-flex items-center gap-1.5 text-[13px] font-medium ' +
+                            (autoGenThresholds.length >= AUTO_GEN_MATERIALS.length
+                              ? 'text-neutral-40 cursor-not-allowed'
+                              : 'text-safi-600 hover:underline')
+                          }
+                          title={autoGenThresholds.length >= AUTO_GEN_MATERIALS.length
+                            ? (lang === 'es' ? 'Todos los materiales ya tienen un umbral.' : 'All materials already have a threshold.')
+                            : undefined}
+                        >
+                          <Icon d={I.plus} className="w-4 h-4" />
+                          {lang === 'es' ? 'Añadir umbral' : 'Add threshold'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 gap-3">
                   <Metric label="Loads"  value={fmtNum(summary.loadCount)} />
