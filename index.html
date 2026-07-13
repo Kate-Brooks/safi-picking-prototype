@@ -6684,10 +6684,11 @@
               <Tab id="pw-layout" label={lang === 'es' ? 'Almacén' : 'Warehouse'} tab={tab} setTab={setTab} />
               <Tab id="picker-merged" label={lang === 'es' ? 'Recolección' : 'Picker'}                                    tab={tab} setTab={setTab}
                    badge={hasAnyList ? loadsRemaining : null} />
-              {/* R70: Production tab merges the previous Picker planner + Dashboard tabs.
-                  Line-centric layout: active windows at top with live stats + input-quality chart,
-                  planning inline when a line is idle, recent windows section at bottom. */}
-              <Tab id="production" label={lang === 'es' ? 'Producción' : 'Production'}                                    tab={tab} setTab={setTab} />
+              {/* R70: Windows tab merges the previous Picker planner + Dashboard tabs.
+                  Line-centric layout: active windows side-by-side at top with live stats +
+                  input-quality chart, planning inline when a line is idle, recent
+                  history at the bottom. */}
+              <Tab id="windows" label={lang === 'es' ? 'Ventanas' : 'Windows'}                                            tab={tab} setTab={setTab} />
               <Tab id="history"   label={lang === 'es' ? 'Historial' : 'History'}                                         tab={tab} setTab={setTab} />
               {/* R29: "Rejected bales" tab removed - rejections now surface inside the History drawer for the relevant production window. */}
             </div>
@@ -6714,8 +6715,8 @@
           {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={pickingLists} processed={processed}
                                   setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} yard={yard}
                                   buffer={buffer} setBuffer={setBuffer} />}
-          {/* R70: Production - merged tab (active windows + planning + recent history). */}
-          {tab === 'production' && <ProductionView pickingLists={pickingLists} lang={lang} setToast={setToast} setTab={setTab} />}
+          {/* R70: Windows - merged tab (active windows + planning + recent history). */}
+          {tab === 'windows' && <ProductionView pickingLists={pickingLists} lang={lang} setToast={setToast} setTab={setTab} />}
           {tab === 'history' && <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} yard={yard} />}
         </div>
 
@@ -7803,20 +7804,21 @@
     return (
       <Fragment>
         <div className="mb-5">
-          <div className="text-2xl font-bold text-neutral-100">{tEN('Production', 'Producción')}</div>
+          <div className="text-2xl font-bold text-neutral-100">{tEN('Production windows', 'Ventanas de producción')}</div>
           <div className="text-[13px] text-neutral-60 mt-1">
             {tEN(
-              'Plan production windows per line, monitor live progress, and review recent performance.',
+              'Plan windows per line, monitor live progress, and review recent performance — all in one place.',
               'Planifica ventanas por línea, monitorea el progreso en vivo y revisa el rendimiento reciente.'
             )}
           </div>
         </div>
 
-        <div className="mb-5">
+        <div className="mb-6">
           <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
-            {tEN('Active production windows', 'Ventanas de producción activas')}
+            {tEN('Active windows', 'Ventanas activas')}
           </div>
-          <div className="space-y-4">
+          {/* R70b: side-by-side layout on lg+ screens (iPad landscape and up); stacked on narrower. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <LinePanel line="Line 1" color="#16A34A" />
             <LinePanel line="Line 2" color="#2563EB" />
           </div>
