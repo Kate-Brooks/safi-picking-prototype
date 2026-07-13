@@ -6684,10 +6684,10 @@
               <Tab id="pw-layout" label={lang === 'es' ? 'Almacén' : 'Warehouse'} tab={tab} setTab={setTab} />
               <Tab id="picker-merged" label={lang === 'es' ? 'Recolección' : 'Picker'}                                    tab={tab} setTab={setTab}
                    badge={hasAnyList ? loadsRemaining : null} />
-              {/* R68: new tab where managers plan AI picking windows and manage picking lists. */}
-              <Tab id="picker-planner" label={lang === 'es' ? 'Planificador' : 'Picker planner'}                          tab={tab} setTab={setTab} />
-              {/* R69: new tab for live production tracking (per-line windows, target vs actual, throughput). */}
-              <Tab id="dashboard" label={lang === 'es' ? 'Panel' : 'Dashboard'}                                           tab={tab} setTab={setTab} />
+              {/* R70: Production tab merges the previous Picker planner + Dashboard tabs.
+                  Line-centric layout: active windows at top with live stats + input-quality chart,
+                  planning inline when a line is idle, recent windows section at bottom. */}
+              <Tab id="production" label={lang === 'es' ? 'Producción' : 'Production'}                                    tab={tab} setTab={setTab} />
               <Tab id="history"   label={lang === 'es' ? 'Historial' : 'History'}                                         tab={tab} setTab={setTab} />
               {/* R29: "Rejected bales" tab removed - rejections now surface inside the History drawer for the relevant production window. */}
             </div>
@@ -6714,10 +6714,8 @@
           {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={pickingLists} processed={processed}
                                   setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} yard={yard}
                                   buffer={buffer} setBuffer={setBuffer} />}
-          {/* R68: Picker planner - manager-facing tab for planning AI picking windows and picking lists. */}
-          {tab === 'picker-planner' && <PickerPlannerView pickingLists={pickingLists} lang={lang} setToast={setToast} />}
-          {/* R69: Dashboard - live production tracking per line. */}
-          {tab === 'dashboard' && <DashboardView lang={lang} />}
+          {/* R70: Production - merged tab (active windows + planning + recent history). */}
+          {tab === 'production' && <ProductionView pickingLists={pickingLists} lang={lang} setToast={setToast} setTab={setTab} />}
           {tab === 'history' && <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} yard={yard} />}
         </div>
 
@@ -7349,141 +7347,368 @@
     );
   }
 
+
   // ==========================================================================
-  // R68: PickerPlannerView — manager-facing tab to plan AI picking windows.
+  // R70: ProductionView — merged Production tab.
   //
-  // Per-line config: Material dropdown + Spec group dropdown + Target input %,
-  // then Start window CTA. Once started, the operator view auto-picks based on
-  // the algorithm reactively as inventory changes. Manual picking lists remain
-  // in the Warehouse tab for now (link across).
+  // Line-centric layout: each production line has its own panel showing either
+  // (a) an ACTIVE production window with target chips, quick stats, picking
+  // performance, and an input-quality chart; or (b) an IDLE state with a plan
+  // form offering manual (link to Warehouse) or AI (inline config) paths.
+  //
+  // Below both line panels sits a Recent windows section with a link out to
+  // the full History tab for deep analytics.
+  //
+  // Applies the cross-cutting principles from the design brief:
+  //   • Forecast vs actual — timeline/quality chart is the hero visual.
+  //   • AI proposes, manager disposes — Start window is manager-initiated;
+  //     Finish window overrides algorithmic run.
   // ==========================================================================
 
-  const PLANNER_MATERIALS = ['Clear PET Bottles', 'Green PET', 'HDPE Natural', 'HDPE Colour', 'Mixed PET'];
-  const PLANNER_SPEC_GROUPS = ['Bottles/Jars', 'Thermoforms', 'Coloured PET', 'Contaminants', 'Non PET', 'Metal'];
-  // Sensible default operator (≤ for contaminants, ≥ for target material).
-  const DEFAULT_OPERATOR = (spec) => (spec === 'Bottles/Jars' ? '>=' : '<=');
-  const DEFAULT_TARGET_PCT = (spec) => (spec === 'Bottles/Jars' ? 85 : spec === 'Thermoforms' ? 20 : 2);
+  const PRODUCTION_MATERIALS = ['Clear PET Bales', 'Green PET', 'HDPE Natural', 'HDPE Colour', 'Mixed PET'];
+  const PRODUCTION_SPEC_GROUPS = ['Bottles/Jars', 'Thermoforms', 'Coloured PET', 'Contaminants', 'Non PET', 'Metal'];
+  const DEFAULT_OP = (spec) => (spec === 'Bottles/Jars' ? '>=' : '<=');
+  const DEFAULT_TARGET = (spec) => (spec === 'Bottles/Jars' ? 85 : spec === 'Thermoforms' ? 25 : 2);
 
-  function PickerPlannerView({ pickingLists = [], lang = 'en', setToast = () => {} }) {
+  function ProductionView({ pickingLists = [], lang = 'en', setToast = () => {}, setTab = () => {} }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
 
-    // Per-line planner config. Line 1 seeded with a common BMP setup, Line 2 blank.
-    const [lineCfg, setLineCfg] = useState({
-      'Apan 1': { material: 'Clear PET Bottles', specGroup: 'Contaminants', operator: '<=', targetPct: 2, active: false, startedAt: null },
-      'Apan 2': { material: '', specGroup: '', operator: '<=', targetPct: 0, active: false, startedAt: null },
+    // Static seed for demo: Line 1 running with a Thermoforms target, Line 2 idle.
+    const [lineState, setLineState] = useState({
+      'Line 1': {
+        active: true,
+        material: 'Clear PET Bales',
+        specGroup: 'Thermoforms',
+        operator: '<=',
+        targetPct: 25,
+        actualPct: 24.6,
+        deltaPct: -0.4,
+        deltaDir: 'down',
+        elapsed: '02:19:51',
+        weightPerHr: 1020,
+        bales: 301,
+        weightKg: 150500,
+        oee: 77,
+        thermoformsPerHr: 19.1,
+        thermoformsTarget: 20,
+        contaminantsPerHr: 2.3,
+        contaminantsTarget: 2,
+        liveAvgPct: 74.1,
+        liveAvgDelta: -1.3,
+        updatedMins: 12,
+        planMode: 'ai',
+      },
+      'Line 2': {
+        active: false,
+        material: '',
+        specGroup: '',
+        operator: '<=',
+        targetPct: 0,
+        planMode: 'ai',
+      },
     });
 
-    const updateCfg = (line, patch) => setLineCfg(prev => ({ ...prev, [line]: { ...prev[line], ...patch } }));
+    const updateLine = (line, patch) => setLineState(prev => ({ ...prev, [line]: { ...prev[line], ...patch } }));
     const startWindow = (line) => {
-      const cfg = lineCfg[line];
+      const cfg = lineState[line];
       if (!cfg.material || !cfg.specGroup) {
         setToast?.({ message: tEN('Choose a material and spec group first', 'Elige material y grupo primero'), kind: 'error' });
         return;
       }
-      updateCfg(line, { active: true, startedAt: new Date().toISOString() });
+      // Seed sensible runtime values for a "just started" window.
+      updateLine(line, {
+        active: true,
+        actualPct: 0, deltaPct: 0, deltaDir: 'up',
+        elapsed: '00:00:12', weightPerHr: 0, bales: 0, weightKg: 0, oee: 0,
+        thermoformsPerHr: 0, thermoformsTarget: cfg.specGroup === 'Thermoforms' ? cfg.targetPct : 20,
+        contaminantsPerHr: 0, contaminantsTarget: cfg.specGroup === 'Contaminants' ? cfg.targetPct : 2,
+        liveAvgPct: 0, liveAvgDelta: 0, updatedMins: 0,
+      });
       setToast?.({ message: tEN(`${line} window started`, `${line} ventana iniciada`), kind: 'success' });
     };
     const finishWindow = (line) => {
-      updateCfg(line, { active: false, startedAt: null });
+      updateLine(line, { active: false });
       setToast?.({ message: tEN(`${line} window finished`, `${line} ventana finalizada`), kind: 'success' });
     };
 
-    const LineCard = ({ line, color }) => {
-      const cfg = lineCfg[line];
-      const accent = color === 'green' ? '#16A34A' : '#2563EB';
-      const badgeBg = color === 'green' ? '#EAF3DE' : '#E6F1FB';
-      const badgeText = color === 'green' ? '#27500A' : '#0C447C';
+    // Deterministic pseudo-random helper so demo data stays stable across renders.
+    const seededVariation = (i, base, amplitude, freq = 5) => {
+      const trend = Math.sin(i / freq) * amplitude;
+      const noise = (((i * 13 + 7) % 11) - 5) * (amplitude * 0.15);
+      return base + trend + noise;
+    };
+
+    // ------------------------------------------------------------------------
+    // Input quality this shift — SVG chart. Y axis 60-100%. Two data series:
+    // per-bale (thin light) + rolling average (thick purple). Target dashed
+    // green line at the material target (75% for a Thermoforms <= 25% run).
+    // ------------------------------------------------------------------------
+    const InputQualityChart = ({ line, targetOnTargetPct = 75, liveAvgPct }) => {
+      const N = 60;
+      const perBale = Array.from({ length: N }, (_, i) => Math.max(60, Math.min(95, seededVariation(i, 74, 8, 6))));
+      const rolling = perBale.map((_, i) => {
+        const start = Math.max(0, i - 9);
+        const win = perBale.slice(start, i + 1);
+        return win.reduce((s, v) => s + v, 0) / win.length;
+      });
+
+      const chartW = 800, chartH = 200;
+      const padL = 40, padR = 20, padT = 12, padB = 34;
+      const plotW = chartW - padL - padR;
+      const plotH = chartH - padT - padB;
+      const yMin = 60, yMax = 100;
+      const yScale = (v) => padT + (1 - (v - yMin) / (yMax - yMin)) * plotH;
+      const xScale = (i) => padL + (i / (N - 1)) * plotW;
+
+      const perBalePath = perBale.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xScale(i)} ${yScale(v)}`).join(' ');
+      const rollingPath = rolling.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xScale(i)} ${yScale(v)}`).join(' ');
+      const targetY = yScale(targetOnTargetPct);
+
+      return (
+        <svg viewBox={`0 0 ${chartW} ${chartH}`} className="w-full h-48" role="img">
+          <title>Input quality this shift</title>
+          <rect x={padL} y={padT} width={plotW} height={plotH} fill="#F6F3FE" opacity="0.4" />
+
+          <line x1={padL} y1={yScale(100)} x2={padL + plotW} y2={yScale(100)} stroke="#E7E7E8" strokeWidth="0.5" />
+          <line x1={padL} y1={yScale(80)} x2={padL + plotW} y2={yScale(80)} stroke="#E7E7E8" strokeWidth="0.5" />
+          <line x1={padL} y1={yScale(60)} x2={padL + plotW} y2={yScale(60)} stroke="#E7E7E8" strokeWidth="0.5" />
+
+          <text x={padL - 6} y={yScale(100) + 4} textAnchor="end" fontSize="10" fill="#6E6D77">100%</text>
+          <text x={padL - 6} y={yScale(80) + 4} textAnchor="end" fontSize="10" fill="#6E6D77">80%</text>
+          <text x={padL - 6} y={yScale(60) + 4} textAnchor="end" fontSize="10" fill="#6E6D77">60%</text>
+
+          <line x1={padL} y1={targetY} x2={padL + plotW} y2={targetY} stroke="#15803D" strokeWidth="1" strokeDasharray="4 4" />
+          <text x={padL + plotW - 4} y={targetY - 4} textAnchor="end" fontSize="10" fill="#15803D" fontWeight="500">target</text>
+
+          <path d={perBalePath} fill="none" stroke="#B0A1FE" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
+          <path d={rollingPath} fill="none" stroke="#6347FF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+
+          <text x={padL - 4} y={chartH - 6} textAnchor="start" fontSize="10" fill="#6E6D77">bales processed → {N}</text>
+        </svg>
+      );
+    };
+
+    // ------------------------------------------------------------------------
+    // Panel components
+    // ------------------------------------------------------------------------
+    const ActiveLinePanel = ({ line, color, data }) => {
+      return (
+        <div className="bg-white border border-neutral-10 rounded-xl overflow-hidden" style={{ borderLeft: `6px solid ${color}` }}>
+          {/* Header */}
+          <div className="px-5 py-4 flex items-center justify-between gap-3 flex-wrap border-b border-neutral-10">
+            <div className="flex items-center gap-3">
+              <span className="px-2.5 py-1 rounded-full text-[12px] font-semibold" style={{ background: color, color: 'white' }}>{line}</span>
+              <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold" style={{ color }}>
+                <span className="w-2 h-2 rounded-full" style={{ background: color }} />
+                {tEN('Active window', 'Ventana activa')}
+              </span>
+              <span className="text-[12px] text-neutral-60">{tEN('Elapsed', 'Transcurrido')} {data.elapsed}</span>
+            </div>
+            <button
+              onClick={() => finishWindow(line)}
+              className="h-10 px-4 border border-neutral-10 rounded-md text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+            >
+              {tEN('Finish window', 'Finalizar ventana')}
+            </button>
+          </div>
+
+          {/* Meta: Material + Target specifications */}
+          <div className="px-5 py-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <div className="text-[12px] text-neutral-60 mb-1.5">{tEN('Material', 'Material')}</div>
+              <span className="inline-flex items-center px-3 py-1 rounded-full bg-neutral-5 text-neutral-100 text-[14px] font-semibold border border-neutral-10">{data.material}</span>
+            </div>
+            <div>
+              <div className="text-[12px] text-neutral-60 mb-1.5">{tEN('Target specifications', 'Especificaciones objetivo')}</div>
+              <span className="inline-flex items-center px-3 py-1 rounded-full bg-safi-50 text-safi-700 text-[14px] font-semibold border border-safi-100">
+                {data.specGroup} · {data.operator === '<=' ? '≤' : '≥'} {data.targetPct}%
+              </span>
+            </div>
+          </div>
+
+          {/* Quick stats: Actual input, Elapsed, Weight/hr */}
+          <div className="px-5 pb-4 grid grid-cols-3 gap-4">
+            <div>
+              <div className="text-[12px] text-neutral-60">{tEN('Actual input', 'Entrada real')}</div>
+              <div className="text-[22px] font-semibold mt-0.5" style={{ color: Math.abs(data.deltaPct) <= 2 ? '#15803D' : '#B45309' }}>
+                {data.actualPct.toFixed(1)}%
+              </div>
+            </div>
+            <div>
+              <div className="text-[12px] text-neutral-60">{tEN('Elapsed', 'Transcurrido')}</div>
+              <div className="text-[22px] font-semibold text-neutral-100 mt-0.5">{data.elapsed}</div>
+            </div>
+            <div>
+              <div className="text-[12px] text-neutral-60">{tEN('Weight / hour', 'Peso / hora')}</div>
+              <div className="text-[22px] font-semibold text-neutral-100 mt-0.5">≈ {fmtNum(data.weightPerHr)}<span className="text-[13px] text-neutral-60 font-normal"> kg/h</span></div>
+            </div>
+          </div>
+
+          {/* Picking performance card */}
+          <div className="px-5 pb-5">
+            <div className="text-[15px] font-bold text-neutral-100 mb-3">{tEN('Picking performance', 'Rendimiento de recolección')}</div>
+            <div className="bg-neutral-5 border border-neutral-10 rounded-lg p-4">
+              <div className="grid grid-cols-3 gap-4 mb-4">
+                <div>
+                  <div className="text-[12px] text-neutral-60">{tEN('Bales', 'Pacas')}</div>
+                  <div className="text-[22px] font-bold text-neutral-100 mt-0.5">{fmtNum(data.bales)}</div>
+                </div>
+                <div>
+                  <div className="text-[12px] text-neutral-60">{tEN('Weight', 'Peso')}</div>
+                  <div className="text-[22px] font-bold text-neutral-100 mt-0.5">{fmtNum(data.weightKg)} kg</div>
+                </div>
+                <div>
+                  <div className="text-[12px] text-neutral-60">OEE/hours</div>
+                  <div className="text-[22px] font-bold mt-0.5" style={{ color: data.oee >= 70 ? '#15803D' : '#B45309' }}>{data.oee}%</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-white border border-neutral-10 rounded-md px-3 py-2.5">
+                  <div className="text-[12px] text-neutral-60">Thermoforms/hr</div>
+                  <div className="flex items-baseline gap-2 mt-0.5">
+                    <span className="text-[18px] font-bold text-neutral-100">{data.thermoformsPerHr}%</span>
+                    <span className="text-[12px] text-safi-700 font-medium">target &lt; {data.thermoformsTarget}%</span>
+                  </div>
+                </div>
+                <div className="bg-white border border-neutral-10 rounded-md px-3 py-2.5">
+                  <div className="text-[12px] text-neutral-60">Contaminants/hr</div>
+                  <div className="flex items-baseline gap-2 mt-0.5">
+                    <span className="text-[18px] font-bold text-neutral-100">{data.contaminantsPerHr}%</span>
+                    <span className="text-[12px] text-safi-700 font-medium">target &lt; {data.contaminantsTarget}%</span>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 text-[12px] text-neutral-60 text-right">{tEN(`Updated ${data.updatedMins} mins ago`, `Actualizado hace ${data.updatedMins} min`)}</div>
+            </div>
+          </div>
+
+          {/* Input quality this shift — chart */}
+          <div className="px-5 pb-5 pt-4 border-t border-neutral-10">
+            <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
+              <div>
+                <div className="text-[15px] font-bold text-neutral-100">{tEN('Input quality this shift', 'Calidad de entrada este turno')}</div>
+                <div className="text-[12px] text-neutral-60 mt-0.5">
+                  {tEN('Rolling average share of on-target material per bale processed', 'Media móvil de material dentro del objetivo por paca')}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[12px] text-neutral-60">{tEN('Live average', 'Media en vivo')}</div>
+                <div className="text-[24px] font-bold text-safi-700">{data.liveAvgPct}%</div>
+                <div className={'text-[12px] font-medium ' + (Math.abs(data.liveAvgDelta) <= 2 ? 'text-success-300' : 'text-amber-700')}>
+                  {data.liveAvgDelta > 0 ? '+' : ''}{data.liveAvgDelta}% vs target
+                </div>
+              </div>
+            </div>
+            <InputQualityChart line={line} targetOnTargetPct={75} liveAvgPct={data.liveAvgPct} />
+            <div className="flex items-center gap-4 mt-2 text-[12px] text-neutral-60 flex-wrap">
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 h-1 rounded-sm" style={{ background: '#6347FF' }} />{tEN('Rolling average', 'Media móvil')}</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 rounded-sm" style={{ background: '#B0A1FE' }} />{tEN('Per bale', 'Por paca')}</span>
+              <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 border-b border-dashed" style={{ borderColor: '#15803D' }} />{tEN('Target', 'Objetivo')}</span>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const IdleLinePanel = ({ line, color }) => {
+      const cfg = lineState[line];
       const canStart = cfg.material && cfg.specGroup && cfg.targetPct > 0;
 
       return (
-        <div className="bg-white border border-neutral-10 rounded-xl overflow-hidden" style={{ borderLeft: `6px solid ${accent}` }}>
-          <div className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap border-b border-neutral-10">
+        <div className="bg-white border border-neutral-10 rounded-xl overflow-hidden" style={{ borderLeft: `6px solid ${color}` }}>
+          <div className="px-5 py-4 flex items-center justify-between gap-3 flex-wrap border-b border-neutral-10">
             <div className="flex items-center gap-3">
-              <span className="px-2.5 py-1 rounded-full text-[12px] font-semibold" style={{ background: accent, color: 'white' }}>{line}</span>
-              {cfg.active ? (
-                <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: accent }}>
-                  <span className="w-2 h-2 rounded-full" style={{ background: accent }} />
-                  {tEN('Window active', 'Ventana activa')}
-                </span>
-              ) : (
-                <span className="text-[13px] text-neutral-60">{tEN('No active window', 'Sin ventana activa')}</span>
-              )}
+              <span className="px-2.5 py-1 rounded-full text-[12px] font-semibold" style={{ background: color, color: 'white' }}>{line}</span>
+              <span className="text-[13px] text-neutral-60">{tEN('No active window', 'Sin ventana activa')}</span>
             </div>
-            {cfg.active && (
-              <button
-                onClick={() => finishWindow(line)}
-                className="h-9 px-3 border border-neutral-10 rounded-md text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
-              >
-                {tEN('Finish window', 'Finalizar ventana')}
-              </button>
-            )}
           </div>
 
           <div className="px-5 py-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[12px] font-semibold text-neutral-80 mb-1.5">{tEN('Material', 'Material')}</label>
-                <select
-                  value={cfg.material}
-                  onChange={e => updateCfg(line, { material: e.target.value })}
-                  disabled={cfg.active}
-                  className="w-full h-10 px-3 border border-neutral-10 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 disabled:opacity-60"
-                >
-                  <option value="">{tEN('Choose material…', 'Elige material…')}</option>
-                  {PLANNER_MATERIALS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[12px] font-semibold text-neutral-80 mb-1.5">{tEN('Spec group', 'Grupo de especificación')}</label>
-                <select
-                  value={cfg.specGroup}
-                  onChange={e => {
-                    const s = e.target.value;
-                    updateCfg(line, { specGroup: s, operator: DEFAULT_OPERATOR(s), targetPct: DEFAULT_TARGET_PCT(s) });
-                  }}
-                  disabled={cfg.active}
-                  className="w-full h-10 px-3 border border-neutral-10 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 disabled:opacity-60"
-                >
-                  <option value="">{tEN('Choose spec…', 'Elige spec…')}</option>
-                  {PLANNER_SPEC_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
-                </select>
-              </div>
+            <div className="text-[15px] font-bold text-neutral-100 mb-2">{tEN('Plan next production window', 'Planificar próxima ventana')}</div>
+            <div className="text-[13px] text-neutral-60 mb-4">
+              {tEN('Choose how to build this window\'s picking list.', 'Elige cómo construir la lista de recolección de esta ventana.')}
             </div>
 
-            <div className="mt-3">
-              <label className="block text-[12px] font-semibold text-neutral-80 mb-1.5">{tEN('Average target input', 'Objetivo medio')}</label>
-              <div className="flex items-center gap-2">
-                <select
-                  value={cfg.operator}
-                  onChange={e => updateCfg(line, { operator: e.target.value })}
-                  disabled={cfg.active}
-                  className="h-10 px-2 border border-neutral-10 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 disabled:opacity-60"
-                  aria-label={tEN('Comparator', 'Comparador')}
-                >
-                  <option value="<=">{'≤'}</option>
-                  <option value=">=">{'≥'}</option>
-                </select>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    value={cfg.targetPct}
-                    onChange={e => updateCfg(line, { targetPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
-                    disabled={cfg.active}
-                    className="h-10 w-28 pl-3 pr-8 border border-neutral-10 rounded-md text-[13px] text-right bg-white focus:outline-none focus:ring-2 focus:ring-safi-600 disabled:opacity-60"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-neutral-60 pointer-events-none">%</span>
+            {/* Path toggle */}
+            <div className="inline-flex border border-neutral-10 rounded-md p-1 bg-neutral-5 mb-4">
+              <button
+                onClick={() => updateLine(line, { planMode: 'ai' })}
+                className={
+                  'px-3 py-1.5 rounded text-[13px] font-medium ' +
+                  (cfg.planMode === 'ai' ? 'bg-white text-neutral-100 shadow-sm' : 'text-neutral-60')
+                }
+              >
+                <Icon d={I.info} className="inline w-3.5 h-3.5 mr-1" />
+                {tEN('AI recommends', 'Recomienda IA')}
+              </button>
+              <button
+                onClick={() => updateLine(line, { planMode: 'manual' })}
+                className={
+                  'px-3 py-1.5 rounded text-[13px] font-medium ' +
+                  (cfg.planMode === 'manual' ? 'bg-white text-neutral-100 shadow-sm' : 'text-neutral-60')
+                }
+              >
+                {tEN('Manual list', 'Lista manual')}
+              </button>
+            </div>
+
+            {cfg.planMode === 'ai' ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[12px] font-semibold text-neutral-80 mb-1.5">{tEN('Material', 'Material')}</label>
+                    <select
+                      value={cfg.material}
+                      onChange={e => updateLine(line, { material: e.target.value })}
+                      className="w-full h-10 px-3 border border-neutral-10 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                    >
+                      <option value="">{tEN('Choose material…', 'Elige material…')}</option>
+                      {PRODUCTION_MATERIALS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-semibold text-neutral-80 mb-1.5">{tEN('Spec group', 'Grupo de especificación')}</label>
+                    <select
+                      value={cfg.specGroup}
+                      onChange={e => {
+                        const s = e.target.value;
+                        updateLine(line, { specGroup: s, operator: DEFAULT_OP(s), targetPct: DEFAULT_TARGET(s) });
+                      }}
+                      className="w-full h-10 px-3 border border-neutral-10 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                    >
+                      <option value="">{tEN('Choose spec…', 'Elige spec…')}</option>
+                      {PRODUCTION_SPEC_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
                 </div>
-                <span className="text-[13px] text-neutral-60">
-                  {tEN(`averaged hourly, ±2% tolerance`, `promedio por hora, tolerancia ±2%`)}
-                </span>
-              </div>
-            </div>
 
-            <div className="mt-4 flex items-center gap-3">
-              {!cfg.active ? (
+                <div>
+                  <label className="block text-[12px] font-semibold text-neutral-80 mb-1.5">{tEN('Average target input', 'Objetivo medio')}</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={cfg.operator}
+                      onChange={e => updateLine(line, { operator: e.target.value })}
+                      className="h-10 px-2 border border-neutral-10 rounded-md text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                    >
+                      <option value="<=">{'≤'}</option>
+                      <option value=">=">{'≥'}</option>
+                    </select>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value={cfg.targetPct}
+                        onChange={e => updateLine(line, { targetPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                        className="h-10 w-28 pl-3 pr-8 border border-neutral-10 rounded-md text-[13px] text-right bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-neutral-60 pointer-events-none">%</span>
+                    </div>
+                    <span className="text-[13px] text-neutral-60">{tEN('averaged hourly, ±2% tolerance', 'promedio por hora, tolerancia ±2%')}</span>
+                  </div>
+                </div>
+
                 <button
                   onClick={() => startWindow(line)}
                   disabled={!canStart}
@@ -7491,298 +7716,117 @@
                     'inline-flex items-center gap-2 h-11 px-5 rounded-md text-[14px] font-semibold text-white ' +
                     (canStart ? 'hover:opacity-90' : 'opacity-40 cursor-not-allowed')
                   }
-                  style={{ background: canStart ? accent : '#B4B2A9' }}
+                  style={{ background: canStart ? color : '#B4B2A9' }}
                 >
                   <Icon d={I.check} className="w-4 h-4" />
                   {tEN('Start window', 'Iniciar ventana')}
                 </button>
-              ) : (
-                <span className="inline-flex items-center gap-2 h-11 px-4 rounded-md text-[13px] font-medium" style={{ background: badgeBg, color: badgeText }}>
-                  <Icon d={I.info} className="w-4 h-4" />
-                  {tEN('Operators are auto-picking to hit this target.', 'Los operarios recogen automáticamente para el objetivo.')}
-                </span>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className="bg-neutral-5 border border-neutral-10 rounded-md p-4">
+                <div className="text-[13px] text-neutral-100 mb-2">
+                  {tEN(
+                    'To build a picking list manually (specific loads, specific bays), use the Warehouse tab.',
+                    'Para crear una lista manualmente, usa la pestaña Almacén.'
+                  )}
+                </div>
+                <button
+                  onClick={() => setTab?.('pw-layout')}
+                  className="inline-flex items-center gap-1.5 h-10 px-4 border border-neutral-10 rounded-md text-[13px] font-medium text-neutral-100 hover:bg-white bg-white"
+                >
+                  <Icon d={I.arrowR} className="w-4 h-4" />
+                  {tEN('Open Warehouse', 'Abrir Almacén')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       );
     };
 
-    const activeWindows = Object.entries(lineCfg).filter(([_, c]) => c.active);
+    const LinePanel = ({ line, color }) => {
+      const data = lineState[line];
+      return data.active ? <ActiveLinePanel line={line} color={color} data={data} /> : <IdleLinePanel line={line} color={color} />;
+    };
+
+    // ------------------------------------------------------------------------
+    // Recent windows — compact list of past windows per line with yield %.
+    // ------------------------------------------------------------------------
+    const recentWindows = [
+      { line: 'Line 1', color: '#16A34A', date: 'Wed 24 Jul', material: 'Clear PET Bales', spec: 'Thermoforms ≤ 25%', yield: 91.4, on: true },
+      { line: 'Line 2', color: '#2563EB', date: 'Wed 24 Jul', material: 'Green PET',       spec: 'Bottles/Jars ≥ 85%', yield: 88.2, on: true },
+      { line: 'Line 1', color: '#16A34A', date: 'Tue 23 Jul', material: 'Clear PET Bales', spec: 'Thermoforms ≤ 25%', yield: 89.7, on: true },
+      { line: 'Line 2', color: '#2563EB', date: 'Tue 23 Jul', material: 'Green PET',       spec: 'Bottles/Jars ≥ 85%', yield: 87.1, on: true },
+      { line: 'Line 1', color: '#16A34A', date: 'Mon 22 Jul', material: 'Clear PET Bales', spec: 'Thermoforms ≤ 20%', yield: 82.4, on: false },
+      { line: 'Line 2', color: '#2563EB', date: 'Mon 22 Jul', material: 'Green PET',       spec: 'Bottles/Jars ≥ 85%', yield: 89.5, on: true },
+    ];
+
+    const RecentWindowsSection = () => (
+      <div className="bg-white border border-neutral-10 rounded-xl overflow-hidden">
+        <div className="px-5 py-4 flex items-center justify-between border-b border-neutral-10">
+          <div>
+            <div className="text-[15px] font-bold text-neutral-100">{tEN('Recent production windows', 'Ventanas recientes')}</div>
+            <div className="text-[12px] text-neutral-60 mt-0.5">{tEN('Last 6 completed windows across both lines', 'Últimas 6 ventanas completadas')}</div>
+          </div>
+          <button
+            onClick={() => setTab?.('history')}
+            className="inline-flex items-center gap-1.5 h-10 px-4 border border-neutral-10 rounded-md text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+          >
+            {tEN('View full History', 'Ver historial completo')}
+            <Icon d={I.arrowR} className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="divide-y divide-neutral-10">
+          {recentWindows.map((w, i) => (
+            <div key={i} className="px-5 py-3 flex items-center gap-4 flex-wrap">
+              <div className="w-1 h-8 rounded" style={{ background: w.color }} />
+              <div className="flex items-center gap-2 min-w-[110px]">
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: w.color, color: 'white' }}>{w.line}</span>
+                <span className="text-[12px] text-neutral-60">{w.date}</span>
+              </div>
+              <div className="flex-1 min-w-[220px]">
+                <div className="text-[13px] font-medium text-neutral-100">{w.material}</div>
+                <div className="text-[12px] text-neutral-60">{w.spec}</div>
+              </div>
+              <div className="text-right min-w-[100px]">
+                <div className="text-[11px] text-neutral-60 uppercase tracking-wide">{tEN('Yield', 'Rendimiento')}</div>
+                <div className={'text-[16px] font-bold ' + (w.on ? 'text-success-300' : 'text-amber-700')}>
+                  {w.yield}%
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
 
     return (
       <Fragment>
         <div className="mb-5">
-          <div className="text-2xl font-bold text-neutral-100">{tEN('Picker planner', 'Planificador de recolección')}</div>
+          <div className="text-2xl font-bold text-neutral-100">{tEN('Production', 'Producción')}</div>
           <div className="text-[13px] text-neutral-60 mt-1">
             {tEN(
-              'Set material + spec targets per production line. When you start a window, Safi auto-generates picking recommendations for operators based on live inventory.',
-              'Define material y objetivos por línea. Al iniciar una ventana, Safi genera recomendaciones automáticas para los operarios.'
+              'Plan production windows per line, monitor live progress, and review recent performance.',
+              'Planifica ventanas por línea, monitorea el progreso en vivo y revisa el rendimiento reciente.'
             )}
           </div>
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
-          <LineCard line="Apan 1" color="green" />
-          <LineCard line="Apan 2" color="blue" />
-        </div>
-
-        <div className="bg-white border border-neutral-10 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <div className="text-[15px] font-bold text-neutral-100">{tEN('Manual picking lists', 'Listas manuales')}</div>
-              <div className="text-[13px] text-neutral-60">
-                {tEN(
-                  'For pick lists you build by hand (specific loads, specific bays), use the Warehouse tab.',
-                  'Para listas manuales, usa la pestaña Almacén.'
-                )}
-              </div>
-            </div>
-            <span className="text-[12px] text-neutral-60">{pickingLists.length} {tEN('active', 'activas')}</span>
+        <div className="mb-5">
+          <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
+            {tEN('Active production windows', 'Ventanas de producción activas')}
           </div>
-          {pickingLists.length === 0 ? (
-            <div className="border border-dashed border-neutral-10 rounded-md px-4 py-6 text-center text-[13px] text-neutral-60">
-              {tEN('No manual picking lists right now.', 'No hay listas manuales ahora mismo.')}
-            </div>
-          ) : (
-            <div className="border border-neutral-10 rounded-md divide-y divide-neutral-10">
-              {pickingLists.map((pl, i) => (
-                <div key={i} className="px-4 py-3 flex items-center justify-between">
-                  <div>
-                    <div className="text-[13px] font-medium text-neutral-100">{pl.productionLine} · {pl.shift}</div>
-                    <div className="text-[12px] text-neutral-60">{(pl.loads || []).length} {tEN('loads', 'lotes')}</div>
-                  </div>
-                  <span className="text-[12px] text-neutral-60">{tEN('Manual', 'Manual')}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {activeWindows.length > 0 && (
-          <div className="mt-4 rounded-lg border border-safi-100 bg-safi-50 px-4 py-3 text-[13px] text-neutral-100 flex items-start gap-2">
-            <Icon d={I.info} className="w-4 h-4 mt-0.5 shrink-0 text-safi-600" />
-            <div>
-              {tEN(
-                `${activeWindows.length} active window${activeWindows.length === 1 ? '' : 's'} · monitor progress in `,
-                `${activeWindows.length} ventana${activeWindows.length === 1 ? '' : 's'} activa${activeWindows.length === 1 ? '' : 's'} · sigue el progreso en `
-              )}
-              <span className="font-semibold">{tEN('Dashboard', 'Panel')}</span>.
-            </div>
-          </div>
-        )}
-      </Fragment>
-    );
-  }
-
-  // ==========================================================================
-  // R69: DashboardView — live production tracking per line.
-  //
-  // One panel per production line with active window status, target vs actual
-  // context, horizontal timeline chart with tolerance band and predicted
-  // trajectory, metrics grid (bales, weight, throughput, OEE), and operators
-  // on shift. Static demo data for the prototype.
-  // ==========================================================================
-
-  function DashboardView({ lang = 'en' }) {
-    const tEN = (en, es) => lang === 'es' ? es : en;
-
-    // Static demo data. In production this would stream from live telemetry.
-    const lines = [
-      {
-        line: 'Apan 1', color: '#16A34A', accentTint: '#EAF3DE', accentText: '#27500A',
-        material: 'Clear PET Bottles', specGroup: 'Contaminants', operator: '<=', targetPct: 5.0, tolerance: 2.0,
-        actualPct: 5.9, deltaPct: 0.9, deltaDir: 'up', deltaIsBad: true,
-        elapsed: '2h 47m', bales: 184, weightT: 27.4, weightPerHr: 9.8, oee: 77,
-        // Historical readings over the last 3 hours (percentage of target group).
-        // Each point represents 30 min. Last point = "now", predicted extends forward.
-        pastReadings: [4.2, 4.8, 5.3, 5.7, 6.1, 5.4, 5.9],
-        predicted: [5.5, 5.2, 4.9],
-        operators: [
-          { initials: 'PC', name: 'Paddy Corr', bales: 98 },
-          { initials: 'MS', name: 'Mariana S.', bales: 86 },
-        ],
-      },
-      {
-        line: 'Apan 2', color: '#2563EB', accentTint: '#E6F1FB', accentText: '#0C447C',
-        material: 'Green PET', specGroup: 'Bottles/Jars', operator: '>=', targetPct: 85.0, tolerance: 3.0,
-        actualPct: 87.4, deltaPct: 1.2, deltaDir: 'up', deltaIsBad: false,
-        elapsed: '1h 12m', bales: 62, weightT: 8.9, weightPerHr: 7.4, oee: 71,
-        pastReadings: [82.1, 84.3, 85.6, 86.0, 87.4],
-        predicted: [87.0, 86.4, 85.8],
-        operators: [
-          { initials: 'DL', name: 'Diego L.', bales: 34 },
-          { initials: 'AP', name: 'Ana P.', bales: 28 },
-        ],
-      },
-    ];
-
-    const LinePanel = ({ ln }) => {
-      // Chart geometry. X range: -3h .. +1.5h (9 x-slots of 30 min).
-      // Y range: 0 .. 2× target so the tolerance band sits centred.
-      const chartW = 600, chartH = 160;
-      const padL = 40, padR = 20, padT = 20, padB = 24;
-      const plotW = chartW - padL - padR;
-      const plotH = chartH - padT - padB;
-
-      const yMax = Math.max(ln.targetPct * 2, ln.actualPct * 1.5, 10);
-      const yMin = 0;
-      const yScale = (v) => padT + (1 - (v - yMin) / (yMax - yMin)) * plotH;
-
-      // All readings on a single time axis, past first then predicted.
-      const allPoints = [...ln.pastReadings, ...ln.predicted];
-      const nPoints = allPoints.length;
-      const nPast = ln.pastReadings.length;
-      const xScale = (i) => padL + (i / (nPoints - 1)) * plotW;
-
-      const pastPath = ln.pastReadings.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xScale(i)} ${yScale(v)}`).join(' ');
-      const predPath = [ln.pastReadings[nPast - 1], ...ln.predicted]
-        .map((v, i) => `${i === 0 ? 'M' : 'L'} ${xScale(nPast - 1 + i)} ${yScale(v)}`)
-        .join(' ');
-
-      const nowX = xScale(nPast - 1);
-      const tolTop = yScale(ln.targetPct + ln.tolerance);
-      const tolBottom = yScale(ln.targetPct - ln.tolerance);
-      const targetY = yScale(ln.targetPct);
-
-      const isInTolerance = Math.abs(ln.actualPct - ln.targetPct) <= ln.tolerance;
-
-      return (
-        <div className="bg-white border border-neutral-10 rounded-xl overflow-hidden" style={{ borderLeft: `6px solid ${ln.color}` }}>
-          <div className="px-5 py-4 border-b border-neutral-10">
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="px-2.5 py-1 rounded-full text-[12px] font-semibold" style={{ background: ln.color, color: 'white' }}>{ln.line}</span>
-                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: ln.color }}>
-                    <span className="w-2 h-2 rounded-full" style={{ background: ln.color }} />
-                    {tEN('Active window', 'Ventana activa')}
-                  </span>
-                  <span className="text-[12px] text-neutral-60">{tEN('Elapsed', 'Transcurrido')} {ln.elapsed}</span>
-                </div>
-                <div className="mt-2 flex items-center gap-4 flex-wrap">
-                  <div>
-                    <div className="text-[10px] text-neutral-60 uppercase tracking-wide">{tEN('Material', 'Material')}</div>
-                    <div className="text-[13px] font-medium text-neutral-100">{ln.material}</div>
-                  </div>
-                  <div className="w-px h-7 bg-neutral-10" />
-                  <div>
-                    <div className="text-[10px] text-neutral-60 uppercase tracking-wide">{tEN('Target spec', 'Spec objetivo')}</div>
-                    <div className="text-[13px] font-medium text-neutral-100">{ln.specGroup} {ln.operator === '<=' ? '≤' : '≥'} {ln.targetPct}%</div>
-                  </div>
-                  <div className="w-px h-7 bg-neutral-10" />
-                  <div>
-                    <div className="text-[10px] text-neutral-60 uppercase tracking-wide">{tEN('Actual (last hr)', 'Real (última hora)')}</div>
-                    <div className="text-[13px] font-medium flex items-baseline gap-1" style={{ color: isInTolerance ? '#15803D' : '#B45309' }}>
-                      <span>{ln.actualPct.toFixed(1)}%</span>
-                      <span className="text-[11px]" style={{ color: ln.deltaIsBad ? '#B45309' : '#15803D' }}>
-                        {ln.deltaDir === 'up' ? '↑' : '↓'} {ln.deltaPct.toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <button className="h-10 px-4 border border-neutral-10 rounded-md text-[13px] font-medium text-neutral-100 hover:bg-neutral-5">
-                {tEN('Finish window', 'Finalizar ventana')}
-              </button>
-            </div>
-          </div>
-
-          <div className="px-5 pt-4">
-            <div className="bg-neutral-5 border border-neutral-10 rounded-lg p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[11px] font-semibold text-neutral-60 uppercase tracking-wide">
-                  {ln.specGroup} % {tEN('over time', 'en el tiempo')}
-                </div>
-                <div className="flex items-center gap-3 text-[10px] text-neutral-60">
-                  <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-1.5 rounded-sm" style={{ background: '#86E3A6' }} />{tEN('Tolerance', 'Tolerancia')} ±{ln.tolerance}%</span>
-                  <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5" style={{ background: ln.color }} />{tEN('Actual', 'Real')}</span>
-                  <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 border-b border-dashed" style={{ borderColor: '#6347FF' }} />{tEN('Predicted', 'Previsto')}</span>
-                </div>
-              </div>
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} className="w-full h-40" role="img">
-                <title>{ln.specGroup} over time</title>
-                <rect x={padL} y={tolTop} width={plotW} height={tolBottom - tolTop} fill="#EAF3DE" opacity="0.7" />
-                <line x1={padL} y1={targetY} x2={padL + plotW} y2={targetY} stroke="#15803D" strokeWidth="1" strokeDasharray="2 4" />
-
-                <text x={padL - 6} y={yScale(ln.targetPct + ln.tolerance) + 4} textAnchor="end" fontSize="10" fill="#6E6D77">{(ln.targetPct + ln.tolerance).toFixed(0)}%</text>
-                <text x={padL - 6} y={targetY + 4} textAnchor="end" fontSize="10" fill="#15803D" fontWeight="500">{ln.targetPct}% {tEN('target', 'objetivo')}</text>
-                <text x={padL - 6} y={yScale(ln.targetPct - ln.tolerance) + 4} textAnchor="end" fontSize="10" fill="#6E6D77">{(ln.targetPct - ln.tolerance).toFixed(0)}%</text>
-
-                <line x1={padL} y1={padT + plotH} x2={padL + plotW} y2={padT + plotH} stroke="#E7E7E8" strokeWidth="0.5" />
-
-                <line x1={nowX} y1={padT} x2={nowX} y2={padT + plotH} stroke="#B4B2A9" strokeWidth="0.5" strokeDasharray="2 3" />
-                <text x={nowX} y={padT + plotH + 14} textAnchor="middle" fontSize="10" fill="#0D0C1D" fontWeight="500">{tEN('Now', 'Ahora')}</text>
-
-                <path d={pastPath} fill="none" stroke={ln.color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                {ln.pastReadings.map((v, i) => (
-                  <circle key={i} cx={xScale(i)} cy={yScale(v)} r={i === nPast - 1 ? 5 : 3} fill={ln.color} stroke={i === nPast - 1 ? 'white' : 'none'} strokeWidth={i === nPast - 1 ? 2 : 0} />
-                ))}
-                <path d={predPath} fill="none" stroke="#6347FF" strokeWidth="2" strokeDasharray="4 3" strokeLinecap="round" strokeLinejoin="round" />
-                {ln.predicted.map((v, i) => (
-                  <circle key={i} cx={xScale(nPast + i)} cy={yScale(v)} r={2.5} fill="#6347FF" opacity="0.6" />
-                ))}
-              </svg>
-            </div>
-          </div>
-
-          <div className="px-5 pt-4">
-            <div className="grid grid-cols-4 gap-2">
-              <div className="bg-neutral-5 rounded-md px-3 py-2.5">
-                <div className="text-[10px] text-neutral-60 uppercase tracking-wide">{tEN('Bales', 'Pacas')}</div>
-                <div className="text-[20px] font-semibold text-neutral-100 mt-0.5">{fmtNum(ln.bales)}</div>
-              </div>
-              <div className="bg-neutral-5 rounded-md px-3 py-2.5">
-                <div className="text-[10px] text-neutral-60 uppercase tracking-wide">{tEN('Weight', 'Peso')}</div>
-                <div className="text-[20px] font-semibold text-neutral-100 mt-0.5">{ln.weightT.toFixed(1)}<span className="text-[12px] text-neutral-60 font-normal"> t</span></div>
-              </div>
-              <div className="bg-neutral-5 rounded-md px-3 py-2.5">
-                <div className="text-[10px] text-neutral-60 uppercase tracking-wide">{tEN('Weight / hr', 'Peso / hora')}</div>
-                <div className="text-[20px] font-semibold mt-0.5" style={{ color: '#15803D' }}>{ln.weightPerHr.toFixed(1)}<span className="text-[12px] text-neutral-60 font-normal"> t</span></div>
-              </div>
-              <div className="bg-neutral-5 rounded-md px-3 py-2.5">
-                <div className="text-[10px] text-neutral-60 uppercase tracking-wide">OEE</div>
-                <div className="text-[20px] font-semibold mt-0.5" style={{ color: ln.oee >= 70 ? '#15803D' : '#B45309' }}>{ln.oee}%</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="px-5 py-4 mt-3 border-t border-neutral-10">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[11px] font-semibold text-neutral-60 uppercase tracking-wide">{tEN('Operators on shift', 'Operarios en turno')}</div>
-              <button className="text-[12px] font-medium text-safi-700 hover:underline">{tEN('View details', 'Ver detalles')}</button>
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              {ln.operators.map(op => (
-                <div key={op.initials} className="flex items-center gap-2 border border-neutral-10 rounded-md px-3 py-2">
-                  <div className="w-7 h-7 rounded-full text-[11px] font-semibold flex items-center justify-center" style={{ background: ln.accentTint, color: ln.accentText }}>{op.initials}</div>
-                  <div>
-                    <div className="text-[13px] font-medium text-neutral-100">{op.name}</div>
-                    <div className="text-[11px] text-neutral-60">{op.bales} {tEN('bales', 'pacas')} · {ln.elapsed}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      );
-    };
-
-    return (
-      <Fragment>
-        <div className="mb-5 flex items-baseline justify-between flex-wrap gap-2">
-          <div>
-            <div className="text-2xl font-bold text-neutral-100">{tEN('Dashboard', 'Panel')}</div>
-            <div className="text-[13px] text-neutral-60 mt-1">{tEN('Live production tracking · 2 active windows', 'Seguimiento en vivo · 2 ventanas activas')}</div>
-          </div>
-          <div className="text-[12px] text-neutral-60 inline-flex items-center gap-1.5">
-            <Icon d={I.arrowR} className="w-3.5 h-3.5" />
-            {tEN('Updated 12 seconds ago', 'Actualizado hace 12 s')}
+          <div className="space-y-4">
+            <LinePanel line="Line 1" color="#16A34A" />
+            <LinePanel line="Line 2" color="#2563EB" />
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4">
-          {lines.map(ln => <LinePanel key={ln.line} ln={ln} />)}
+        <div>
+          <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
+            {tEN('History', 'Historial')}
+          </div>
+          <RecentWindowsSection />
         </div>
       </Fragment>
     );
