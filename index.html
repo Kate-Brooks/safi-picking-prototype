@@ -5501,7 +5501,11 @@
     const [weightDraft, setWeightDraft] = useState('');
     const [loadNoDraft, setLoadNoDraft] = useState('');
     // R53: Analyse-material splash modal.
+    // R72: reused as the "camera session" black screen; on Complete it flips
+    // storageRecOpen so the FO lands on the storage recommendation.
     const [analyseSplashOpen, setAnalyseSplashOpen] = useState(false);
+    const [storageRecOpen, setStorageRecOpen] = useState(false);
+    const [storageRecCount, setStorageRecCount] = useState(3);
     // R54: Edit details modal state.
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [editFocusField, setEditFocusField] = useState(null);
@@ -6025,41 +6029,165 @@
           </div>
         )}
 
-        {/* R53: Analyse Material splash modal. Simulates a tablet/camera flow
-            where photos were captured offline and the FO confirms completion.
-            Confirming appends a synthetic analysis session, which flips the
-            load's analysed state on. */}
+        {/* R72: Camera session — full-screen black overlay. In production this
+            would be the native camera capture UI; here we mock it as a placeholder
+            that resolves on Complete. On complete: append a synthetic analysis
+            session (flipping the load's analysed state), close the camera
+            overlay, and open the Storage recommendation overlay. */}
         {analyseSplashOpen && (
-          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setAnalyseSplashOpen(false)}>
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 text-center" onClick={e => e.stopPropagation()}>
-              <div className="mx-auto w-14 h-14 rounded-full bg-safi-50 text-safi-600 flex items-center justify-center mb-4">
-                <Icon d={I.chart} className="w-7 h-7" />
-              </div>
-              <h3 className="font-bold text-lg text-neutral-100">Analyse material</h3>
-              <p className="text-[13px] text-neutral-60 mt-2">
-                Photos have been taken in the camera. The FO completes the session.
-              </p>
-              <div className="mt-6 flex items-center justify-center gap-2">
+          <div
+            className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-6"
+            role="dialog"
+            aria-label="Camera session"
+          >
+            <div className="text-white/80 text-[13px] uppercase tracking-[0.3em] mb-4">Camera session</div>
+            <div className="text-white text-2xl font-medium mb-2">Photograph bales</div>
+            <div className="text-white/60 text-[14px] max-w-md text-center mb-10">
+              Point the camera at each bale face. Safi analyses in the background — tap Complete when you've captured enough.
+            </div>
+            <div className="w-32 h-32 rounded-full border-4 border-white/30 flex items-center justify-center mb-10">
+              <Icon d={I.photo} className="w-14 h-14 text-white/70" />
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setAnalyseSplashOpen(false)}
+                className="px-5 py-2.5 rounded-lg border border-white/30 text-white/90 text-[14px] font-medium hover:bg-white/10"
+              >Cancel</button>
+              <button
+                onClick={() => {
+                  // R72: record a synthetic analysis session (same behaviour as before),
+                  // then hand off to the storage recommendation overlay.
+                  const synth = {
+                    date: '9 Jun 2026',
+                    at: '09 Jun 11:04',
+                    photos: 6,
+                    who: 'You',
+                    ubc:    70 + Math.floor(rng(idx + 11, 25) * 10) / 10,
+                    alum:   12 + Math.floor(rng(idx + 12, 6) * 10) / 10,
+                    contam: 4 + Math.floor(rng(idx + 13, 6) * 10) / 10
+                  };
+                  onAddAnalysisSession(synth);
+                  setAnalyseSplashOpen(false);
+                  setStorageRecCount(3);
+                  setStorageRecOpen(true);
+                }}
+                className="px-8 py-2.5 rounded-lg bg-safi-600 text-white text-[15px] font-semibold hover:bg-safi-700"
+              >Complete</button>
+            </div>
+          </div>
+        )}
+
+        {/* R72: Storage recommendation overlay — surfaces the AI-recommended
+            zone/bay for the load's composition, with delta-stepper for bale
+            count and paths to override the location or report a problem. */}
+        {storageRecOpen && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setStorageRecOpen(false)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-[620px] overflow-hidden" onClick={e => e.stopPropagation()}>
+              {/* Header — title + close */}
+              <div className="px-6 py-4 border-b border-neutral-10 flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-[20px] font-bold text-neutral-100">Storage recommendation</h3>
+                </div>
                 <button
-                  onClick={() => setAnalyseSplashOpen(false)}
-                  className="px-4 py-2 rounded-lg border border-neutral-10 text-neutral-100 bg-white text-[13px] font-medium hover:bg-neutral-5"
-                >Cancel</button>
+                  onClick={() => setStorageRecOpen(false)}
+                  aria-label="Close"
+                  className="w-9 h-9 rounded-lg border border-neutral-10 text-neutral-60 flex items-center justify-center hover:bg-neutral-5"
+                >
+                  <Icon d={I.close} className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Load context + chips above the purple card */}
+              <div className="px-6 pt-4">
+                <div className="text-[15px] font-medium text-neutral-100">Niagara · #4500289765-201</div>
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-semibold border bg-neutral-5 text-neutral-80 border-neutral-10 whitespace-nowrap">Clear PET Bales</span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[12px] font-semibold bg-amber-50 text-amber-800 border border-amber-100 whitespace-nowrap">
+                    <Icon d={I.photo} className="w-3.5 h-3.5" />
+                    8 bales analysed
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[13px] font-medium bg-rose-100 text-rose-900">
+                    <Icon d={I.errorCircle} className="w-3.5 h-3.5" />
+                    Transparent PET 88.4%
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[13px] font-medium bg-success-100 text-success-300">
+                    <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
+                    Coloured PET 4.2%
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[13px] font-medium bg-success-100 text-success-300">
+                    <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
+                    Contaminants 1.2%
+                  </span>
+                </div>
+              </div>
+
+              {/* Purple recommendation card */}
+              <div className="px-6 pt-4 pb-1">
+                <div className="rounded-xl border border-safi-100 bg-safi-50 p-4" style={{ borderLeft: '6px solid #6347FF' }}>
+                  <div className="text-[13px] text-neutral-100 leading-relaxed">
+                    Based on the material quality for the latest analyse, store the bales in the following location:
+                  </div>
+                  <div className="mt-2 text-[26px] font-semibold text-neutral-100 tracking-tight">Zone A · Bay 4</div>
+
+                  {/* Stepper — delta buttons */}
+                  <div className="mt-4">
+                    <div className="text-[11px] text-neutral-60 uppercase tracking-wide mb-2">Adjust bales to store</div>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {[-3, -2, -1, 0, 1, 2, 3].map(d => {
+                        const isNeg = d < 0 || d === 0;
+                        const label = d > 0 ? `+${d}` : d === 0 ? '0' : `−${Math.abs(d)}`;
+                        return (
+                          <button
+                            key={d}
+                            onClick={() => setStorageRecCount(prev => Math.max(0, prev + d))}
+                            className={
+                              'w-[52px] h-[52px] rounded-lg text-[15px] font-medium ' +
+                              (isNeg
+                                ? 'bg-white text-neutral-40 border border-neutral-10'
+                                : 'bg-white text-neutral-100 border border-neutral-40')
+                            }
+                            aria-label={d === 0 ? 'Keep default' : (d > 0 ? `Add ${d}` : `Subtract ${Math.abs(d)}`)}
+                          >{label}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Primary + secondary actions */}
+              <div className="px-6 pt-4 pb-5">
                 <button
                   onClick={() => {
-                    const synth = {
-                      date: '9 Jun 2026',
-                      at: '09 Jun 11:04',
-                      photos: 6,
-                      who: 'You',
-                      ubc:    70 + Math.floor(rng(idx + 11, 25) * 10) / 10,
-                      alum:   12 + Math.floor(rng(idx + 12, 6) * 10) / 10,
-                      contam: 4 + Math.floor(rng(idx + 13, 6) * 10) / 10
-                    };
-                    onAddAnalysisSession(synth);
-                    setAnalyseSplashOpen(false);
+                    setToast?.({ message: `${storageRecCount} bales stored in Zone A · Bay 4`, kind: 'success' });
+                    setStorageRecOpen(false);
                   }}
-                  className="px-5 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-semibold hover:bg-safi-700"
-                >Complete</button>
+                  className="w-full h-[60px] rounded-xl bg-safi-600 text-white text-[17px] font-semibold hover:bg-safi-700 inline-flex items-center justify-center gap-2"
+                >
+                  <Icon d={I.check} className="w-5 h-5" />
+                  Store {storageRecCount} bales in Zone A · Bay 4
+                </button>
+
+                <button
+                  onClick={() => {
+                    setStorageRecOpen(false);
+                    setStoreMode?.(true);
+                  }}
+                  className="mt-2.5 w-full h-12 rounded-lg border border-neutral-40 text-neutral-100 text-[14px] font-medium hover:bg-neutral-5 inline-flex items-center justify-center gap-1.5"
+                >
+                  <Icon d={I.list} className="w-4 h-4" />
+                  Choose a different location
+                </button>
+
+                <div className="mt-3 pt-3 border-t border-neutral-10 flex items-center justify-between text-[12px] text-neutral-60">
+                  <span>Storage is auto-saved</span>
+                  <button className="text-neutral-100 inline-flex items-center gap-1">
+                    <Icon d={I.warning} className="w-3.5 h-3.5" />
+                    Report a problem
+                  </button>
+                </div>
               </div>
             </div>
           </div>
