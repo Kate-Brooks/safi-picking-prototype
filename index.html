@@ -6684,13 +6684,13 @@
               <Tab id="pw-layout" label={lang === 'es' ? 'Almacén' : 'Warehouse'} tab={tab} setTab={setTab} />
               <Tab id="picker-merged" label={lang === 'es' ? 'Recolección' : 'Picker'}                                    tab={tab} setTab={setTab}
                    badge={hasAnyList ? loadsRemaining : null} />
-              {/* R70: Windows tab merges the previous Picker planner + Dashboard tabs.
-                  Line-centric layout: active windows side-by-side at top with live stats +
-                  input-quality chart, planning inline when a line is idle, recent
-                  history at the bottom. */}
-              <Tab id="windows" label={lang === 'es' ? 'Ventanas' : 'Windows'}                                            tab={tab} setTab={setTab} />
-              <Tab id="history"   label={lang === 'es' ? 'Historial' : 'History'}                                         tab={tab} setTab={setTab} />
-              {/* R29: "Rejected bales" tab removed - rejections now surface inside the History drawer for the relevant production window. */}
+              {/* R70/R71: Line management & performance tab merges the previous Picker
+                  planner + Dashboard + History tabs. Line-centric layout: active windows
+                  side-by-side at top with live stats + input-quality chart, planning inline
+                  when a line is idle, full historical windows embedded at the bottom. */}
+              <Tab id="line-management" label={lang === 'es' ? 'Gestión de líneas y rendimiento' : 'Line management & performance'} tab={tab} setTab={setTab} />
+              {/* R29/R71: standalone History tab removed — historical data now lives inline
+                  in the Line management & performance tab. */}
             </div>
           )}
 
@@ -6715,9 +6715,8 @@
           {tab === 'picker-merged' && <ForkliftPickerMergedView pickingLists={pickingLists} processed={processed}
                                   setProcessed={setProcessed} lang={lang} setToast={setToast} bufferEnabled={bufferEnabled} pickerMode={pickerMode} yard={yard}
                                   buffer={buffer} setBuffer={setBuffer} />}
-          {/* R70: Windows - merged tab (active windows + planning + recent history). */}
-          {tab === 'windows' && <ProductionView pickingLists={pickingLists} lang={lang} setToast={setToast} setTab={setTab} />}
-          {tab === 'history' && <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} yard={yard} />}
+          {/* R70/R71: Line management & performance - merged tab (active windows + planning + history). */}
+          {tab === 'line-management' && <ProductionView pickingLists={pickingLists} processed={processed} pickerMode={pickerMode} yard={yard} lang={lang} setToast={setToast} setTab={setTab} />}
         </div>
 
         {/* Confirm-back dialog when leaving Create with > 1 selected load */}
@@ -7371,7 +7370,7 @@
   const DEFAULT_OP = (spec) => (spec === 'Bottles/Jars' ? '>=' : '<=');
   const DEFAULT_TARGET = (spec) => (spec === 'Bottles/Jars' ? 85 : spec === 'Thermoforms' ? 25 : 2);
 
-  function ProductionView({ pickingLists = [], lang = 'en', setToast = () => {}, setTab = () => {} }) {
+  function ProductionView({ pickingLists = [], processed = {}, pickerMode = 'load', yard = [], lang = 'en', setToast = () => {}, setTab = () => {} }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
 
     // Static seed for demo: Line 1 running with a Thermoforms target, Line 2 idle.
@@ -7804,16 +7803,16 @@
     return (
       <Fragment>
         <div className="mb-5">
-          <div className="text-2xl font-bold text-neutral-100">{tEN('Production windows', 'Ventanas de producción')}</div>
+          <div className="text-2xl font-bold text-neutral-100">{tEN('Line management & performance', 'Gestión de líneas y rendimiento')}</div>
           <div className="text-[13px] text-neutral-60 mt-1">
             {tEN(
-              'Plan windows per line, monitor live progress, and review recent performance — all in one place.',
-              'Planifica ventanas por línea, monitorea el progreso en vivo y revisa el rendimiento reciente.'
+              'Plan windows per line, monitor live progress, and review historical performance — all in one place.',
+              'Planifica ventanas por línea, monitorea el progreso en vivo y revisa el rendimiento histórico.'
             )}
           </div>
         </div>
 
-        <div className="mb-6">
+        <div className="mb-8">
           <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
             {tEN('Active windows', 'Ventanas activas')}
           </div>
@@ -7828,7 +7827,8 @@
           <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
             {tEN('History', 'Historial')}
           </div>
-          <RecentWindowsSection />
+          {/* R71: full History surface embedded inline (replaces the compact recent-windows list). */}
+          <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} yard={yard} />
         </div>
       </Fragment>
     );
