@@ -6262,6 +6262,71 @@
     );
   }
 
+  // ============================================================================
+  // R75: MARK LOAD AS ARRIVED - focused overlay opened from the QC table.
+  // Captures the actual load weight and the dock the load is going to.
+  // ============================================================================
+  function ArriveModal({ row, onCancel, onSave }) {
+    const [weight, setWeight] = useState('');
+    const [dock, setDock] = useState('');
+    const weightNum = parseInt(weight, 10);
+    const canSave = weightNum > 0 && dock.trim().length > 0;
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md flex flex-col" role="dialog" aria-modal="true" aria-label="Mark load as arrived" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-10">
+            <h3 className="text-base font-bold text-neutral-100">Mark load as arrived</h3>
+            <button onClick={onCancel} className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Close">
+              <Icon d={I.close} className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="p-5 space-y-4">
+            <div className="text-[13px] text-neutral-60">
+              {row.supplier} · Order {row.orderRef} · {row.material}
+            </div>
+            <div>
+              <label htmlFor="arrive-weight" className="block text-[13px] text-neutral-60 mb-1">Load weight</label>
+              <input
+                id="arrive-weight"
+                type="number"
+                min="0"
+                inputMode="numeric"
+                placeholder="0 KG"
+                value={weight}
+                onChange={e => setWeight(e.target.value)}
+                autoFocus
+                className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+              />
+            </div>
+            <div>
+              <label htmlFor="arrive-dock" className="block text-[13px] text-neutral-60 mb-1">Dock location</label>
+              <input
+                id="arrive-dock"
+                type="text"
+                placeholder="Enter..."
+                value={dock}
+                onChange={e => setDock(e.target.value)}
+                className="w-full h-9 px-3 border border-neutral-10 rounded text-[13px] bg-white"
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-neutral-10">
+            <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5">
+              Cancel
+            </button>
+            <button
+              onClick={() => canSave && onSave({ weight: weightNum, dock: dock.trim() })}
+              disabled={!canSave}
+              className="px-4 py-2 rounded-lg bg-safi-600 text-white text-[13px] font-medium hover:bg-safi-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function QualityControlPage({ yard = [], yardOps = {}, buffer = [], setBuffer = () => {}, setAppPage = () => {}, setTab = () => {}, setPickerMode = () => {} }) {
     const ROWS_PER_PAGE = 15;
     const totalRows = QC_ROWS.length;
@@ -6295,6 +6360,11 @@
     // R54: optional total bales per load (entered via Edit modal). Drives the
     // Storage breakdown (Stored / Left to store / Processed = Total).
     const [loadTotalBales, setLoadTotalBales] = useState({});
+    // R75: per-load arrival record - map of QC row idx -> { weight, dock }.
+    // Set by the "Mark arrived" table action. The weight also feeds
+    // loadActualWeights so the load details view reflects it.
+    const [loadArrivals, setLoadArrivals] = useState({});
+    const [arriveModalIdx, setArriveModalIdx] = useState(null);
     // R54: cross-page nav helpers. "Go to buffer" lands on the warehouse-layout
     // tab in bale-based mode so the Buffer card is visible. "Go to picking
     // list" lands on the warehouse-layout tab (where the picking list alert /
@@ -6493,6 +6563,8 @@
                   // R53: analysed = the load has any analysis history (seeded
                   // results OR the FO completed an Analyse session).
                   const analysed = !!r.results || (loadAnalysisSessions[rowIdx] && loadAnalysisSessions[rowIdx].length > 0);
+                  // R75: arrival record for this row (badge + dock + weight).
+                  const arrival = loadArrivals[rowIdx];
                   return (
                     <tr
                       key={rowIdx}
@@ -6501,8 +6573,19 @@
                     >
                       {/* Order details = order ref above, load number below in muted text. */}
                       <td className="px-4 py-3">
-                        <div className="font-semibold text-neutral-100">{r.orderRef}</div>
-                        <div className="text-[13px] text-neutral-60 mt-0.5">{r.loadNo}</div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-neutral-100">{r.orderRef}</span>
+                          {/* R75: Arrived badge - icon + label, never colour alone. */}
+                          {arrival && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success-100 text-success-300 text-[13px] font-medium">
+                              <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
+                              Arrived
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[13px] text-neutral-60 mt-0.5">
+                          {arrival ? `Dock ${arrival.dock} · ${arrival.weight.toLocaleString()} kg` : r.loadNo}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-neutral-100">{r.supplier}</td>
                       <td className="px-4 py-3 text-neutral-100">{fmtDate(r.scheduledDay)}</td>
@@ -6524,6 +6607,17 @@
                         )}
                       </td>
                       <td className="px-4 py-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                        {/* R75: Mark arrived - available until the load has an arrival record. */}
+                        {!arrival && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setArriveModalIdx(rowIdx); }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-10 text-[13px] font-medium text-neutral-100 bg-white hover:bg-neutral-5"
+                          >
+                            <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
+                            Mark arrived
+                          </button>
+                        )}
                         {analysed ? (
                           <button
                             onClick={(e) => e.stopPropagation()}
@@ -6552,6 +6646,7 @@
                             </button>
                           </div>
                         )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -6589,6 +6684,19 @@
             </div>
           </div>
         </div>
+
+        {/* R75: Mark load as arrived overlay. */}
+        {arriveModalIdx !== null && (
+          <ArriveModal
+            row={QC_ROWS[arriveModalIdx]}
+            onCancel={() => setArriveModalIdx(null)}
+            onSave={({ weight, dock }) => {
+              setLoadArrivals(prev => ({ ...prev, [arriveModalIdx]: { weight, dock } }));
+              setLoadActualWeights(prev => ({ ...prev, [arriveModalIdx]: weight }));
+              setArriveModalIdx(null);
+            }}
+          />
+        )}
       </div>
     );
   }
