@@ -5517,6 +5517,8 @@
     totalBalesOverride = null,
     analysisSessions = [],
     processedRecord = null,
+    arrival = null,
+    onSaveArrival = () => {},
     onSetWeight = () => {},
     onSetLoadNumber = () => {},
     onSetTotalBales = () => {},
@@ -5538,6 +5540,8 @@
     const [analyseSplashOpen, setAnalyseSplashOpen] = useState(false);
     const [storageRecOpen, setStorageRecOpen] = useState(false);
     const [storageRecCount, setStorageRecCount] = useState(3);
+    // R76: Mark/edit arrival overlay state.
+    const [arriveModalOpen, setArriveModalOpen] = useState(false);
     // R54: Edit details modal state.
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [editFocusField, setEditFocusField] = useState(null);
@@ -5679,6 +5683,15 @@
 
     return (
       <div className="px-8 py-6 space-y-4">
+        {/* R76: Mark/edit arrival overlay - same component as the QC table. */}
+        {arriveModalOpen && (
+          <ArriveModal
+            row={row}
+            initial={arrival}
+            onCancel={() => setArriveModalOpen(false)}
+            onSave={(rec) => { onSaveArrival(rec); setArriveModalOpen(false); }}
+          />
+        )}
         {/* Breadcrumb + Create claim */}
         <div className="flex items-start justify-between gap-4">
           <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-[15px] flex-wrap">
@@ -5699,15 +5712,35 @@
              prominent banner above the field grid that opens the Edit modal
              focused on the Actual weight input. */}
         <div className="bg-white border border-neutral-10 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="text-xl font-bold text-neutral-100">Load details</h2>
-            <button
-              onClick={() => openEdit()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
-            >
-              <Icon d={I.edit} className="w-3.5 h-3.5" />
-              Edit details
-            </button>
+          <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-bold text-neutral-100">Load details</h2>
+              {/* R76: Arrived badge mirrors the QC table (icon + label, never colour alone). */}
+              {arrival && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success-100 text-success-300 text-[13px] font-medium">
+                  <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
+                  Arrived
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {/* R76: mark arrival here too; once arrived the action flips to Edit
+                  arrival so a redirected lorry's dock/weight can be corrected. */}
+              <button
+                onClick={() => setArriveModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
+              >
+                <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
+                {arrival ? 'Edit arrival' : 'Mark arrived'}
+              </button>
+              <button
+                onClick={() => openEdit()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-10 bg-white text-neutral-100 text-[13px] font-medium hover:bg-neutral-5"
+              >
+                <Icon d={I.edit} className="w-3.5 h-3.5" />
+                Edit details
+              </button>
+            </div>
           </div>
           {actualWeightMissing && (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3 flex-wrap">
@@ -5739,6 +5772,12 @@
               {actualWeightMissing
                 ? <span className="inline-flex items-center gap-1.5 text-amber-700"><Icon d={I.warning} className="w-4 h-4" />Missing</span>
                 : fmtKg(actualWeightKg)}
+            </Field>
+            {/* R76: dock the load is going to, from the arrival record. */}
+            <Field label="Dock location">
+              {arrival
+                ? `Dock ${arrival.dock}`
+                : <span className="text-neutral-40">—</span>}
             </Field>
             <Field label="Load Number">
               {loadNumberMissing
@@ -6266,16 +6305,18 @@
   // R75: MARK LOAD AS ARRIVED - focused overlay opened from the QC table.
   // Captures the actual load weight and the dock the load is going to.
   // ============================================================================
-  function ArriveModal({ row, onCancel, onSave }) {
-    const [weight, setWeight] = useState('');
-    const [dock, setDock] = useState('');
+  function ArriveModal({ row, initial = null, onCancel, onSave }) {
+    // R76: initial lets the load details view reopen the overlay to edit an
+    // existing arrival (e.g. lorry redirected to another dock).
+    const [weight, setWeight] = useState(initial && initial.weight != null ? String(initial.weight) : '');
+    const [dock, setDock] = useState((initial && initial.dock) || '');
     const weightNum = parseInt(weight, 10);
     const canSave = weightNum > 0 && dock.trim().length > 0;
     return (
       <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
         <div className="bg-white rounded-xl shadow-xl w-full max-w-md flex flex-col" role="dialog" aria-modal="true" aria-label="Mark load as arrived" onClick={e => e.stopPropagation()}>
           <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-10">
-            <h3 className="text-base font-bold text-neutral-100">Mark load as arrived</h3>
+            <h3 className="text-base font-bold text-neutral-100">{initial ? 'Edit arrival' : 'Mark load as arrived'}</h3>
             <button onClick={onCancel} className="p-1.5 rounded hover:bg-neutral-5 text-neutral-60" aria-label="Close">
               <Icon d={I.close} className="w-4 h-4" />
             </button>
@@ -6424,6 +6465,11 @@
           totalBalesOverride={loadTotalBales[selectedRowIdx]}
           analysisSessions={loadAnalysisSessions[selectedRowIdx] || []}
           processedRecord={loadProcessed[selectedRowIdx]}
+          arrival={loadArrivals[selectedRowIdx]}
+          onSaveArrival={({ weight, dock }) => {
+            setLoadArrivals(prev => ({ ...prev, [selectedRowIdx]: { weight, dock } }));
+            setLoadActualWeights(prev => ({ ...prev, [selectedRowIdx]: weight }));
+          }}
           onBack={() => setSelectedRowIdx(null)}
           onStoreMaterial={() => setStoreMode(true)}
           onSetWeight={(w) => setLoadActualWeights(prev => ({ ...prev, [selectedRowIdx]: w }))}
