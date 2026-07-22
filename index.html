@@ -6859,7 +6859,7 @@
   // mutate this set). States mirror the Figma frame.
   const OP_ROWS = [
     { id: 1, loadBales: 26, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'todo', label: 'To do' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', false] },
-    { id: 2, loadBales: 20, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '10 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
+    { id: 2, loadBales: 20, guidedStore: true, supplier: 'WM Napanee', ref: '#450-test-store-flow', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '10 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
     { id: 3, loadBales: 20, supplier: 'GFL 124 Arro...', ref: '#4500289763-150', material: 'Clear PET Bales', warnRow: true, weightKg: 615, analysis: { kind: 'ok', label: '16 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'warn', label: '615 kg', caption: 'Seems low' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['edit', true] },
     { id: 4, loadBales: 24, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'todo', label: 'To do' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', false] },
     { id: 5, loadBales: 20, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '10 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
@@ -7452,7 +7452,12 @@
     grey:  'border-neutral-10 text-neutral-60'
   };
 
-  function OperatorStore({ row, onCancel, onDone }) {
+  function OperatorStore({ row, guided = false, onCancel, onDone }) {
+    // R92: guided experiment (load #450-test-store-flow) - the FO sees ONLY
+    // the storage recommendation. Skip opens the full warehouse; after the
+    // next autosave completes the warehouse hides again behind the next
+    // recommendation, keeping deviation deliberate and rare.
+    const [browseAll, setBrowseAll] = useState(!guided);
     // R85: save model rebuilt around mistake recovery.
     //   alloc   - uncommitted per-bay counts, each with a visible 5s countdown
     //             (timers). Any change resets the countdown; Undo clears it.
@@ -7533,7 +7538,12 @@
       const cur = OP_STORE_RECS[recIndexRef.current];
       if (cur && cur.bay === bayId) {
         setRecExitBay(bayId);
-        setTimeout(() => { setRecExitBay(null); setRecIndex(i => i + 1); }, 500);
+        setTimeout(() => { setRecExitBay(null); setRecIndex(i => i + 1); if (guided) setBrowseAll(false); }, 500);
+      } else if (guided) {
+        // R92: stored elsewhere after skipping - move to the next
+        // recommendation and close the warehouse browse view.
+        setRecIndex(i => i + 1);
+        setBrowseAll(false);
       }
     };
 
@@ -7657,7 +7667,56 @@
       );
     };
 
+    // R92: single bay card renderer - used by the zone list and by the
+    // guided single-recommendation view.
+    const renderBayCard = (bay) => {
+      const isRec = rec && rec.bay === bay.id;
+      const isNext = nextRec && nextRec.bay === bay.id;
+      return (
+                <div
+                  key={bay.id}
+                  ref={el => { bayRefs.current[bay.id] = el; if (isRec) recRef.current = el; }}
+                  className={'rounded-xl p-5 ' + (isRec ? 'border-2 border-safi-600 bg-safi-50 rec-enter' : 'bg-white border border-neutral-10') + (recExitBay === bay.id ? ' rec-exit' : '')}
+                >
+                  {/* R91: on the recommended card the bay name is the hero -
+                      big, bold, purple, top-left: it tells the FO where to go.
+                      The yield label is secondary, regular weight, top-right. */}
+                  {isRec ? (
+                    <div className="flex items-start justify-between gap-3 mb-1 flex-wrap">
+                      <h3 className="text-[24px] font-bold text-safi-700">Bay {bay.id}</h3>
+                      <span className="inline-flex items-center gap-1.5 text-[14px] text-safi-700 mt-1.5">
+                        <Icon d={I.star} className="w-4 h-4" />
+                        Best storage for yield optimisation
+                      </span>
+                    </div>
+                  ) : isNext ? (
+                    <div className="text-[13px] font-medium text-neutral-60 mb-2.5">Next recommendation</div>
+                  ) : null}
+                  <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
+                    <div className="flex items-center gap-2.5">
+                      {!isRec && <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>}
+                      <span className="text-[13px] text-neutral-60">{bay.bales} {bay.bales === 1 ? 'bale' : 'bales'}</span>
+                    </div>
+                    <SavePending bayId={bay.id} />
+                  </div>
+                  <Stepper bayId={bay.id} />
+                  {/* R92: Skip lives inside the recommendation - opens the
+                      rest of the warehouse for a deliberate deviation. */}
+                  {guided && !browseAll && isRec && (
+                    <button
+                      onClick={() => setBrowseAll(true)}
+                      className="mt-4 h-14 px-6 inline-flex items-center gap-2 rounded-lg border border-neutral-10 bg-white text-[15px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                    >
+                      <Icon d={I.arrowR} className="w-4 h-4" />
+                      Skip
+                    </button>
+                  )}
+                </div>
+      );
+    };
+
     const zone = OP_STORE_ZONES.find(z => z.id === activeTab);
+    const recBayObj = rec ? OP_STORE_ZONES.flatMap(z => z.bays).find(bb => bb.id === rec.bay) : null;
 
     return (
       <div className="max-w-[900px] mx-auto px-4 py-6 pb-32">
@@ -7734,6 +7793,14 @@
           </div>
         )}
 
+        {/* R92: guided mode shows only the recommendation card; Skip or an
+            exhausted queue reveals the full warehouse below. */}
+        {guided && !browseAll && rec ? (
+          <div className="space-y-3">
+            {recBayObj && renderBayCard(recBayObj)}
+          </div>
+        ) : (
+          <>
         {/* Zone tabs */}
         <div className="flex items-center gap-5 border-b border-neutral-10 mb-4 overflow-x-auto">
           <button
@@ -7807,41 +7874,10 @@
             </div>
           </div>
           <div className="space-y-3">
-            {(zone?.bays || []).map(bay => {
-              const isRec = rec && rec.bay === bay.id;
-              const isNext = nextRec && nextRec.bay === bay.id;
-              return (
-                <div
-                  key={bay.id}
-                  ref={el => { bayRefs.current[bay.id] = el; if (isRec) recRef.current = el; }}
-                  className={'rounded-xl p-5 ' + (isRec ? 'border-2 border-safi-600 bg-safi-50 rec-enter' : 'bg-white border border-neutral-10') + (recExitBay === bay.id ? ' rec-exit' : '')}
-                >
-                  {/* R91: on the recommended card the bay name is the hero -
-                      big, bold, purple, top-left: it tells the FO where to go.
-                      The yield label is secondary, regular weight, top-right. */}
-                  {isRec ? (
-                    <div className="flex items-start justify-between gap-3 mb-1 flex-wrap">
-                      <h3 className="text-[24px] font-bold text-safi-700">Bay {bay.id}</h3>
-                      <span className="inline-flex items-center gap-1.5 text-[14px] text-safi-700 mt-1.5">
-                        <Icon d={I.star} className="w-4 h-4" />
-                        Best storage for yield optimisation
-                      </span>
-                    </div>
-                  ) : isNext ? (
-                    <div className="text-[13px] font-medium text-neutral-60 mb-2.5">Next recommendation</div>
-                  ) : null}
-                  <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
-                    <div className="flex items-center gap-2.5">
-                      {!isRec && <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>}
-                      <span className="text-[13px] text-neutral-60">{bay.bales} {bay.bales === 1 ? 'bale' : 'bales'}</span>
-                    </div>
-                    <SavePending bayId={bay.id} />
-                  </div>
-                  <Stepper bayId={bay.id} />
-                </div>
-              );
-            })}
+            {(zone?.bays || []).map(bay => renderBayCard(bay))}
           </div>
+          </>
+        )}
           </>
         )}
 
@@ -8095,7 +8131,7 @@
           </div>
         </div>
         {isStore
-          ? <OperatorStore row={storeRow} onCancel={() => { setScreen('deliveries'); setStoreRow(null); }} onDone={finishStore} />
+          ? <OperatorStore row={storeRow} guided={!!storeRow.guidedStore} onCancel={() => { setScreen('deliveries'); setStoreRow(null); }} onDone={finishStore} />
           : (isDeliveries
             ? <OperatorDeliveries rows={rows} setRows={setRows} onStore={(r) => { setStoreRow(r); setScreen('store'); }} />
             : <OperatorPicking />)}
