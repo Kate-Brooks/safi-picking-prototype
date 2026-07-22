@@ -7672,25 +7672,11 @@
         </div>
         <div className="text-[13px] text-neutral-60 mb-4">{row.supplier} {row.ref} · {row.material}</div>
 
-        {/* R86: load storage progress - how much of THIS load is put away. */}
-        <div className="bg-white border border-neutral-10 rounded-xl px-4 py-3.5 mb-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-[16px] font-bold text-neutral-100">{total} of {loadTotal} bales stored</div>
-            {total >= loadTotal && (
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[13px] font-semibold" style={{ background: OP.okBg, color: OP.okFg }}>
-                <Icon d={I.check} className="w-4 h-4" />
-                Load fully stored
-              </span>
-            )}
-          </div>
-          <div className="mt-2 h-2 rounded-full bg-neutral-10 overflow-hidden">
-            <div className="h-full rounded-full" style={{ width: Math.min(100, Math.round(total / loadTotal * 100)) + '%', background: '#2FB554' }} />
-          </div>
-        </div>
-
-        {/* R85: storage history - hidden behind See history. */}
-        {history.length > 0 && (
-          <div className="mb-4">
+        {/* R90: running total only - operators add bales as they store, so the
+            system never knows the load's bale count upfront. History lives here. */}
+        <div className="bg-white border border-neutral-10 rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-[16px] font-bold text-neutral-100">{total} {total === 1 ? 'bale' : 'bales'} stored</div>
+          {history.length > 0 && (
             <button
               onClick={() => setHistOpen(o => !o)}
               aria-expanded={histOpen}
@@ -7700,6 +7686,12 @@
               {histOpen ? 'Hide history' : 'See history'}
               <span className="px-2 py-0.5 rounded-full bg-neutral-5 text-[12px] font-semibold text-neutral-80">{history.length}</span>
             </button>
+          )}
+        </div>
+
+        {/* R85/R90: storage history list - toggled from the total card above. */}
+        {history.length > 0 && (
+          <div className="mb-4 -mt-2">
             {histOpen && (
               <div className="mt-2 bg-white border border-neutral-10 rounded-xl divide-y divide-neutral-10">
                 {history.map(e => (
