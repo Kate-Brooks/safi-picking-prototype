@@ -6848,16 +6848,16 @@
   // R83: today's delivery rows (stateful - weight edits and searched loads
   // mutate this set). States mirror the Figma frame.
   const OP_ROWS = [
-    { id: 1,  supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'todo', label: 'To do' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', false] },
-    { id: 2,  supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '10 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
-    { id: 3,  supplier: 'GFL 124 Arro...', ref: '#4500289763-150', material: 'Clear PET Bales', warnRow: true, weightKg: 615, analysis: { kind: 'ok', label: '16 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'warn', label: '615 kg', caption: 'Seems low' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['edit', true] },
-    { id: 4,  supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'todo', label: 'To do' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', false] },
-    { id: 5,  supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '10 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
-    { id: 6,  supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'todo', label: 'To do' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', false] },
-    { id: 7,  supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', warnRow: true, analysis: { kind: 'warn', label: '4 photos', caption: 'Seems low' }, store: { kind: 'ok', label: '22 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', true] },
-    { id: 8,  supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '12 photos' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', true], wBtn: ['plus', false] },
-    { id: 9,  supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '8 photos' }, store: { kind: 'ok', label: '18 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
-    { id: 10, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '14 photos' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', true], wBtn: ['plus', false] }
+    { id: 1, loadBales: 26, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'todo', label: 'To do' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', false] },
+    { id: 2, loadBales: 20, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '10 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
+    { id: 3, loadBales: 20, supplier: 'GFL 124 Arro...', ref: '#4500289763-150', material: 'Clear PET Bales', warnRow: true, weightKg: 615, analysis: { kind: 'ok', label: '16 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'warn', label: '615 kg', caption: 'Seems low' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['edit', true] },
+    { id: 4, loadBales: 24, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'todo', label: 'To do' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', false] },
+    { id: 5, loadBales: 20, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '10 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
+    { id: 6, loadBales: 26, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'todo', label: 'To do' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', false] },
+    { id: 7, loadBales: 22, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', warnRow: true, analysis: { kind: 'warn', label: '4 photos', caption: 'Seems low' }, store: { kind: 'ok', label: '22 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', true] },
+    { id: 8, loadBales: 25, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '12 photos' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', true], wBtn: ['plus', false] },
+    { id: 9, loadBales: 18, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '8 photos' }, store: { kind: 'ok', label: '18 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
+    { id: 10, loadBales: 24, supplier: 'WM Napanee', ref: '#4500289763-150', material: 'Clear PET Bales', analysis: { kind: 'ok', label: '14 photos' }, store: { kind: 'todo', label: 'To do' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', false], sBtn: ['plus', true], wBtn: ['plus', false] }
   ];
 
   // R83: loads findable via Search loads. offset = days from today for the
@@ -7453,6 +7453,29 @@
     const [activeTab, setActiveTab] = useState('1');
     const [recIndex, setRecIndex] = useState(0);
     const [saveState, setSaveState] = useState('idle');
+    // R86: report-a-problem overlay.
+    const [problemOpen, setProblemOpen] = useState(false);
+    const [problemSent, setProblemSent] = useState(false);
+    useEffect(() => {
+      if (!problemSent) return;
+      const t = setTimeout(() => { setProblemOpen(false); setProblemSent(false); }, 2500);
+      return () => clearTimeout(t);
+    }, [problemSent]);
+    // R86: relative fullness - Safi has no bay-capacity entity, so fullness is
+    // shown relative to the fullest zone/bay. A glanceable bar, no numbers to
+    // decode; colour shifts green -> amber -> red as it fills.
+    const maxZoneBales = Math.max(...OP_STORE_ZONES.map(z => z.bales));
+    const maxBayBales = Math.max(...OP_STORE_ZONES.flatMap(z => z.bays.map(bb => bb.bales)));
+    const FillBar = ({ value, max, className = '' }) => {
+      const pct = Math.max(4, Math.min(100, Math.round(value / max * 100)));
+      const color = pct > 85 ? OP.warnFg : (pct > 60 ? OP.accentOrange : '#2FB554');
+      return (
+        <span className={'inline-block h-1.5 rounded-full bg-neutral-10 overflow-hidden ' + className} aria-hidden="true">
+          <span className="block h-full rounded-full" style={{ width: pct + '%', background: color }} />
+        </span>
+      );
+    };
+    const loadTotal = row.loadBales || 24;
     const recRef = useRef(null);
     const rec = OP_STORE_RECS[recIndex] || null;
     const nextRec = OP_STORE_RECS[recIndex + 1] || null;
@@ -7533,23 +7556,24 @@
 
     const committedTotal = history.reduce((a, e) => a + e.bales, 0);
     const total = committedTotal + Object.values(alloc).reduce((a, v) => a + v, 0);
-    const combined = {};
-    history.forEach(e => { combined[e.bayId] = (combined[e.bayId] || 0) + e.bales; });
-    Object.entries(alloc).forEach(([k, v]) => { combined[k] = (combined[k] || 0) + v; });
-    const pills = Object.entries(combined).map(([k, v]) =>
-      (k === '__buffer' ? 'Line 1 buffer' : 'Zone ' + k.split('-')[0] + ': Bay ' + k) + ' (' + v + ' ' + (v === 1 ? 'bale' : 'bales') + ')'
-    );
 
-    // Countdown chip + Undo - shown on any bay while its save is pending.
+    // R86: countdown with a draining progress bar - the save window is
+    // unmissable. Bar empties over 5s; Undo cancels; any change refills it.
     const SavePending = ({ bayId }) => timers[bayId] == null ? null : (
-      <span className="inline-flex items-center gap-2.5">
-        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[13px] font-semibold" style={{ background: OP.todoBg, color: OP.todoFg }}>
+      <span className="flex items-center gap-3 basis-full grow">
+        <span className="flex-1 h-2.5 rounded-full bg-neutral-10 overflow-hidden" aria-hidden="true">
+          <span
+            className="block h-full rounded-full"
+            style={{ width: (timers[bayId] / 5 * 100) + '%', background: OP.accentOrange, transition: 'width 1s linear' }}
+          />
+        </span>
+        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[13px] font-semibold shrink-0" style={{ background: OP.todoBg, color: OP.todoFg }}>
           <Icon d={I.clock} className="w-4 h-4" />
           Saving in {timers[bayId]}s
         </span>
         <button
           onClick={() => touch(bayId, 0)}
-          className="text-[14px] font-semibold text-safi-700 hover:underline focus:outline-none focus:ring-2 focus:ring-safi-600 rounded px-1"
+          className="h-11 px-4 shrink-0 rounded-lg border border-neutral-10 bg-white text-[14px] font-semibold text-safi-700 hover:bg-safi-50 focus:outline-none focus:ring-2 focus:ring-safi-600"
         >
           Undo
         </button>
@@ -7599,19 +7623,34 @@
         <button onClick={onCancel} className="text-[14px] text-neutral-60 hover:text-safi-600 mb-2 focus:outline-none focus:ring-2 focus:ring-safi-600 rounded">
           &lsaquo; Back to deliveries
         </button>
-        <h1 className="text-[26px] font-bold text-neutral-100 mb-1">Store load in warehouse</h1>
+        <div className="flex items-start justify-between gap-4 flex-wrap mb-1">
+          <h1 className="text-[26px] font-bold text-neutral-100">Store load in warehouse</h1>
+          {/* R86: report a problem - notifies the manager on shift. */}
+          <button
+            onClick={() => setProblemOpen(true)}
+            className="h-12 px-4 inline-flex items-center gap-2 rounded-lg border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+          >
+            <Icon d={I.warning} className="w-4 h-4" />
+            Report problem
+          </button>
+        </div>
         <div className="text-[13px] text-neutral-60 mb-4">{row.supplier} {row.ref} · {row.material}</div>
 
-        {total > 0 && (
-          <div className="rounded-lg px-4 py-4 mb-2 text-center" style={{ background: OP.okBg }}>
-            <div className="text-[17px] font-bold" style={{ color: OP.okFg }}>{total} {total === 1 ? 'bale' : 'bales'} stored</div>
-            <div className="flex items-center justify-center gap-2 mt-2 flex-wrap">
-              {pills.map(p => (
-                <span key={p} className="px-2.5 py-1 rounded-full bg-white/80 text-[13px] font-medium text-neutral-80">{p}</span>
-              ))}
-            </div>
+        {/* R86: load storage progress - how much of THIS load is put away. */}
+        <div className="bg-white border border-neutral-10 rounded-xl px-4 py-3.5 mb-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[16px] font-bold text-neutral-100">{total} of {loadTotal} bales stored</div>
+            {total >= loadTotal && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[13px] font-semibold" style={{ background: OP.okBg, color: OP.okFg }}>
+                <Icon d={I.check} className="w-4 h-4" />
+                Load fully stored
+              </span>
+            )}
           </div>
-        )}
+          <div className="mt-2 h-2 rounded-full bg-neutral-10 overflow-hidden">
+            <div className="h-full rounded-full" style={{ width: Math.min(100, Math.round(total / loadTotal * 100)) + '%', background: '#2FB554' }} />
+          </div>
+        </div>
 
         {/* R85: storage history - hidden behind See history. */}
         {history.length > 0 && (
@@ -7666,19 +7705,21 @@
         <div className="flex items-center gap-5 border-b border-neutral-10 mb-4 overflow-x-auto">
           <button
             onClick={() => setActiveTab('buffer')}
-            className={'flex items-center gap-2 pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === 'buffer' ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
+            aria-label="Buffer, 25 bales stored"
+            className={'flex flex-col items-start gap-1.5 pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === 'buffer' ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
           >
             Buffer
-            <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + OP_TONE_CHIP.green}>25 bales</span>
+            <FillBar value={25} max={maxZoneBales} className="w-14" />
           </button>
           {OP_STORE_ZONES.map(z => (
             <button
               key={z.id}
               onClick={() => setActiveTab(z.id)}
-              className={'flex items-center gap-2 pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === z.id ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
+              aria-label={'Zone ' + z.id + ', ' + z.bales + ' bales stored'}
+              className={'flex flex-col items-start gap-1.5 pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === z.id ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
             >
               Zone {z.id}
-              <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + (OP_TONE_CHIP[z.tone] || OP_TONE_CHIP.grey)}>{z.bales} / {z.loads}</span>
+              <FillBar value={z.bales} max={maxZoneBales} className="w-14" />
             </button>
           ))}
         </div>
@@ -7688,7 +7729,8 @@
             <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
               <div className="flex items-center gap-2.5">
                 <h3 className="text-[17px] font-bold text-neutral-100">Line 1 buffer</h3>
-                <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + OP_TONE_CHIP.green}>25 bales</span>
+                <FillBar value={25} max={maxBayBales} className="w-20" />
+                <span className="text-[13px] text-neutral-60">25 bales</span>
               </div>
               <SavePending bayId="__buffer" />
             </div>
@@ -7717,9 +7759,8 @@
                   <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
                     <div className="flex items-center gap-2.5">
                       <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>
-                      <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + (OP_TONE_CHIP[bay.tone] || OP_TONE_CHIP.grey)}>
-                        {bay.bales} {bay.bales === 1 ? 'bale' : 'bales'} / {bay.loads} {bay.loads === 1 ? 'load' : 'loads'}
-                      </span>
+                      <FillBar value={bay.bales} max={maxBayBales} className="w-20" />
+                      <span className="text-[13px] text-neutral-60">{bay.bales} {bay.bales === 1 ? 'bale' : 'bales'}</span>
                     </div>
                     <SavePending bayId={bay.id} />
                   </div>
@@ -7727,6 +7768,49 @@
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* R86: report a problem - three big options, one tap, manager notified. */}
+        {problemOpen && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => { setProblemOpen(false); setProblemSent(false); }}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6" role="dialog" aria-modal="true" aria-label="Report a problem" onClick={e => e.stopPropagation()}>
+              {problemSent ? (
+                <div className="text-center py-6">
+                  <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: OP.okBg }}>
+                    <Icon d={I.check} className="w-8 h-8" style={{ color: OP.okFg }} />
+                  </div>
+                  <div className="text-[20px] font-bold text-neutral-100 mb-1">Manager on shift notified</div>
+                  <div className="text-[14px] text-neutral-60 mb-6">Keep storing - they'll come to you.</div>
+                  <button
+                    onClick={() => { setProblemOpen(false); setProblemSent(false); }}
+                    className="h-14 px-8 rounded-lg border border-neutral-10 bg-white text-[16px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                  >
+                    Close
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-5">
+                    <h2 className="text-[22px] font-bold text-neutral-100">Report a problem</h2>
+                    <button onClick={() => setProblemOpen(false)} aria-label="Close" className="w-12 h-12 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                      <Icon d={I.close} className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    {['Bay is blocked', 'Bay is full', 'Zone is full'].map(opt => (
+                      <button
+                        key={opt}
+                        onClick={() => setProblemSent(true)}
+                        className="w-full h-16 rounded-lg border border-neutral-10 bg-white text-[17px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
 
