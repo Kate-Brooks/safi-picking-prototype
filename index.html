@@ -4699,6 +4699,9 @@
     share:    ['M18 8a3 3 0 100-6 3 3 0 000 6z', 'M6 15a3 3 0 100-6 3 3 0 000 6z', 'M18 22a3 3 0 100-6 3 3 0 000 6z', 'M8.6 13.5l6.8 4', 'M15.4 6.5l-6.8 4'],
     photo:    ['M3 5h18v14H3z', 'M3 17l5-5 4 4 3-3 6 6'],
     warning:  ['M10.3 3.9L2.5 17a2 2 0 001.7 3h15.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z', 'M12 9v4', 'M12 17h.01'],
+    // R78: operator iPad screens.
+    clock:    ['M12 22a10 10 0 100-20 10 10 0 000 20z', 'M12 7v5l3 2'],
+    camera:   ['M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z', 'M12 17a4 4 0 100-8 4 4 0 000 8z'],
     info:     ['M12 8h.01', 'M11 12h1v4h1', 'M12 22a10 10 0 100-20 10 10 0 000 20z'],
     help:     ['M12 22a10 10 0 100-20 10 10 0 000 20z', 'M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3', 'M12 17h.01'],
     ground:   ['M12 22s8-7 8-13a8 8 0 10-16 0c0 6 8 13 8 13z', 'M12 11a3 3 0 100-6 3 3 0 000 6z'],
@@ -4714,7 +4717,7 @@
   // ----------------------------------------------------------------------------
   // APP SHELL - top nav + sidebar
   // ----------------------------------------------------------------------------
-  function AppShell({ lang, setLang, pickerMode, setPickerMode, appPage = 'production', setAppPage = () => {}, children }) {
+  function AppShell({ lang, setLang, pickerMode, setPickerMode, appPage = 'production', setAppPage = () => {}, onOperator = null, children }) {
     // R46: navigation drawer styling refresh - active state now uses a lighter
     // purple-tinted background (bg-safi-50/100) with safi-700 text + icon, per
     // the Safi UI Kit drawer (Figma node 2637:7936) and the QC screenshot.
@@ -4802,6 +4805,16 @@
                   {lang === 'es' ? 'Por paca' : 'Bale-based'}
                 </button>
               </div>
+            )}
+            {/* R78: role switch - jump to the Operator iPad experience. */}
+            {typeof onOperator === 'function' && (
+              <button
+                onClick={onOperator}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 hover:bg-neutral-5"
+              >
+                <Icon d={I.truck} className="w-4 h-4" />
+                Operator
+              </button>
             )}
             <div className="relative">
               <Icon d={I.search} className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -6780,6 +6793,289 @@
     );
   }
 
+  // ============================================================================
+  // R78: OPERATOR ROLE EXPERIENCE (iPad, static)
+  //
+  // What operators see when they log into Safi. Two screens rebuilt from the
+  // App Figma file (BfjV0kBcDuI12j0rsvTz2e):
+  //   - Deliveries today (node 16155:25866) - action-based delivery list
+  //   - Picking list     (node 16164:11932) - Line 1 / Line 2 picker view
+  // Static per the brief - only the toolbar navigation works: the top-left
+  // button toggles between the two screens, Manager returns to the web app.
+  // Colours are lifted from the Figma dev-mode values.
+  // ============================================================================
+  const OP = {
+    todoBg: '#FFF4E5', todoFg: '#C4650B',
+    warnBg: '#FEEBEE', warnFg: '#F63E3E',
+    okBg:   '#EAF7ED', okFg:   '#1B5E20',
+    greyBtn: '#E9E9EB',
+    accentOrange: '#FF891C',
+    line1: { accent: '#0288D1', tint: '#E5F6FD', deep: '#014361' },
+    line2: { accent: '#2FB554', tint: '#EAF7ED', deep: '#1B5E20' }
+  };
+
+  // Status chip: To do (amber, clock) / done (green, check) / warning (red).
+  function OpChip({ kind, label }) {
+    const map = {
+      todo: { bg: OP.todoBg, fg: OP.todoFg, icon: I.clock },
+      ok:   { bg: OP.okBg,   fg: OP.okFg,   icon: I.check },
+      warn: { bg: OP.warnBg, fg: OP.warnFg, icon: I.warning }
+    };
+    const s = map[kind] || map.todo;
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[13px] font-semibold" style={{ background: s.bg, color: s.fg }}>
+        <Icon d={s.icon} className="w-4 h-4" />
+        {label}
+      </span>
+    );
+  }
+
+  // Oversized circular task button - 56px for gloved hands (Fitts's Law).
+  function OpCircleBtn({ icon, primary = false }) {
+    return (
+      <button
+        className={'w-14 h-14 rounded-full flex items-center justify-center ' + (primary ? 'bg-safi-600 text-white hover:bg-safi-700' : 'text-neutral-100 hover:opacity-80')}
+        style={primary ? {} : { background: OP.greyBtn }}
+      >
+        <Icon d={icon} className="w-6 h-6" />
+      </button>
+    );
+  }
+
+  function OperatorDeliveries() {
+    // 10 loads, states mirroring the Figma frame: chips read Analyse 2 /
+    // Store 2 / Weight 6 / Warning 2.
+    const rows = [
+      { supplier: 'WM Napanee',     analysis: { kind: 'todo', label: 'To do' },     store: { kind: 'todo', label: 'To do' },    weight: { kind: 'todo', label: 'To do' },   aBtn: ['camera', true],  sBtn: ['plus', false], wBtn: ['plus', false] },
+      { supplier: 'WM Napanee',     analysis: { kind: 'ok', label: '10 photos' },   store: { kind: 'ok', label: '20 bales' },   weight: { kind: 'todo', label: 'To do' },   aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
+      { supplier: 'GFL 124 Arro...', warnRow: true, analysis: { kind: 'ok', label: '16 photos' }, store: { kind: 'ok', label: '20 bales' }, weight: { kind: 'warn', label: '615 kg', caption: 'Seems low' }, aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['edit', true] },
+      { supplier: 'WM Napanee',     analysis: { kind: 'todo', label: 'To do' },     store: { kind: 'todo', label: 'To do' },    weight: { kind: 'todo', label: 'To do' },   aBtn: ['camera', true],  sBtn: ['plus', false], wBtn: ['plus', false] },
+      { supplier: 'WM Napanee',     analysis: { kind: 'ok', label: '10 photos' },   store: { kind: 'ok', label: '20 bales' },   weight: { kind: 'todo', label: 'To do' },   aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
+      { supplier: 'WM Napanee',     analysis: { kind: 'todo', label: 'To do' },     store: { kind: 'todo', label: 'To do' },    weight: { kind: 'todo', label: 'To do' },   aBtn: ['camera', true],  sBtn: ['plus', false], wBtn: ['plus', false] },
+      { supplier: 'WM Napanee',     warnRow: true, analysis: { kind: 'warn', label: '4 photos', caption: 'Seems low' }, store: { kind: 'ok', label: '22 bales' }, weight: { kind: 'todo', label: 'To do' }, aBtn: ['camera', true], sBtn: ['plus', false], wBtn: ['plus', true] },
+      { supplier: 'WM Napanee',     analysis: { kind: 'ok', label: '12 photos' },   store: { kind: 'todo', label: 'To do' },    weight: { kind: 'todo', label: 'To do' },   aBtn: ['camera', false], sBtn: ['plus', true],  wBtn: ['plus', false] },
+      { supplier: 'WM Napanee',     analysis: { kind: 'ok', label: '8 photos' },    store: { kind: 'ok', label: '18 bales' },   weight: { kind: 'todo', label: 'To do' },   aBtn: ['camera', false], sBtn: ['plus', false], wBtn: ['plus', true] },
+      { supplier: 'WM Napanee',     analysis: { kind: 'ok', label: '14 photos' },   store: { kind: 'todo', label: 'To do' },    weight: { kind: 'todo', label: 'To do' },   aBtn: ['camera', false], sBtn: ['plus', true],  wBtn: ['plus', false] }
+    ];
+    const iconOf = (name) => name === 'camera' ? I.camera : (name === 'edit' ? I.edit : I.plus);
+    const FilterChip = ({ icon, label, count, active = false, warn = false }) => (
+      <button className={'inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-[14px] font-semibold border ' + (active ? 'bg-safi-600 border-safi-600 text-white' : 'bg-white border-neutral-10 ' + (warn ? '' : 'text-neutral-100'))} style={warn && !active ? { color: OP.warnFg } : {}}>
+        {icon && <Icon d={icon} className="w-4 h-4" />}
+        {label}
+        <span className={'px-2 py-0.5 rounded-full text-[13px] font-semibold ' + (active ? 'bg-safi-800 text-white' : '')} style={active ? {} : { background: warn ? OP.warnBg : OP.todoBg, color: warn ? OP.warnFg : OP.todoFg }}>
+          {count}
+        </span>
+      </button>
+    );
+    const TaskCell = ({ state, btn }) => (
+      <div className="flex flex-col items-start gap-2">
+        <OpChip kind={state.kind} label={state.label} />
+        {state.caption && <div className="text-[13px] font-medium -mt-0.5" style={{ color: OP.warnFg }}>{state.caption}</div>}
+        <OpCircleBtn icon={iconOf(btn[0])} primary={btn[1]} />
+      </div>
+    );
+    return (
+      <div className="max-w-[900px] mx-auto px-4 py-6">
+        <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+          <div>
+            <h1 className="text-[26px] font-bold text-neutral-100">Deliveries today</h1>
+            <div className="text-[13px] text-neutral-60 mt-0.5">Day shift, 1 Jul 2026, 7:00 - 19:00</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="inline-flex items-center gap-2 px-4 py-3 rounded-lg border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5">
+              <Icon d={I.search} className="w-4 h-4" />
+              Search all loads
+            </button>
+            <button className="inline-flex items-center gap-2 px-4 py-3 rounded-lg border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5">
+              <Icon d={I.plus} className="w-4 h-4" />
+              Create load
+            </button>
+          </div>
+        </div>
+        <div className="text-[13px] text-neutral-60 mb-2.5">Filter loads by tasks to-do</div>
+        <div className="flex items-center gap-2.5 mb-4 flex-wrap">
+          <FilterChip label="All loads" count="10" active />
+          <FilterChip icon={I.camera} label="Analyse" count="2" />
+          <FilterChip icon={I.box} label="Store" count="2" />
+          <FilterChip icon={I.claim} label="Weight" count="6" />
+          <FilterChip icon={I.warning} label="Warning" count="2" warn />
+        </div>
+        <div className="bg-white border border-neutral-10 rounded-lg overflow-hidden">
+          <div className="grid grid-cols-[1.35fr_1fr_1fr_1fr] gap-2 px-4 py-3 bg-[#F9F9F9] border-b border-neutral-10 text-[14px] font-medium text-neutral-100">
+            <div className="inline-flex items-center gap-1.5">Load details <Icon d={I.errorCircle} className="w-4 h-4 text-neutral-60" /></div>
+            <div>Analysis</div>
+            <div>Store</div>
+            <div>Weight</div>
+          </div>
+          {rows.map((r, i) => (
+            <div
+              key={i}
+              className="grid grid-cols-[1.35fr_1fr_1fr_1fr] gap-2 px-4 py-4 border-b border-neutral-10 last:border-b-0"
+              style={{ boxShadow: `inset 4px 0 0 ${r.warnRow ? OP.warnFg : OP.accentOrange}` }}
+            >
+              <div className="pt-1">
+                <button className="inline-flex items-center gap-1 text-[15px] font-semibold text-safi-600 hover:underline">
+                  {r.supplier}
+                  <Icon d={I.chevronR} className="w-4 h-4" />
+                </button>
+                <div className="text-[13px] text-neutral-100 mt-1.5">#4500289763-150</div>
+                <div className="text-[13px] text-neutral-100 mt-1">Clear PET Bales</div>
+              </div>
+              <TaskCell state={r.analysis} btn={r.aBtn} />
+              <TaskCell state={r.store} btn={r.sBtn} />
+              <TaskCell state={r.weight} btn={r.wBtn} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function OperatorPicking() {
+    const LineCard = ({ name, scheme, buffer, rec, recs, perf }) => (
+      <div className="bg-white border border-neutral-10 rounded-xl p-5 flex-1 min-w-[320px]">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-[22px] font-bold text-neutral-100">{name}</h2>
+          <button className="w-11 h-11 rounded-lg border border-neutral-10 bg-white flex items-center justify-center hover:bg-neutral-5" aria-label={`Watch ${name}`}>
+            <Icon d={I.eye} className="w-5 h-5 text-neutral-100" />
+          </button>
+        </div>
+        {/* Buffer banner */}
+        <div className="flex items-center justify-between gap-3 rounded-lg px-4 py-3.5 mb-5" style={{ background: scheme.tint, boxShadow: `inset 4px 0 0 ${scheme.accent}` }}>
+          <div className="flex items-center gap-2.5">
+            <span className="text-[16px] font-bold text-neutral-100">Buffer</span>
+            <span className="px-2.5 py-1 rounded-full bg-white text-[13px] font-semibold" style={{ color: scheme.deep }}>{buffer} bales</span>
+          </div>
+          <button className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-white text-[14px] font-semibold hover:opacity-90" style={{ background: scheme.accent }}>
+            Process
+            <Icon d={I.arrowR} className="w-4 h-4" />
+          </button>
+        </div>
+        {/* Picking recommendation */}
+        <div className="text-[16px] text-neutral-60 mb-2.5">Picking recommendation</div>
+        <div className="border border-neutral-10 rounded-lg p-4 mb-5" style={{ boxShadow: `inset 4px 0 0 ${scheme.accent}` }}>
+          <div className="text-center text-[22px] font-bold text-neutral-100 mb-4">{rec}</div>
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <button className="w-14 h-14 rounded-lg border border-neutral-10 bg-white text-[22px] font-medium text-neutral-100 hover:bg-neutral-5">-</button>
+            <div className="w-14 h-14 rounded-lg border border-neutral-10 bg-white text-[18px] font-semibold text-neutral-100 flex items-center justify-center">3</div>
+            <button className="w-14 h-14 rounded-lg border border-neutral-10 bg-white text-[22px] font-medium text-neutral-100 hover:bg-neutral-5">+</button>
+          </div>
+          <button className="w-full inline-flex items-center justify-center gap-2 px-4 py-3.5 rounded-lg text-white text-[15px] font-semibold mb-3 hover:opacity-90" style={{ background: scheme.accent }}>
+            Move 3 bales to Buffer
+            <Icon d={I.arrowR} className="w-4 h-4" />
+          </button>
+          <div className="grid grid-cols-2 gap-3">
+            <button className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-neutral-10 bg-white text-[14px] font-semibold text-neutral-100 hover:bg-neutral-5">
+              <Icon d={I.arrowR} className="w-4 h-4" />
+              Skip
+            </button>
+            <button className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-neutral-10 bg-white text-[14px] font-semibold text-neutral-100 hover:bg-neutral-5">
+              <Icon d={I.warning} className="w-4 h-4" />
+              Problem
+            </button>
+          </div>
+        </div>
+        {/* More recommendations */}
+        <div className="text-[16px] text-neutral-60 mb-2.5">More recommendations</div>
+        <div className="space-y-2.5 mb-5">
+          {recs.map((label, i) => (
+            <div key={i} className="border border-neutral-10 rounded-lg px-4 py-3.5 text-[14px] font-medium text-neutral-100" style={{ boxShadow: `inset 4px 0 0 ${scheme.accent}` }}>
+              {label}
+            </div>
+          ))}
+        </div>
+        {/* Performance */}
+        <div className="text-[16px] text-neutral-60 mb-2.5">Performance</div>
+        <div className="border border-neutral-10 rounded-lg p-3">
+          <div className="grid grid-cols-3 gap-2 mb-2">
+            {perf.top.map(([label, value], i) => (
+              <div key={i} className="rounded bg-[#F9F9F9] px-3 py-2.5">
+                <div className="text-[12px] text-neutral-60">{label}</div>
+                <div className="text-[16px] font-bold text-neutral-100">{value}</div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {perf.bottom.map(([label, value, target], i) => (
+              <div key={i} className="rounded bg-[#F9F9F9] px-3 py-2.5">
+                <div className="text-[12px] text-neutral-60">{label}</div>
+                <div className="text-[16px] font-bold text-neutral-100">
+                  {value} <span className="text-[12px] font-medium text-safi-600">{target}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="text-right text-[12px] text-neutral-60 mt-2">Updated 12 mins ago</div>
+        </div>
+      </div>
+    );
+    return (
+      <div className="max-w-[900px] mx-auto px-4 py-6">
+        <div className="mb-4">
+          <h1 className="text-[26px] font-bold text-neutral-100">Picking list</h1>
+          <div className="text-[13px] text-neutral-60 mt-0.5">Day shift: 1 Jul 2026 - 7:00 - 19:00</div>
+        </div>
+        <div className="flex gap-4 items-start flex-wrap">
+          <LineCard
+            name="Line 1"
+            scheme={OP.line1}
+            buffer={6}
+            rec="Zone B · Bay 2"
+            recs={['Zone B · Bay 6', 'Zone B · Bay 1', 'Zone B · Bay 3']}
+            perf={{
+              top: [['Bales', '13'], ['Weight', '6,547 kg'], ['OEE/hours', '140%']],
+              bottom: [['Thermoforms/hr', '18.9%', 'target < 20%'], ['Contaminants/hr', '1.6%', 'target < 2%']]
+            }}
+          />
+          <LineCard
+            name="Line 2"
+            scheme={OP.line2}
+            buffer={20}
+            rec="Zone A · Bay 7"
+            recs={['Zone A · Bay 7', 'Zone A · Bay 6', 'Zone A · Bay 2']}
+            perf={{
+              top: [['Bales', '20'], ['Weight', '8,747 kg'], ['OEE/hours', '77%']],
+              bottom: [['Thermoforms/hr', '19.1%', 'target < 20%'], ['Contaminants/hr', '2.3%', 'target < 2%']]
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  function OperatorView({ onManager }) {
+    const [screen, setScreen] = useState('deliveries');
+    const isDeliveries = screen === 'deliveries';
+    return (
+      <div className="min-h-screen bg-[#F9F9F9]">
+        {/* iPad toolbar: nav toggle left, brand centre, role + account right */}
+        <div className="h-20 bg-white border-b border-neutral-10 flex items-center justify-between px-5 sticky top-0 z-30">
+          <button
+            onClick={() => setScreen(isDeliveries ? 'picking' : 'deliveries')}
+            className="inline-flex items-center gap-2.5 px-4 py-3 rounded-lg border border-neutral-10 bg-white text-[15px] font-medium text-neutral-100 hover:bg-neutral-5"
+          >
+            <Icon d={isDeliveries ? I.factory : I.list} className="w-5 h-5" />
+            {isDeliveries ? 'Picking list' : 'Deliveries today'}
+          </button>
+          <div className="absolute left-1/2 -translate-x-1/2 text-[26px] font-bold text-neutral-100 select-none" aria-label="Safi">
+            safi
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onManager}
+              className="inline-flex items-center gap-2 px-4 py-3 rounded-lg border border-neutral-10 bg-white text-[15px] font-medium text-neutral-100 hover:bg-neutral-5"
+            >
+              <Icon d={I.user} className="w-5 h-5" />
+              Manager
+            </button>
+            <button aria-label="Account" className="p-2 rounded-full hover:bg-neutral-5"><Icon d={I.user} className="w-6 h-6 text-neutral-100" /></button>
+          </div>
+        </div>
+        {isDeliveries ? <OperatorDeliveries /> : <OperatorPicking />}
+      </div>
+    );
+  }
+
   // ----------------------------------------------------------------------------
   // PAGE: PRODUCTION MANAGEMENT (root of the prototype)
   // ----------------------------------------------------------------------------
@@ -6789,6 +7085,10 @@
     // dashboard; 'quality-control' shows the new QC table. The nav drawer
     // toggles between them.
     const [appPage, setAppPage] = useState('production');
+    // R78: role switch. 'manager' = the existing web prototype, 'operator' =
+    // the static iPad experience (Deliveries today / Picking list).
+    // (named viewRole - `role` already exists as the legacy SL persona const.)
+    const [viewRole, setViewRole] = useState('manager');
     // EN / ES language toggle (replaces the old role switcher)
     const [lang, setLang] = useState('en');
     // The "role" concept is gone - the SL is always the persona. Picker tab can still be visited.
@@ -6964,13 +7264,17 @@
     );
     const hasAnyList = pickingLists.length > 0;
 
+    // R78: Operator role - full-screen iPad experience, replaces the web shell.
+    if (viewRole === 'operator') {
+      return <OperatorView onManager={() => setViewRole('manager')} />;
+    }
     // R46: Quality Control route - short-circuit out of the production page.
     // R49: pass yard + yardOps so the Store Material flow can write to the
     // production warehouse.
     if (appPage === 'quality-control') {
       return (
         <LangContext.Provider value={lang}>
-          <AppShell lang={lang} setLang={setLang} appPage={appPage} setAppPage={setAppPage}>
+          <AppShell lang={lang} setLang={setLang} appPage={appPage} setAppPage={setAppPage} onOperator={() => setViewRole('operator')}>
             <QualityControlPage
               yard={yard} yardOps={yardOps}
               buffer={buffer} setBuffer={setBuffer}
@@ -6982,7 +7286,7 @@
     }
     return (
       <LangContext.Provider value={lang}>
-      <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode} appPage={appPage} setAppPage={setAppPage}>
+      <AppShell lang={lang} setLang={setLang} pickerMode={pickerMode} setPickerMode={setPickerMode} appPage={appPage} setAppPage={setAppPage} onOperator={() => setViewRole('operator')}>
         <div className="px-8 py-6">
           {/* Page heading swaps when SL enters Create picking list mode */}
           {slMode === 'create' && tab === 'pw-layout' ? (
