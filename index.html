@@ -7490,6 +7490,17 @@
     };
     const loadTotal = row.loadBales || 24;
     const recRef = useRef(null);
+    // R89: refs per bay card so the skyline strip can jump to a bay.
+    const bayRefs = useRef({});
+    const jumpToBay = (bayId) => {
+      const el = bayRefs.current[bayId];
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.remove('flash-highlight');
+      void el.offsetWidth;
+      el.classList.add('flash-highlight');
+      setTimeout(() => el.classList.remove('flash-highlight'), 1700);
+    };
     // R87: bay whose starred card is animating away after being followed.
     const [recExitBay, setRecExitBay] = useState(null);
     const recIndexRef = useRef(recIndex);
@@ -7731,20 +7742,18 @@
           <button
             onClick={() => setActiveTab('buffer')}
             aria-label="Buffer, 25 bales stored"
-            className={'flex flex-col items-start gap-1.5 pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === 'buffer' ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
+            className={'pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === 'buffer' ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
           >
             Buffer
-            <FillBar value={25} max={maxZoneBales} className="w-14" />
           </button>
           {OP_STORE_ZONES.map(z => (
             <button
               key={z.id}
               onClick={() => setActiveTab(z.id)}
               aria-label={'Zone ' + z.id + ', ' + z.bales + ' bales stored'}
-              className={'flex flex-col items-start gap-1.5 pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === z.id ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
+              className={'pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === z.id ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
             >
               Zone {z.id}
-              <FillBar value={z.bales} max={maxZoneBales} className="w-14" />
             </button>
           ))}
         </div>
@@ -7754,7 +7763,6 @@
             <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
               <div className="flex items-center gap-2.5">
                 <h3 className="text-[17px] font-bold text-neutral-100">Line 1 buffer</h3>
-                <FillBar value={25} max={maxBayBales} className="w-20" />
                 <span className="text-[13px] text-neutral-60">25 bales</span>
               </div>
               <SavePending bayId="__buffer" />
@@ -7762,6 +7770,42 @@
             <Stepper bayId="__buffer" />
           </div>
         ) : (
+          <>
+          {/* R89: zone skyline - one column per bay, height = bales (relative
+              to the fullest bay in the warehouse). Tap a column to jump to
+              that bay. Mirrors the manager warehouse visualisation, minus the
+              quality colours operators don't need. */}
+          <div className="bg-white border border-neutral-10 rounded-xl px-4 pt-4 pb-2 mb-3">
+            <div className="flex items-end gap-1.5 h-16">
+              {(zone?.bays || []).map(bay => {
+                const isRecCol = rec && rec.bay === bay.id;
+                const h = Math.max(6, Math.round(bay.bales / maxBayBales * 56));
+                return (
+                  <button
+                    key={bay.id}
+                    onClick={() => jumpToBay(bay.id)}
+                    aria-label={'Bay ' + bay.id + ', ' + bay.bales + ' bales. Jump to this bay.'}
+                    className="flex-1 h-full flex items-end focus:outline-none focus:ring-2 focus:ring-safi-600 rounded"
+                  >
+                    <span
+                      className={'w-full rounded-t ' + (isRecCol ? 'bg-safi-600' : 'bg-safi-200 hover:bg-safi-300')}
+                      style={{ height: h + 'px' }}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex gap-1.5 mt-1" aria-hidden="true">
+              {(zone?.bays || []).map(bay => {
+                const isRecCol = rec && rec.bay === bay.id;
+                return (
+                  <span key={bay.id} className={'flex-1 text-center text-[12px] ' + (isRecCol ? 'text-safi-700 font-semibold' : 'text-neutral-60')}>
+                    {bay.id}{isRecCol ? ' \u2605' : ''}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
           <div className="space-y-3">
             {(zone?.bays || []).map(bay => {
               const isRec = rec && rec.bay === bay.id;
@@ -7769,7 +7813,7 @@
               return (
                 <div
                   key={bay.id}
-                  ref={isRec ? recRef : null}
+                  ref={el => { bayRefs.current[bay.id] = el; if (isRec) recRef.current = el; }}
                   className={'rounded-xl p-5 ' + (isRec ? 'border-2 border-safi-600 bg-safi-50 rec-enter' : 'bg-white border border-neutral-10') + (recExitBay === bay.id ? ' rec-exit' : '')}
                 >
                   {isRec && (
@@ -7784,7 +7828,6 @@
                   <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
                     <div className="flex items-center gap-2.5">
                       <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>
-                      <FillBar value={bay.bales} max={maxBayBales} className="w-20" />
                       <span className="text-[13px] text-neutral-60">{bay.bales} {bay.bales === 1 ? 'bale' : 'bales'}</span>
                     </div>
                     <SavePending bayId={bay.id} />
@@ -7794,6 +7837,7 @@
               );
             })}
           </div>
+          </>
         )}
 
         {/* R88: report a problem - pick problem, pick place, manager notified. */}
