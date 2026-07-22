@@ -7409,38 +7409,43 @@
   // recommendation reveals the next, and the UI scrolls to it automatically.
   // ============================================================================
   const OP_STORE_ZONES = [
-    { id: '1', bales: 463, loads: 32, tone: 'amber', bays: [
-      { id: '1-D', bales: 1,  loads: 1, tone: 'green' },
-      { id: '1-E', bales: 20, loads: 1, tone: 'green' },
-      { id: '1-F', bales: 6,  loads: 1, tone: 'green' },
-      { id: '1-G', bales: 60, loads: 2, tone: 'amber' },
-      { id: '1-H', bales: 34, loads: 2, tone: 'green' }
+    { id: 'A', dot: '#E5484D', bales: 463, loads: 32, bays: [
+      { id: 'A-D', bales: 1,  loads: 1 },
+      { id: 'A-E', bales: 20, loads: 1 },
+      { id: 'A-F', bales: 6,  loads: 1 },
+      { id: 'A-G', bales: 60, loads: 2 },
+      { id: 'A-H', bales: 34, loads: 2 }
     ] },
-    { id: '2', bales: 295, loads: 18, tone: 'grey', bays: [
-      { id: '2-A', bales: 42, loads: 3, tone: 'green' },
-      { id: '2-B', bales: 88, loads: 6, tone: 'amber' },
-      { id: '2-C', bales: 12, loads: 1, tone: 'green' },
-      { id: '2-D', bales: 51, loads: 4, tone: 'green' }
+    { id: 'B', dot: '#F5C935', bales: 295, loads: 18, bays: [
+      { id: 'B-A', bales: 42, loads: 3 },
+      { id: 'B-B', bales: 88, loads: 6 },
+      { id: 'B-C', bales: 12, loads: 1 },
+      { id: 'B-D', bales: 51, loads: 4 }
     ] },
-    { id: '3', bales: 110, loads: 17, tone: 'green', bays: [
-      { id: '3-A', bales: 16, loads: 2, tone: 'green' },
-      { id: '3-B', bales: 4,  loads: 1, tone: 'green' },
-      { id: '3-C', bales: 45, loads: 6, tone: 'green' },
-      { id: '3-D', bales: 45, loads: 8, tone: 'amber' }
+    { id: 'C', dot: '#3E63DD', bales: 110, loads: 17, bays: [
+      { id: 'C-A', bales: 16, loads: 2 },
+      { id: 'C-B', bales: 4,  loads: 1 },
+      { id: 'C-C', bales: 45, loads: 6 },
+      { id: 'C-D', bales: 45, loads: 8 }
     ] },
-    { id: '4', bales: 369, loads: 25, tone: 'amber', bays: [
-      { id: '4-A', bales: 120, loads: 8, tone: 'amber' },
-      { id: '4-B', bales: 96,  loads: 7, tone: 'amber' },
-      { id: '4-C', bales: 82,  loads: 5, tone: 'green' },
-      { id: '4-D', bales: 71,  loads: 5, tone: 'green' }
+    { id: 'IRS', bales: 369, loads: 25, bays: [
+      { id: 'IRS-A', bales: 120, loads: 8 },
+      { id: 'IRS-B', bales: 96,  loads: 7 },
+      { id: 'IRS-C', bales: 82,  loads: 5 },
+      { id: 'IRS-D', bales: 71,  loads: 5 }
     ] }
   ];
   // Quality-driven recommendation queue (zone logic hidden from operators).
   const OP_STORE_RECS = [
-    { zone: '1', bay: '1-E' },
-    { zone: '3', bay: '3-B' },
-    { zone: '2', bay: '2-C' }
+    { zone: 'A', bay: 'A-E' },
+    { zone: 'C', bay: 'C-B' },
+    { zone: 'B', bay: 'B-C' }
   ];
+  // R91: zone display helpers - BMP's lettered zones with colour dots.
+  const opZoneLabel = (id) => id === 'IRS' ? 'IRS Zone' : 'Zone ' + id;
+  const OpZoneDot = ({ zone }) => zone.dot
+    ? <span className="inline-block w-3.5 h-3.5 rounded-full shrink-0" style={{ background: zone.dot }} aria-hidden="true" />
+    : null;
   const OP_TONE_CHIP = {
     green: 'border-success-200 text-success-300',
     amber: 'border-[#FF891C] text-[#C4650B]',
@@ -7460,7 +7465,7 @@
     const [histOpen, setHistOpen] = useState(false);
     const [moveEntry, setMoveEntry] = useState(null); // history entry being moved
     const [moveDest, setMoveDest] = useState(null);   // destination pending confirm
-    const [activeTab, setActiveTab] = useState('1');
+    const [activeTab, setActiveTab] = useState('A');
     const [recIndex, setRecIndex] = useState(0);
     const [saveState, setSaveState] = useState('idle');
     // R88: report-a-problem - operator picks the problem, then the exact
@@ -7742,10 +7747,13 @@
             <button
               key={z.id}
               onClick={() => setActiveTab(z.id)}
-              aria-label={'Zone ' + z.id + ', ' + z.bales + ' bales stored'}
+              aria-label={opZoneLabel(z.id) + ', ' + z.bales + ' bales stored'}
               className={'pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === z.id ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
             >
-              Zone {z.id}
+              <span className="inline-flex items-center gap-1.5">
+                {opZoneLabel(z.id)}
+                <OpZoneDot zone={z} />
+              </span>
             </button>
           ))}
         </div>
@@ -7808,18 +7816,23 @@
                   ref={el => { bayRefs.current[bay.id] = el; if (isRec) recRef.current = el; }}
                   className={'rounded-xl p-5 ' + (isRec ? 'border-2 border-safi-600 bg-safi-50 rec-enter' : 'bg-white border border-neutral-10') + (recExitBay === bay.id ? ' rec-exit' : '')}
                 >
-                  {isRec && (
-                    <div className="flex items-center gap-1.5 text-[14px] font-semibold text-safi-700 mb-2.5">
-                      <Icon d={I.star} className="w-4 h-4" />
-                      Best storage for yield optimisation
+                  {/* R91: on the recommended card the bay name is the hero -
+                      big, bold, purple, top-left: it tells the FO where to go.
+                      The yield label is secondary, regular weight, top-right. */}
+                  {isRec ? (
+                    <div className="flex items-start justify-between gap-3 mb-1 flex-wrap">
+                      <h3 className="text-[24px] font-bold text-safi-700">Bay {bay.id}</h3>
+                      <span className="inline-flex items-center gap-1.5 text-[14px] text-safi-700 mt-1.5">
+                        <Icon d={I.star} className="w-4 h-4" />
+                        Best storage for yield optimisation
+                      </span>
                     </div>
-                  )}
-                  {isNext && (
+                  ) : isNext ? (
                     <div className="text-[13px] font-medium text-neutral-60 mb-2.5">Next recommendation</div>
-                  )}
+                  ) : null}
                   <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
                     <div className="flex items-center gap-2.5">
-                      <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>
+                      {!isRec && <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>}
                       <span className="text-[13px] text-neutral-60">{bay.bales} {bay.bales === 1 ? 'bale' : 'bales'}</span>
                     </div>
                     <SavePending bayId={bay.id} />
@@ -7870,10 +7883,13 @@
                       {OP_STORE_ZONES.map(z => (
                         <button
                           key={z.id}
-                          onClick={() => setProblemTarget('Zone ' + z.id)}
+                          onClick={() => setProblemTarget(opZoneLabel(z.id))}
                           className="h-16 rounded-lg border border-neutral-10 bg-white text-[17px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
                         >
-                          Zone {z.id}
+                          <span className="inline-flex items-center gap-2">
+                            {opZoneLabel(z.id)}
+                            <OpZoneDot zone={z} />
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -7881,7 +7897,7 @@
                     <div className="space-y-3 max-h-[50vh] overflow-y-auto">
                       {OP_STORE_ZONES.map(z => (
                         <div key={z.id}>
-                          <div className="text-[13px] font-medium text-neutral-60 mb-1.5">Zone {z.id}</div>
+                          <div className="text-[13px] font-medium text-neutral-60 mb-1.5 flex items-center gap-1.5">{opZoneLabel(z.id)} <OpZoneDot zone={z} /></div>
                           <div className="flex gap-2 flex-wrap">
                             {z.bays.map(bay => (
                               <button
@@ -7973,7 +7989,7 @@
                     )}
                     {OP_STORE_ZONES.map(z => (
                       <div key={z.id}>
-                        <div className="text-[13px] font-medium text-neutral-60 mb-1.5">Zone {z.id}</div>
+                        <div className="text-[13px] font-medium text-neutral-60 mb-1.5 flex items-center gap-1.5">{opZoneLabel(z.id)} <OpZoneDot zone={z} /></div>
                         <div className="flex gap-2 flex-wrap">
                           {z.bays.filter(bay => bay.id !== moveEntry.bayId).map(bay => (
                             <button
