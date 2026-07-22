@@ -63,6 +63,16 @@
     /* Flash highlight used when jumping to a load row via the picking-list card link */
     @keyframes flashHighlight { 0% { background-color: #E8E3FF; } 100% { background-color: transparent; } }
     .flash-highlight { animation: flashHighlight 1.6s ease-out; }
+    /* R87: storage recommendation hand-off - followed card slides away,
+       the next one slides in with a purple pulse. */
+    @keyframes recExit { to { opacity: 0; transform: translateX(-64px) scale(0.97); } }
+    .rec-exit { animation: recExit 0.45s ease forwards; }
+    @keyframes recEnter {
+      0%   { opacity: 0; transform: translateY(18px); box-shadow: 0 0 0 0 rgba(99, 71, 255, 0.35); }
+      60%  { opacity: 1; transform: none; box-shadow: 0 0 0 12px rgba(99, 71, 255, 0.12); }
+      100% { opacity: 1; transform: none; box-shadow: 0 0 0 0 rgba(99, 71, 255, 0); }
+    }
+    .rec-enter { animation: recEnter 0.9s cubic-bezier(0.2, 0.8, 0.3, 1); }
   </style>
 </head>
 <body>
@@ -7477,6 +7487,10 @@
     };
     const loadTotal = row.loadBales || 24;
     const recRef = useRef(null);
+    // R87: bay whose starred card is animating away after being followed.
+    const [recExitBay, setRecExitBay] = useState(null);
+    const recIndexRef = useRef(recIndex);
+    useEffect(() => { recIndexRef.current = recIndex; }, [recIndex]);
     const rec = OP_STORE_RECS[recIndex] || null;
     const nextRec = OP_STORE_RECS[recIndex + 1] || null;
     const bayLabel = (k) => k === '__buffer' ? 'Line 1 buffer' : 'Bay ' + k;
@@ -7484,16 +7498,24 @@
 
     // Commit a bay's pending count into history (called when its countdown hits 0).
     const commitBay = (bayId) => {
+      let committed = false;
       setAlloc(prev => {
         const bales = prev[bayId] || 0;
         if (bales > 0) {
+          committed = true;
           setHistory(h => [{ id: bayId + '-' + Date.now(), bayId, bales, at: new Date() }, ...h]);
-          // Saving into the current recommendation reveals the next one.
-          setRecIndex(i => (OP_STORE_RECS[i] && OP_STORE_RECS[i].bay === bayId) ? i + 1 : i);
           setSaveState('saved');
         }
         const next = { ...prev }; delete next[bayId]; return next;
       });
+      // R87: following the recommendation plays a hand-off - the followed card
+      // slides away (0.45s), then the next recommendation takes over (its zone
+      // opens, the starred card slides in with a pulse, and we scroll to it).
+      const cur = OP_STORE_RECS[recIndexRef.current];
+      if (cur && cur.bay === bayId) {
+        setRecExitBay(bayId);
+        setTimeout(() => { setRecExitBay(null); setRecIndex(i => i + 1); }, 500);
+      }
     };
 
     // R85: one ticking interval drives every visible countdown.
@@ -7745,7 +7767,7 @@
                 <div
                   key={bay.id}
                   ref={isRec ? recRef : null}
-                  className={'rounded-xl p-5 ' + (isRec ? 'border-2 border-safi-600 bg-safi-50' : 'bg-white border border-neutral-10')}
+                  className={'rounded-xl p-5 ' + (isRec ? 'border-2 border-safi-600 bg-safi-50 rec-enter' : 'bg-white border border-neutral-10') + (recExitBay === bay.id ? ' rec-exit' : '')}
                 >
                   {isRec && (
                     <div className="flex items-center gap-1.5 text-[14px] font-semibold text-safi-700 mb-2.5">
