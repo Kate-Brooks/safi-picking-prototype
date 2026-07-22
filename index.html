@@ -6968,11 +6968,12 @@
             Create load sit as one centre-aligned cluster on the right. The date
             control is a joined segment (back arrow / date / forward arrow),
             all targets 56px tall for gloved hands. */}
-        <div className="flex items-center justify-between gap-4 flex-wrap mb-5">
-          <div>
-            <h1 className="text-[26px] font-bold text-neutral-100">Delivery schedule</h1>
-            <div className="text-[13px] text-neutral-60 mt-0.5">Week 1 Jul - 31 Jul 2026</div>
-          </div>
+        <div className="mb-4">
+          <h1 className="text-[26px] font-bold text-neutral-100">Delivery schedule</h1>
+          <div className="text-[13px] text-neutral-60 mt-0.5">Week 1 Jul - 31 Jul 2026</div>
+        </div>
+        {/* R81: date filter + search + create moved below the title. */}
+        <div className="mb-5">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative inline-flex items-stretch rounded-lg border border-neutral-10 bg-white">
               <button
