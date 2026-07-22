@@ -6861,7 +6861,7 @@
       <>
         {/* transparent backdrop - tap anywhere outside to dismiss */}
         <div className="fixed inset-0 z-40" onClick={onClose} />
-        <div className="absolute top-full right-0 mt-2 z-50 bg-white border border-neutral-10 rounded-xl shadow-xl p-4 w-[400px]" role="dialog" aria-modal="true" aria-label="Choose a date">
+        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 bg-white border border-neutral-10 rounded-xl shadow-xl p-4 w-[400px]" role="dialog" aria-modal="true" aria-label="Choose a date">
           <div className="flex items-center justify-between mb-3">
             <button
               onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
@@ -6933,7 +6933,7 @@
     const [calOpen, setCalOpen] = useState(false);
     const shiftDay = (delta) => setSelDate(d => { const x = new Date(d); x.setDate(x.getDate() + delta); return x; });
     const isToday = opSameDay(selDate, new Date());
-    const dateLabel = (isToday ? 'Today, ' : '') + selDate.toLocaleDateString('en-GB', { weekday: isToday ? undefined : 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    const dateLabel = selDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     // Deterministic pretend-filter: today shows the full Figma set; other days
     // rotate + trim the list so moving the date visibly changes the schedule.
     const dayN = selDate.getDate() + selDate.getMonth();
@@ -6968,58 +6968,55 @@
             Create load sit as one centre-aligned cluster on the right. The date
             control is a joined segment (back arrow / date / forward arrow),
             all targets 56px tall for gloved hands. */}
-        <div className="mb-4">
-          <h1 className="text-[26px] font-bold text-neutral-100">Delivery schedule</h1>
-          <div className="text-[13px] text-neutral-60 mt-0.5">Week 1 Jul - 31 Jul 2026</div>
+        {/* R82: header per design - Deliveries title left, Create load right. */}
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <h1 className="text-[26px] font-bold text-neutral-100">Deliveries</h1>
+          <button className="h-14 inline-flex items-center gap-2 px-4 rounded-lg border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5">
+            <Icon d={I.plus} className="w-4 h-4" />
+            Create load
+          </button>
         </div>
-        {/* R81: date filter + search + create moved below the title. */}
-        <div className="mb-5">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative inline-flex items-stretch rounded-lg border border-neutral-10 bg-white">
-              <button
-                onClick={() => shiftDay(-1)}
-                aria-label="Previous day"
-                className="w-14 h-14 flex items-center justify-center rounded-l-lg border-r border-neutral-10 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
-              >
-                <Icon d={I.chevronR} className="w-6 h-6 rotate-180" />
-              </button>
-              <button
-                onClick={() => setCalOpen(o => !o)}
-                aria-haspopup="dialog"
-                aria-expanded={calOpen}
-                aria-label={'Change date, showing loads for ' + dateLabel}
-                className="h-14 px-5 inline-flex items-center gap-2.5 border-r border-neutral-10 text-[16px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
-              >
-                <Icon d={I.calendar} className="w-5 h-5" />
-                {dateLabel}
-              </button>
-              <button
-                onClick={() => shiftDay(1)}
-                aria-label="Next day"
-                className="w-14 h-14 flex items-center justify-center rounded-r-lg hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
-              >
-                <Icon d={I.chevronR} className="w-6 h-6" />
-              </button>
-              {calOpen && (
-                <OpCalendar
-                  value={selDate}
-                  onSelect={(d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); setSelDate(x); setCalOpen(false); }}
-                  onClose={() => setCalOpen(false)}
-                />
-              )}
-            </div>
-            <button className="h-14 inline-flex items-center gap-2 px-4 rounded-lg border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5">
-              <Icon d={I.search} className="w-4 h-4" />
-              Search all loads
-            </button>
-            <button className="h-14 inline-flex items-center gap-2 px-4 rounded-lg border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5">
-              <Icon d={I.plus} className="w-4 h-4" />
-              Create load
-            </button>
-          </div>
+        {/* R82: full-width date bar - back/forward arrows at the far edges,
+            date centred between them; opens the calendar. */}
+        <div className="relative flex items-stretch rounded-lg border border-neutral-10 bg-white mb-4">
+          <button
+            onClick={() => shiftDay(-1)}
+            aria-label="Previous day"
+            className="w-14 h-14 shrink-0 flex items-center justify-center rounded-l-lg border-r border-neutral-10 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+          >
+            <Icon d={I.chevronR} className="w-6 h-6 rotate-180" />
+          </button>
+          <button
+            onClick={() => setCalOpen(o => !o)}
+            aria-haspopup="dialog"
+            aria-expanded={calOpen}
+            aria-label={'Change date, showing loads for ' + dateLabel}
+            className="flex-1 h-14 inline-flex items-center justify-center gap-2.5 border-r border-neutral-10 text-[16px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+          >
+            <Icon d={I.calendar} className="w-5 h-5" />
+            {dateLabel}
+          </button>
+          <button
+            onClick={() => shiftDay(1)}
+            aria-label="Next day"
+            className="w-14 h-14 shrink-0 flex items-center justify-center rounded-r-lg hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+          >
+            <Icon d={I.chevronR} className="w-6 h-6" />
+          </button>
+          {calOpen && (
+            <OpCalendar
+              value={selDate}
+              onSelect={(d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); setSelDate(x); setCalOpen(false); }}
+              onClose={() => setCalOpen(false)}
+            />
+          )}
         </div>
-        <div className="text-[13px] text-neutral-60 mb-2.5">Filter loads by tasks to-do</div>
+        {/* R82: Search loads sits inline with the task filter chips. */}
         <div className="flex items-center gap-2.5 mb-4 flex-wrap">
+          <button className="h-14 inline-flex items-center gap-2 px-4 rounded-lg border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5">
+            <Icon d={I.search} className="w-4 h-4" />
+            Search loads
+          </button>
           <FilterChip label="All loads" count={counts.all} active />
           <FilterChip icon={I.camera} label="Analyse" count={counts.analyse} />
           <FilterChip icon={I.box} label="Store" count={counts.store} />
@@ -7181,7 +7178,7 @@
             className="inline-flex items-center gap-2.5 px-4 py-3 rounded-lg border border-neutral-10 bg-white text-[15px] font-medium text-neutral-100 hover:bg-neutral-5"
           >
             <Icon d={isDeliveries ? I.factory : I.list} className="w-5 h-5" />
-            {isDeliveries ? 'Picking list' : 'Delivery schedule'}
+            {isDeliveries ? 'Picking list' : 'Deliveries'}
           </button>
           <div className="absolute left-1/2 -translate-x-1/2 text-[26px] font-bold text-neutral-100 select-none" aria-label="Safi">
             safi
