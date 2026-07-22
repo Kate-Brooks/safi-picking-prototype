@@ -7438,26 +7438,60 @@
   };
 
   function OperatorStore({ row, onCancel, onDone }) {
-    // alloc: '__buffer' or bay id -> bales stored in THIS session.
+    // R85: save model rebuilt around mistake recovery.
+    //   alloc   - uncommitted per-bay counts, each with a visible 5s countdown
+    //             (timers). Any change resets the countdown; Undo clears it.
+    //   history - committed stacks, newest first. Editable via See history:
+    //             +/- adjusts, Move relocates (with a confirm dialog when newer
+    //             bales already sit on top of the source bay).
     const [alloc, setAlloc] = useState({});
-    const [weight, setWeight] = useState(row.weightKg ? String(row.weightKg) : '');
+    const [timers, setTimers] = useState({}); // bayId -> seconds until save
+    const [history, setHistory] = useState([]);
+    const [histOpen, setHistOpen] = useState(false);
+    const [moveEntry, setMoveEntry] = useState(null); // history entry being moved
+    const [moveDest, setMoveDest] = useState(null);   // destination pending confirm
     const [activeTab, setActiveTab] = useState('1');
     const [recIndex, setRecIndex] = useState(0);
-    const [saveState, setSaveState] = useState('idle'); // idle | pending | saved
+    const [saveState, setSaveState] = useState('idle');
     const recRef = useRef(null);
     const rec = OP_STORE_RECS[recIndex] || null;
     const nextRec = OP_STORE_RECS[recIndex + 1] || null;
-    const total = Object.values(alloc).reduce((a, v) => a + v, 0);
+    const bayLabel = (k) => k === '__buffer' ? 'Line 1 buffer' : 'Bay ' + k;
+    const fmtTime = (d) => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
-    // R84: autosave 10s after the last change - operators never press Save.
+    // Commit a bay's pending count into history (called when its countdown hits 0).
+    const commitBay = (bayId) => {
+      setAlloc(prev => {
+        const bales = prev[bayId] || 0;
+        if (bales > 0) {
+          setHistory(h => [{ id: bayId + '-' + Date.now(), bayId, bales, at: new Date() }, ...h]);
+          // Saving into the current recommendation reveals the next one.
+          setRecIndex(i => (OP_STORE_RECS[i] && OP_STORE_RECS[i].bay === bayId) ? i + 1 : i);
+          setSaveState('saved');
+        }
+        const next = { ...prev }; delete next[bayId]; return next;
+      });
+    };
+
+    // R85: one ticking interval drives every visible countdown.
     useEffect(() => {
-      if (saveState !== 'pending') return;
-      const t = setTimeout(() => setSaveState('saved'), 10000);
-      return () => clearTimeout(t);
-    }, [alloc, saveState]);
+      if (Object.keys(timers).length === 0) return;
+      const iv = setInterval(() => {
+        setTimers(prev => {
+          const next = { ...prev };
+          const done = [];
+          Object.keys(next).forEach(k => {
+            next[k] = next[k] - 1;
+            if (next[k] <= 0) { done.push(k); delete next[k]; }
+          });
+          if (done.length > 0) setTimeout(() => done.forEach(commitBay), 0);
+          return next;
+        });
+      }, 1000);
+      return () => clearInterval(iv);
+    }, [Object.keys(timers).sort().join('|')]);
 
-    // R84: when the recommendation advances, jump to its zone and scroll the
-    // starred card into view so the operator never hunts for it.
+    // Jump to the new recommendation's zone and scroll the starred card into view.
     useEffect(() => {
       if (!rec) return;
       setActiveTab(rec.zone);
@@ -7465,27 +7499,62 @@
       return () => clearTimeout(t);
     }, [recIndex]);
 
-    const bump = (bayId, delta) => {
-      setAlloc(prev => {
-        const v = Math.max(0, (prev[bayId] || 0) + delta);
-        const next = { ...prev };
-        if (v === 0) delete next[bayId]; else next[bayId] = v;
-        return next;
-      });
-      setSaveState('pending');
-      // Storing into the current recommendation reveals the next one.
-      if (rec && bayId === rec.bay && delta > 0) setRecIndex(i => i + 1);
-    };
-    const setDirect = (bayId, raw) => {
-      const v = Math.max(0, parseInt(raw.replace(/[^0-9]/g, ''), 10) || 0);
+    const touch = (bayId, v) => {
       setAlloc(prev => {
         const next = { ...prev };
         if (v === 0) delete next[bayId]; else next[bayId] = v;
         return next;
       });
-      setSaveState('pending');
-      if (rec && bayId === rec.bay && v > 0) setRecIndex(i => i + 1);
+      setTimers(prev => {
+        const next = { ...prev };
+        if (v === 0) delete next[bayId]; else next[bayId] = 5; // any change restarts the 5s countdown
+        return next;
+      });
+      setSaveState(v === 0 && Object.keys(alloc).length <= 1 ? 'idle' : 'pending');
     };
+    const bump = (bayId, delta) => touch(bayId, Math.max(0, (alloc[bayId] || 0) + delta));
+    const setDirect = (bayId, raw) => touch(bayId, Math.max(0, parseInt(raw.replace(/[^0-9]/g, ''), 10) || 0));
+
+    // History edits.
+    const adjustEntry = (id, delta) => setHistory(prev => prev
+      .map(e => e.id === id ? { ...e, bales: Math.max(0, e.bales + delta) } : e)
+      .filter(e => e.bales > 0));
+    // Blocked = newer bales already sit on top of the source bay.
+    const isBlocked = (entry) => (alloc[entry.bayId] || 0) > 0 ||
+      history.some(e => e.bayId === entry.bayId && e.id !== entry.id && e.at > entry.at);
+    const applyMove = (entry, dest) => {
+      setHistory(prev => prev.map(e => e.id === entry.id ? { ...e, bayId: dest } : e));
+      setMoveEntry(null); setMoveDest(null);
+    };
+    const pickDest = (dest) => {
+      if (isBlocked(moveEntry)) setMoveDest(dest);
+      else applyMove(moveEntry, dest);
+    };
+
+    const committedTotal = history.reduce((a, e) => a + e.bales, 0);
+    const total = committedTotal + Object.values(alloc).reduce((a, v) => a + v, 0);
+    const combined = {};
+    history.forEach(e => { combined[e.bayId] = (combined[e.bayId] || 0) + e.bales; });
+    Object.entries(alloc).forEach(([k, v]) => { combined[k] = (combined[k] || 0) + v; });
+    const pills = Object.entries(combined).map(([k, v]) =>
+      (k === '__buffer' ? 'Line 1 buffer' : 'Zone ' + k.split('-')[0] + ': Bay ' + k) + ' (' + v + ' ' + (v === 1 ? 'bale' : 'bales') + ')'
+    );
+
+    // Countdown chip + Undo - shown on any bay while its save is pending.
+    const SavePending = ({ bayId }) => timers[bayId] == null ? null : (
+      <span className="inline-flex items-center gap-2.5">
+        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[13px] font-semibold" style={{ background: OP.todoBg, color: OP.todoFg }}>
+          <Icon d={I.clock} className="w-4 h-4" />
+          Saving in {timers[bayId]}s
+        </span>
+        <button
+          onClick={() => touch(bayId, 0)}
+          className="text-[14px] font-semibold text-safi-700 hover:underline focus:outline-none focus:ring-2 focus:ring-safi-600 rounded px-1"
+        >
+          Undo
+        </button>
+      </span>
+    );
 
     const Stepper = ({ bayId }) => {
       const v = alloc[bayId] || 0;
@@ -7496,7 +7565,7 @@
               key={d}
               onClick={() => bump(bayId, d)}
               disabled={v < Math.abs(d)}
-              aria-label={`Remove ${Math.abs(d)} bales from bay ${bayId}`}
+              aria-label={'Remove ' + Math.abs(d) + ' bales from ' + bayLabel(bayId)}
               className="w-14 h-14 rounded-lg border border-neutral-10 bg-white text-[16px] font-semibold text-neutral-100 hover:bg-neutral-5 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-safi-600"
             >
               {d}
@@ -7506,14 +7575,14 @@
             value={v}
             onChange={e => setDirect(bayId, e.target.value)}
             inputMode="numeric"
-            aria-label={`Bales to store in bay ${bayId}`}
+            aria-label={'Bales to store in ' + bayLabel(bayId)}
             className="w-16 h-14 rounded-lg border border-neutral-10 bg-white text-center text-[18px] font-semibold text-neutral-100 focus:outline-none focus:ring-2 focus:ring-safi-600"
           />
           {[1, 2, 3].map(d => (
             <button
               key={d}
               onClick={() => bump(bayId, d)}
-              aria-label={`Add ${d} bales to bay ${bayId}`}
+              aria-label={'Add ' + d + ' bales to ' + bayLabel(bayId)}
               className="w-14 h-14 rounded-lg border border-neutral-10 bg-white text-[16px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
             >
               +{d}
@@ -7524,9 +7593,6 @@
     };
 
     const zone = OP_STORE_ZONES.find(z => z.id === activeTab);
-    const pills = Object.entries(alloc).map(([k, v]) =>
-      k === '__buffer' ? `Line 1 buffer (${v} ${v === 1 ? 'bale' : 'bales'})` : `Zone ${k.split('-')[0]}: Bay ${k} (${v} ${v === 1 ? 'bale' : 'bales'})`
-    );
 
     return (
       <div className="max-w-[900px] mx-auto px-4 py-6 pb-32">
@@ -7536,30 +7602,63 @@
         <h1 className="text-[26px] font-bold text-neutral-100 mb-1">Store load in warehouse</h1>
         <div className="text-[13px] text-neutral-60 mb-4">{row.supplier} {row.ref} · {row.material}</div>
 
-        {/* Actual load weight */}
-        <div className="text-[13px] text-neutral-60 mb-1.5">Enter the load total weight</div>
-        <div className="relative mb-4 max-w-md">
-          <label htmlFor="store-weight" className="absolute -top-2 left-3 px-1.5 bg-white text-[12px] text-neutral-60 z-10">Actual load weight</label>
-          <input
-            id="store-weight"
-            inputMode="numeric"
-            placeholder="0"
-            value={weight}
-            onChange={e => setWeight(e.target.value.replace(/[^0-9]/g, ''))}
-            className="w-full h-14 px-4 pr-12 border border-neutral-10 rounded-lg text-[16px] text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
-          />
-          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[14px] text-neutral-60">kg</span>
-        </div>
-
-        {/* Session summary */}
         {total > 0 && (
-          <div className="rounded-lg px-4 py-4 mb-4 text-center" style={{ background: OP.okBg }}>
+          <div className="rounded-lg px-4 py-4 mb-2 text-center" style={{ background: OP.okBg }}>
             <div className="text-[17px] font-bold" style={{ color: OP.okFg }}>{total} {total === 1 ? 'bale' : 'bales'} stored</div>
             <div className="flex items-center justify-center gap-2 mt-2 flex-wrap">
               {pills.map(p => (
                 <span key={p} className="px-2.5 py-1 rounded-full bg-white/80 text-[13px] font-medium text-neutral-80">{p}</span>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* R85: storage history - hidden behind See history. */}
+        {history.length > 0 && (
+          <div className="mb-4">
+            <button
+              onClick={() => setHistOpen(o => !o)}
+              aria-expanded={histOpen}
+              className="h-12 px-4 inline-flex items-center gap-2 rounded-lg border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+            >
+              <Icon d={I.clock} className="w-4 h-4" />
+              {histOpen ? 'Hide history' : 'See history'}
+              <span className="px-2 py-0.5 rounded-full bg-neutral-5 text-[12px] font-semibold text-neutral-80">{history.length}</span>
+            </button>
+            {histOpen && (
+              <div className="mt-2 bg-white border border-neutral-10 rounded-xl divide-y divide-neutral-10">
+                {history.map(e => (
+                  <div key={e.id} className="flex items-center justify-between gap-3 px-4 py-3 flex-wrap">
+                    <div className="min-w-0">
+                      <div className="text-[15px] font-semibold text-neutral-100">{e.bales} {e.bales === 1 ? 'bale' : 'bales'} &rarr; {bayLabel(e.bayId)}</div>
+                      <div className="text-[13px] text-neutral-60 mt-0.5">{fmtTime(e.at)}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => adjustEntry(e.id, -1)}
+                        aria-label={'Remove 1 bale from ' + bayLabel(e.bayId)}
+                        className="w-12 h-12 rounded-lg border border-neutral-10 bg-white text-[18px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                      >
+                        -
+                      </button>
+                      <button
+                        onClick={() => adjustEntry(e.id, 1)}
+                        aria-label={'Add 1 bale to ' + bayLabel(e.bayId)}
+                        className="w-12 h-12 rounded-lg border border-neutral-10 bg-white text-[18px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                      >
+                        +
+                      </button>
+                      <button
+                        onClick={() => { setMoveEntry(e); setMoveDest(null); }}
+                        className="h-12 px-4 rounded-lg border border-neutral-10 bg-white text-[14px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                      >
+                        Move
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -7584,12 +7683,14 @@
           ))}
         </div>
 
-        {/* Bay list */}
         {activeTab === 'buffer' ? (
           <div className="bg-white border border-neutral-10 rounded-xl p-5">
-            <div className="flex items-center gap-2.5 mb-4">
-              <h3 className="text-[17px] font-bold text-neutral-100">Line 1 buffer</h3>
-              <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + OP_TONE_CHIP.green}>25 bales</span>
+            <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
+              <div className="flex items-center gap-2.5">
+                <h3 className="text-[17px] font-bold text-neutral-100">Line 1 buffer</h3>
+                <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + OP_TONE_CHIP.green}>25 bales</span>
+              </div>
+              <SavePending bayId="__buffer" />
             </div>
             <Stepper bayId="__buffer" />
           </div>
@@ -7613,11 +7714,14 @@
                   {isNext && (
                     <div className="text-[13px] font-medium text-neutral-60 mb-2.5">Next recommendation</div>
                   )}
-                  <div className="flex items-center gap-2.5 mb-4">
-                    <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>
-                    <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + (OP_TONE_CHIP[bay.tone] || OP_TONE_CHIP.grey)}>
-                      {bay.bales} {bay.bales === 1 ? 'bale' : 'bales'} / {bay.loads} {bay.loads === 1 ? 'load' : 'loads'}
-                    </span>
+                  <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
+                    <div className="flex items-center gap-2.5">
+                      <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>
+                      <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + (OP_TONE_CHIP[bay.tone] || OP_TONE_CHIP.grey)}>
+                        {bay.bales} {bay.bales === 1 ? 'bale' : 'bales'} / {bay.loads} {bay.loads === 1 ? 'load' : 'loads'}
+                      </span>
+                    </div>
+                    <SavePending bayId={bay.id} />
                   </div>
                   <Stepper bayId={bay.id} />
                 </div>
@@ -7626,19 +7730,90 @@
           </div>
         )}
 
-        {/* Sticky footer - autosave note + actions */}
+        {/* R85: move overlay - pick a destination; confirm when the source bay
+            has newer bales on top. Minimal copy, big targets. */}
+        {moveEntry && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => { setMoveEntry(null); setMoveDest(null); }}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6" role="dialog" aria-modal="true" aria-label="Move bales" onClick={e => e.stopPropagation()}>
+              {moveDest ? (
+                <>
+                  <h2 className="text-[22px] font-bold text-neutral-100 mb-3">Move bales?</h2>
+                  <div className="flex items-start gap-2.5 mb-2 text-[16px] text-neutral-100">
+                    <Icon d={I.warning} className="w-5 h-5 shrink-0 mt-0.5" style={{ color: OP.todoFg }} />
+                    <span>{bayLabel(moveEntry.bayId)} has newer bales on top.</span>
+                  </div>
+                  <div className="text-[18px] font-semibold text-neutral-100 mb-6">
+                    {moveEntry.bales} {moveEntry.bales === 1 ? 'bale' : 'bales'}: {bayLabel(moveEntry.bayId)} &rarr; {bayLabel(moveDest)}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      onClick={() => setMoveDest(null)}
+                      className="h-16 rounded-lg border border-neutral-10 bg-white text-[18px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={() => applyMove(moveEntry, moveDest)}
+                      className="h-16 rounded-lg bg-safi-600 text-white text-[18px] font-semibold hover:bg-safi-700 focus:outline-none focus:ring-2 focus:ring-safi-800"
+                    >
+                      Move bales
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-[22px] font-bold text-neutral-100">Move {moveEntry.bales} {moveEntry.bales === 1 ? 'bale' : 'bales'} from {bayLabel(moveEntry.bayId)}</h2>
+                    <button onClick={() => setMoveEntry(null)} aria-label="Close" className="w-12 h-12 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                      <Icon d={I.close} className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <div className="text-[14px] text-neutral-60 mb-3">Tap the new location</div>
+                  <div className="space-y-3 max-h-[50vh] overflow-y-auto">
+                    {moveEntry.bayId !== '__buffer' && (
+                      <button
+                        onClick={() => pickDest('__buffer')}
+                        className="h-14 px-4 rounded-lg border border-neutral-10 bg-white text-[15px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                      >
+                        Line 1 buffer
+                      </button>
+                    )}
+                    {OP_STORE_ZONES.map(z => (
+                      <div key={z.id}>
+                        <div className="text-[13px] font-medium text-neutral-60 mb-1.5">Zone {z.id}</div>
+                        <div className="flex gap-2 flex-wrap">
+                          {z.bays.filter(bay => bay.id !== moveEntry.bayId).map(bay => (
+                            <button
+                              key={bay.id}
+                              onClick={() => pickDest(bay.id)}
+                              className="h-14 px-4 rounded-lg border border-neutral-10 bg-white text-[15px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                            >
+                              {bay.id}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Sticky footer */}
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-neutral-10 z-30">
           <div className="max-w-[900px] mx-auto px-4 py-4 flex items-center justify-between gap-4">
             <div className="text-[13px] text-neutral-60 flex-1 min-w-0">
-              {saveState === 'saved' ? (
+              {saveState === 'saved' && Object.keys(timers).length === 0 ? (
                 <span className="inline-flex items-center gap-1.5 font-medium" style={{ color: OP.okFg }}>
                   <Icon d={I.check} className="w-4 h-4" />
-                  Changes saved automatically
+                  Saved
                 </span>
-              ) : saveState === 'pending' ? (
-                'Unsaved changes - autosaving shortly...'
+              ) : Object.keys(timers).length > 0 ? (
+                'Saving in 5s - tap Undo to correct.'
               ) : (
-                'Allocate bales to a bay - changes will save automatically.'
+                'Add bales to a bay - saves automatically.'
               )}
             </div>
             <div className="flex items-center gap-3">
@@ -7649,7 +7824,7 @@
                 Cancel
               </button>
               <button
-                onClick={() => onDone(total, weight ? Number(weight) : null)}
+                onClick={() => onDone(total, null)}
                 className="h-14 px-8 rounded-lg bg-safi-600 text-white text-[16px] font-semibold hover:bg-safi-700 focus:outline-none focus:ring-2 focus:ring-safi-800"
               >
                 Done
