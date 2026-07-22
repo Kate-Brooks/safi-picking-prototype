@@ -5715,13 +5715,8 @@
           <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
             <div className="flex items-center gap-3">
               <h2 className="text-xl font-bold text-neutral-100">Load details</h2>
-              {/* R76: Arrived badge mirrors the QC table (icon + label, never colour alone). */}
-              {arrival && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success-100 text-success-300 text-[13px] font-medium">
-                  <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
-                  Arrived
-                </span>
-              )}
+              {/* R77: Arrived badge restyled to match Partner invites badges. */}
+              {arrival && <StatusBadge color="green">Arrived</StatusBadge>}
             </div>
             <div className="flex items-center gap-2">
               {/* R76: mark arrival here too; once arrived the action flips to Edit
@@ -6302,6 +6297,26 @@
   }
 
   // ============================================================================
+  // R77: squared status badge matching the Partner invites page badges -
+  // solid colour tint, no icon, slight corner radius (rounded = 4px).
+  // Colour mapping mirrors the invites page: green = done/positive state,
+  // blue = in progress, purple = Safi primary, grey = terminal/neutral.
+  // ============================================================================
+  const QC_BADGE_COLORS = {
+    green:  'bg-success-100 text-success-300',
+    blue:   'bg-sky-100 text-sky-800',
+    purple: 'bg-safi-100 text-safi-800',
+    grey:   'bg-neutral-10 text-neutral-80'
+  };
+  function StatusBadge({ color = 'grey', children }) {
+    return (
+      <span className={'inline-flex items-center px-2 py-0.5 rounded text-[13px] font-medium ' + (QC_BADGE_COLORS[color] || QC_BADGE_COLORS.grey)}>
+        {children}
+      </span>
+    );
+  }
+
+  // ============================================================================
   // R75: MARK LOAD AS ARRIVED - focused overlay opened from the QC table.
   // Captures the actual load weight and the dock the load is going to.
   // ============================================================================
@@ -6598,9 +6613,12 @@
                   </th>
                   <th className="px-4 py-3 font-medium text-neutral-60">Material</th>
                   <th className="px-4 py-3 font-medium text-neutral-60">Average AI results</th>
-                  {/* R53: column promoted to "Status / Action" - holds Create claim for
-                      analysed rows, or [Analyse] + [Store] CTAs for unanalysed ones. */}
-                  <th className="px-4 py-3 font-medium text-neutral-60">Status / Action</th>
+                  {/* R77: Status / Action split into two columns. Status holds the
+                      lifecycle badges (Arrived / Stored / Analysed / Processed);
+                      Actions holds the CTAs (Mark arrived / Analyse / Store /
+                      Create claim). */}
+                  <th className="px-4 py-3 font-medium text-neutral-60">Status</th>
+                  <th className="px-4 py-3 font-medium text-neutral-60">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-10">
@@ -6611,6 +6629,9 @@
                   const analysed = !!r.results || (loadAnalysisSessions[rowIdx] && loadAnalysisSessions[rowIdx].length > 0);
                   // R75: arrival record for this row (badge + dock + weight).
                   const arrival = loadArrivals[rowIdx];
+                  // R77: lifecycle flags for the Status column.
+                  const isStoredRow = (loadStorage[rowIdx] || []).length > 0;
+                  const isProcessedRow = !!loadProcessed[rowIdx];
                   return (
                     <tr
                       key={rowIdx}
@@ -6619,19 +6640,8 @@
                     >
                       {/* Order details = order ref above, load number below in muted text. */}
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-neutral-100">{r.orderRef}</span>
-                          {/* R75: Arrived badge - icon + label, never colour alone. */}
-                          {arrival && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success-100 text-success-300 text-[13px] font-medium">
-                              <Icon d={I.checkCircle} className="w-3.5 h-3.5" />
-                              Arrived
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[13px] text-neutral-60 mt-0.5">
-                          {arrival ? `Dock ${arrival.dock} · ${arrival.weight.toLocaleString()} kg` : r.loadNo}
-                        </div>
+                        <div className="font-semibold text-neutral-100">{r.orderRef}</div>
+                        <div className="text-[13px] text-neutral-60 mt-0.5">{r.loadNo}</div>
                       </td>
                       <td className="px-4 py-3 text-neutral-100">{r.supplier}</td>
                       <td className="px-4 py-3 text-neutral-100">{fmtDate(r.scheduledDay)}</td>
@@ -6652,7 +6662,30 @@
                           <span className="text-neutral-60">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+                      {/* R77: Status column. The dock + weight line sits directly
+                          under the Arrived badge (they describe the same event),
+                          left-aligned to the badge so the column reads as one
+                          unit per state. */}
+                      <td className="px-4 py-3 align-top">
+                        {(arrival || isStoredRow || analysed || isProcessedRow) ? (
+                          <div className="flex flex-col items-start gap-1.5">
+                            {arrival && (
+                              <div>
+                                <StatusBadge color="green">Arrived</StatusBadge>
+                                <div className="text-[13px] text-neutral-60 mt-1 whitespace-nowrap">
+                                  Dock {arrival.dock} · {arrival.weight.toLocaleString()} kg
+                                </div>
+                              </div>
+                            )}
+                            {isStoredRow && <StatusBadge color="blue">Stored</StatusBadge>}
+                            {analysed && <StatusBadge color="purple">Analysed</StatusBadge>}
+                            {isProcessedRow && <StatusBadge color="grey">Processed</StatusBadge>}
+                          </div>
+                        ) : (
+                          <span className="text-neutral-60">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 align-top">
                         <div className="flex items-center gap-2 flex-wrap">
                         {/* R75: Mark arrived - available until the load has an arrival record. */}
                         {!arrival && (
