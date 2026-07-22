@@ -7468,7 +7468,11 @@
     //             +/- adjusts, Move relocates (with a confirm dialog when newer
     //             bales already sit on top of the source bay).
     const [alloc, setAlloc] = useState({});
-    const [timers, setTimers] = useState({}); // bayId -> seconds until save
+    // R95: ONE shared save countdown for all pending stacks - any change
+    // resets it; when it expires everything pending commits at once. The
+    // snackbar is the single source of save status.
+    const [pendingSave, setPendingSave] = useState(null); // { left: 5 } | null
+    const [savedFlash, setSavedFlash] = useState(null);   // { total, label } | null
     const [history, setHistory] = useState([]);
     const [histOpen, setHistOpen] = useState(false);
     const [moveEntry, setMoveEntry] = useState(null); // history entry being moved
@@ -7524,50 +7528,55 @@
     const bayLabel = (k) => k === '__buffer' ? 'Line 1 buffer' : 'Bay ' + k;
     const fmtTime = (d) => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
-    // Commit a bay's pending count into history (called when its countdown hits 0).
-    const commitBay = (bayId) => {
-      let committed = false;
+    // R95: commit ALL pending stacks (called when the shared countdown expires).
+    const commitAll = () => {
       setAlloc(prev => {
-        const bales = prev[bayId] || 0;
-        if (bales > 0) {
-          committed = true;
-          setHistory(h => [{ id: bayId + '-' + Date.now(), bayId, bales, at: new Date() }, ...h]);
+        const entries = Object.entries(prev).filter(([, v]) => v > 0);
+        if (entries.length > 0) {
+          const now = Date.now();
+          setHistory(h => [
+            ...entries.map(([bayId, bales], i) => ({ id: bayId + '-' + (now + i), bayId, bales, at: new Date() })),
+            ...h
+          ]);
           setSaveState('saved');
+          const totalSaved = entries.reduce((acc, [, v]) => acc + v, 0);
+          setSavedFlash({
+            total: totalSaved,
+            label: entries.length === 1 ? bayLabel(entries[0][0]) : entries.length + ' bays'
+          });
+          // R87: following the recommendation plays the hand-off animation.
+          const cur = OP_STORE_RECS[recIndexRef.current];
+          if (cur && entries.some(([k]) => k === cur.bay)) {
+            setRecExitBay(cur.bay);
+            setTimeout(() => { setRecExitBay(null); setRecIndex(i => i + 1); if (guided) setBrowseAll(false); }, 500);
+          } else if (guided) {
+            // R92: stored elsewhere after skipping.
+            setRecIndex(i => i + 1);
+            setBrowseAll(false);
+          }
         }
-        const next = { ...prev }; delete next[bayId]; return next;
+        return {};
       });
-      // R87: following the recommendation plays a hand-off - the followed card
-      // slides away (0.45s), then the next recommendation takes over (its zone
-      // opens, the starred card slides in with a pulse, and we scroll to it).
-      const cur = OP_STORE_RECS[recIndexRef.current];
-      if (cur && cur.bay === bayId) {
-        setRecExitBay(bayId);
-        setTimeout(() => { setRecExitBay(null); setRecIndex(i => i + 1); if (guided) setBrowseAll(false); }, 500);
-      } else if (guided) {
-        // R92: stored elsewhere after skipping - move to the next
-        // recommendation and close the warehouse browse view.
-        setRecIndex(i => i + 1);
-        setBrowseAll(false);
-      }
     };
 
-    // R85: one ticking interval drives every visible countdown.
+    // R95: one ticking interval drives the shared countdown.
     useEffect(() => {
-      if (Object.keys(timers).length === 0) return;
+      if (!pendingSave) return;
       const iv = setInterval(() => {
-        setTimers(prev => {
-          const next = { ...prev };
-          const done = [];
-          Object.keys(next).forEach(k => {
-            next[k] = next[k] - 1;
-            if (next[k] <= 0) { done.push(k); delete next[k]; }
-          });
-          if (done.length > 0) setTimeout(() => done.forEach(commitBay), 0);
-          return next;
+        setPendingSave(p => {
+          if (!p) return p;
+          if (p.left <= 1) { setTimeout(commitAll, 0); return null; }
+          return { left: p.left - 1 };
         });
       }, 1000);
       return () => clearInterval(iv);
-    }, [Object.keys(timers).sort().join('|')]);
+    }, [pendingSave !== null]);
+    // Saved confirmation auto-dismisses.
+    useEffect(() => {
+      if (!savedFlash) return;
+      const t = setTimeout(() => setSavedFlash(null), 2200);
+      return () => clearTimeout(t);
+    }, [savedFlash]);
 
     // Jump to the new recommendation's zone and scroll the starred card into view.
     useEffect(() => {
@@ -7581,14 +7590,17 @@
       setAlloc(prev => {
         const next = { ...prev };
         if (v === 0) delete next[bayId]; else next[bayId] = v;
+        const any = Object.keys(next).length > 0;
+        setPendingSave(any ? { left: 5 } : null); // any change restarts the shared 5s countdown
+        setSaveState(any ? 'pending' : 'idle');
         return next;
       });
-      setTimers(prev => {
-        const next = { ...prev };
-        if (v === 0) delete next[bayId]; else next[bayId] = 5; // any change restarts the 5s countdown
-        return next;
-      });
-      setSaveState(v === 0 && Object.keys(alloc).length <= 1 ? 'idle' : 'pending');
+      setSavedFlash(null);
+    };
+    const undoAll = () => {
+      setAlloc({});
+      setPendingSave(null);
+      setSaveState('idle');
     };
     const bump = (bayId, delta) => touch(bayId, Math.max(0, (alloc[bayId] || 0) + delta));
     const setDirect = (bayId, raw) => touch(bayId, Math.max(0, parseInt(raw.replace(/[^0-9]/g, ''), 10) || 0));
@@ -7612,28 +7624,44 @@
     const committedTotal = history.reduce((a, e) => a + e.bales, 0);
     const total = committedTotal + Object.values(alloc).reduce((a, v) => a + v, 0);
 
-    // R86: countdown with a draining progress bar - the save window is
-    // unmissable. Bar empties over 5s; Undo cancels; any change refills it.
-    const SavePending = ({ bayId }) => timers[bayId] == null ? null : (
-      <span className="flex items-center gap-3 basis-full grow">
-        <span className="flex-1 h-2.5 rounded-full bg-neutral-10 overflow-hidden" aria-hidden="true">
-          <span
-            className="block h-full rounded-full"
-            style={{ width: (timers[bayId] / 5 * 100) + '%', background: OP.accentOrange, transition: 'width 1s linear' }}
-          />
-        </span>
-        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[13px] font-semibold shrink-0" style={{ background: OP.todoBg, color: OP.todoFg }}>
-          <Icon d={I.clock} className="w-4 h-4" />
-          Saving in {timers[bayId]}s
-        </span>
-        <button
-          onClick={() => touch(bayId, 0)}
-          className="h-11 px-4 shrink-0 rounded-lg border border-neutral-10 bg-white text-[14px] font-semibold text-safi-700 hover:bg-safi-50 focus:outline-none focus:ring-2 focus:ring-safi-600"
-        >
-          Undo
-        </button>
-      </span>
-    );
+    // R95: MD2 snackbar (MUI2-Safi <Snackbar>), supersized for gloved
+    // outdoor use - large type, 56px UNDO, draining time line. Shows the
+    // pending save; flips to a green-tick confirmation when committed.
+    const totalPending = Object.values(alloc).reduce((acc, v) => acc + v, 0);
+    const pendingLabel = (() => {
+      const keys = Object.keys(alloc);
+      return keys.length === 1 ? bayLabel(keys[0]) : keys.length + ' bays';
+    })();
+    const OpSaveSnackbar = () => {
+      if (!pendingSave && !savedFlash) return null;
+      return (
+        <div className="fixed bottom-28 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-xl" role="status" aria-live="polite">
+          {pendingSave ? (
+            <div className="relative bg-neutral-100 rounded-xl shadow-xl overflow-hidden pl-6 pr-4 py-4 flex items-center justify-between gap-4">
+              <span className="text-[18px] font-medium text-white truncate">
+                Saving {totalPending} {totalPending === 1 ? 'bale' : 'bales'} to {pendingLabel}
+              </span>
+              <button
+                onClick={undoAll}
+                className="h-14 px-6 shrink-0 rounded-lg text-[17px] font-bold text-safi-300 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-safi-300"
+              >
+                UNDO
+              </button>
+              <span className="absolute left-0 right-0 bottom-0 h-1 bg-white/20" aria-hidden="true">
+                <span className="block h-full bg-safi-400" style={{ width: (pendingSave.left / 5 * 100) + '%', transition: 'width 1s linear' }} />
+              </span>
+            </div>
+          ) : (
+            <div className="bg-neutral-100 rounded-xl shadow-xl pl-6 pr-6 py-5 flex items-center gap-3">
+              <Icon d={I.checkCircle} className="w-6 h-6 shrink-0 text-success-200" />
+              <span className="text-[18px] font-medium text-white truncate">
+                Saved {savedFlash.total} {savedFlash.total === 1 ? 'bale' : 'bales'} to {savedFlash.label}
+              </span>
+            </div>
+          )}
+        </div>
+      );
+    };
 
     const Stepper = ({ bayId }) => {
       const v = alloc[bayId] || 0;
@@ -7696,12 +7724,9 @@
                   ) : isNext ? (
                     <div className="text-[13px] font-medium text-neutral-60 mb-2.5">Next recommendation</div>
                   ) : null}
-                  <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
-                    <div className="flex items-center gap-2.5">
-                      {!isRec && <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>}
-                      <span className="text-[13px] text-neutral-60">{bay.bales} {bay.bales === 1 ? 'bale' : 'bales'}</span>
-                    </div>
-                    <SavePending bayId={bay.id} />
+                  <div className="flex items-center gap-2.5 mb-4">
+                    {!isRec && <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>}
+                    <span className="text-[13px] text-neutral-60">{bay.bales} {bay.bales === 1 ? 'bale' : 'bales'}</span>
                   </div>
                   <Stepper bayId={bay.id} />
                   {/* R94: Skip is neutral - it leads to a choice, not a commitment.
@@ -7842,12 +7867,9 @@
 
         {activeTab === 'buffer' ? (
           <div className="bg-white border border-neutral-10 rounded-xl p-5">
-            <div className="flex items-center justify-between gap-2.5 mb-4 flex-wrap">
-              <div className="flex items-center gap-2.5">
-                <h3 className="text-[17px] font-bold text-neutral-100">Line 1 buffer</h3>
-                <span className="text-[13px] text-neutral-60">25 bales</span>
-              </div>
-              <SavePending bayId="__buffer" />
+            <div className="flex items-center gap-2.5 mb-4">
+              <h3 className="text-[17px] font-bold text-neutral-100">Line 1 buffer</h3>
+              <span className="text-[13px] text-neutral-60">25 bales</span>
             </div>
             <Stepper bayId="__buffer" />
           </div>
@@ -8088,17 +8110,20 @@
           </div>
         )}
 
+        {/* R95: autosave snackbar - the one place save status lives. */}
+        <OpSaveSnackbar />
+
         {/* Sticky footer */}
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-neutral-10 z-30">
           <div className="max-w-[900px] mx-auto px-4 py-4 flex items-center justify-between gap-4">
             <div className="text-[13px] text-neutral-60 flex-1 min-w-0">
-              {saveState === 'saved' && Object.keys(timers).length === 0 ? (
+              {saveState === 'saved' && !pendingSave ? (
                 <span className="inline-flex items-center gap-1.5 font-medium" style={{ color: OP.okFg }}>
                   <Icon d={I.check} className="w-4 h-4" />
                   Saved
                 </span>
-              ) : Object.keys(timers).length > 0 ? (
-                'Saving in 5s - tap Undo to correct.'
+              ) : pendingSave ? (
+                'Saving - tap UNDO above to correct.'
               ) : (
                 'Add bales to a bay - saves automatically.'
               )}
