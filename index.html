@@ -4701,6 +4701,7 @@
     warning:  ['M10.3 3.9L2.5 17a2 2 0 001.7 3h15.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z', 'M12 9v4', 'M12 17h.01'],
     // R78: operator iPad screens.
     clock:    ['M12 22a10 10 0 100-20 10 10 0 000 20z', 'M12 7v5l3 2'],
+    star:     'M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.2l7.1-.6z',
     camera:   ['M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z', 'M12 17a4 4 0 100-8 4 4 0 000 8z'],
     info:     ['M12 8h.01', 'M11 12h1v4h1', 'M12 22a10 10 0 100-20 10 10 0 000 20z'],
     help:     ['M12 22a10 10 0 100-20 10 10 0 000 20z', 'M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3', 'M12 17h.01'],
@@ -7083,9 +7084,7 @@
     );
   }
 
-  function OperatorDeliveries() {
-    // R83: rows are stateful - weight edits and searched loads mutate them.
-    const [rows, setRows] = useState(OP_ROWS);
+  function OperatorDeliveries({ rows, setRows, onStore = () => {} }) {
     // R79: date filter state - defaults to the user's current day.
     const [selDate, setSelDate] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
     const [calOpen, setCalOpen] = useState(false);
@@ -7241,7 +7240,12 @@
                 <div className="text-[13px] text-neutral-100 mt-1">{r.material}</div>
               </div>
               <TaskCell state={r.analysis} btn={r.aBtn} />
-              <TaskCell state={r.store} btn={r.sBtn} />
+              <TaskCell
+                state={r.store}
+                btn={r.sBtn}
+                onBtn={() => onStore(r)}
+                btnLabel={'Store bales for ' + r.supplier + ' ' + r.ref}
+              />
               <TaskCell
                 state={r.weight}
                 btn={r.wBtn}
@@ -7382,9 +7386,305 @@
     );
   }
 
+  // ============================================================================
+  // R84: STORE WORKFLOW (operator, full page)
+  //
+  // Opened from the Store column CTA. Operators keep this page open while
+  // storing bales in stacks of 3: the +N buttons put the count straight into
+  // the bay's field and everything autosaves 10s after the last change - no
+  // per-input Save. Safi recommends WHERE to store at zone level based on
+  // Clear PET quality thresholds (BMP's red/yellow/blue zones); that logic is
+  // deliberately invisible to operators - they only see the current
+  // recommendation (starred) and the next one. Storing bales in the current
+  // recommendation reveals the next, and the UI scrolls to it automatically.
+  // ============================================================================
+  const OP_STORE_ZONES = [
+    { id: '1', bales: 463, loads: 32, tone: 'amber', bays: [
+      { id: '1-D', bales: 1,  loads: 1, tone: 'green' },
+      { id: '1-E', bales: 20, loads: 1, tone: 'green' },
+      { id: '1-F', bales: 6,  loads: 1, tone: 'green' },
+      { id: '1-G', bales: 60, loads: 2, tone: 'amber' },
+      { id: '1-H', bales: 34, loads: 2, tone: 'green' }
+    ] },
+    { id: '2', bales: 295, loads: 18, tone: 'grey', bays: [
+      { id: '2-A', bales: 42, loads: 3, tone: 'green' },
+      { id: '2-B', bales: 88, loads: 6, tone: 'amber' },
+      { id: '2-C', bales: 12, loads: 1, tone: 'green' },
+      { id: '2-D', bales: 51, loads: 4, tone: 'green' }
+    ] },
+    { id: '3', bales: 110, loads: 17, tone: 'green', bays: [
+      { id: '3-A', bales: 16, loads: 2, tone: 'green' },
+      { id: '3-B', bales: 4,  loads: 1, tone: 'green' },
+      { id: '3-C', bales: 45, loads: 6, tone: 'green' },
+      { id: '3-D', bales: 45, loads: 8, tone: 'amber' }
+    ] },
+    { id: '4', bales: 369, loads: 25, tone: 'amber', bays: [
+      { id: '4-A', bales: 120, loads: 8, tone: 'amber' },
+      { id: '4-B', bales: 96,  loads: 7, tone: 'amber' },
+      { id: '4-C', bales: 82,  loads: 5, tone: 'green' },
+      { id: '4-D', bales: 71,  loads: 5, tone: 'green' }
+    ] }
+  ];
+  // Quality-driven recommendation queue (zone logic hidden from operators).
+  const OP_STORE_RECS = [
+    { zone: '1', bay: '1-E' },
+    { zone: '3', bay: '3-B' },
+    { zone: '2', bay: '2-C' }
+  ];
+  const OP_TONE_CHIP = {
+    green: 'border-success-200 text-success-300',
+    amber: 'border-[#FF891C] text-[#C4650B]',
+    grey:  'border-neutral-10 text-neutral-60'
+  };
+
+  function OperatorStore({ row, onCancel, onDone }) {
+    // alloc: '__buffer' or bay id -> bales stored in THIS session.
+    const [alloc, setAlloc] = useState({});
+    const [weight, setWeight] = useState(row.weightKg ? String(row.weightKg) : '');
+    const [activeTab, setActiveTab] = useState('1');
+    const [recIndex, setRecIndex] = useState(0);
+    const [saveState, setSaveState] = useState('idle'); // idle | pending | saved
+    const recRef = useRef(null);
+    const rec = OP_STORE_RECS[recIndex] || null;
+    const nextRec = OP_STORE_RECS[recIndex + 1] || null;
+    const total = Object.values(alloc).reduce((a, v) => a + v, 0);
+
+    // R84: autosave 10s after the last change - operators never press Save.
+    useEffect(() => {
+      if (saveState !== 'pending') return;
+      const t = setTimeout(() => setSaveState('saved'), 10000);
+      return () => clearTimeout(t);
+    }, [alloc, saveState]);
+
+    // R84: when the recommendation advances, jump to its zone and scroll the
+    // starred card into view so the operator never hunts for it.
+    useEffect(() => {
+      if (!rec) return;
+      setActiveTab(rec.zone);
+      const t = setTimeout(() => { if (recRef.current) recRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 200);
+      return () => clearTimeout(t);
+    }, [recIndex]);
+
+    const bump = (bayId, delta) => {
+      setAlloc(prev => {
+        const v = Math.max(0, (prev[bayId] || 0) + delta);
+        const next = { ...prev };
+        if (v === 0) delete next[bayId]; else next[bayId] = v;
+        return next;
+      });
+      setSaveState('pending');
+      // Storing into the current recommendation reveals the next one.
+      if (rec && bayId === rec.bay && delta > 0) setRecIndex(i => i + 1);
+    };
+    const setDirect = (bayId, raw) => {
+      const v = Math.max(0, parseInt(raw.replace(/[^0-9]/g, ''), 10) || 0);
+      setAlloc(prev => {
+        const next = { ...prev };
+        if (v === 0) delete next[bayId]; else next[bayId] = v;
+        return next;
+      });
+      setSaveState('pending');
+      if (rec && bayId === rec.bay && v > 0) setRecIndex(i => i + 1);
+    };
+
+    const Stepper = ({ bayId }) => {
+      const v = alloc[bayId] || 0;
+      return (
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {[-3, -2, -1].map(d => (
+            <button
+              key={d}
+              onClick={() => bump(bayId, d)}
+              disabled={v < Math.abs(d)}
+              aria-label={`Remove ${Math.abs(d)} bales from bay ${bayId}`}
+              className="w-14 h-14 rounded-lg border border-neutral-10 bg-white text-[16px] font-semibold text-neutral-100 hover:bg-neutral-5 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-safi-600"
+            >
+              {d}
+            </button>
+          ))}
+          <input
+            value={v}
+            onChange={e => setDirect(bayId, e.target.value)}
+            inputMode="numeric"
+            aria-label={`Bales to store in bay ${bayId}`}
+            className="w-16 h-14 rounded-lg border border-neutral-10 bg-white text-center text-[18px] font-semibold text-neutral-100 focus:outline-none focus:ring-2 focus:ring-safi-600"
+          />
+          {[1, 2, 3].map(d => (
+            <button
+              key={d}
+              onClick={() => bump(bayId, d)}
+              aria-label={`Add ${d} bales to bay ${bayId}`}
+              className="w-14 h-14 rounded-lg border border-neutral-10 bg-white text-[16px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+            >
+              +{d}
+            </button>
+          ))}
+        </div>
+      );
+    };
+
+    const zone = OP_STORE_ZONES.find(z => z.id === activeTab);
+    const pills = Object.entries(alloc).map(([k, v]) =>
+      k === '__buffer' ? `Line 1 buffer (${v} ${v === 1 ? 'bale' : 'bales'})` : `Zone ${k.split('-')[0]}: Bay ${k} (${v} ${v === 1 ? 'bale' : 'bales'})`
+    );
+
+    return (
+      <div className="max-w-[900px] mx-auto px-4 py-6 pb-32">
+        <button onClick={onCancel} className="text-[14px] text-neutral-60 hover:text-safi-600 mb-2 focus:outline-none focus:ring-2 focus:ring-safi-600 rounded">
+          &lsaquo; Back to deliveries
+        </button>
+        <h1 className="text-[26px] font-bold text-neutral-100 mb-1">Store load in warehouse</h1>
+        <div className="text-[13px] text-neutral-60 mb-4">{row.supplier} {row.ref} · {row.material}</div>
+
+        {/* Actual load weight */}
+        <div className="text-[13px] text-neutral-60 mb-1.5">Enter the load total weight</div>
+        <div className="relative mb-4 max-w-md">
+          <label htmlFor="store-weight" className="absolute -top-2 left-3 px-1.5 bg-white text-[12px] text-neutral-60 z-10">Actual load weight</label>
+          <input
+            id="store-weight"
+            inputMode="numeric"
+            placeholder="0"
+            value={weight}
+            onChange={e => setWeight(e.target.value.replace(/[^0-9]/g, ''))}
+            className="w-full h-14 px-4 pr-12 border border-neutral-10 rounded-lg text-[16px] text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+          />
+          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[14px] text-neutral-60">kg</span>
+        </div>
+
+        {/* Session summary */}
+        {total > 0 && (
+          <div className="rounded-lg px-4 py-4 mb-4 text-center" style={{ background: OP.okBg }}>
+            <div className="text-[17px] font-bold" style={{ color: OP.okFg }}>{total} {total === 1 ? 'bale' : 'bales'} stored</div>
+            <div className="flex items-center justify-center gap-2 mt-2 flex-wrap">
+              {pills.map(p => (
+                <span key={p} className="px-2.5 py-1 rounded-full bg-white/80 text-[13px] font-medium text-neutral-80">{p}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Zone tabs */}
+        <div className="flex items-center gap-5 border-b border-neutral-10 mb-4 overflow-x-auto">
+          <button
+            onClick={() => setActiveTab('buffer')}
+            className={'flex items-center gap-2 pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === 'buffer' ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
+          >
+            Buffer
+            <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + OP_TONE_CHIP.green}>25 bales</span>
+          </button>
+          {OP_STORE_ZONES.map(z => (
+            <button
+              key={z.id}
+              onClick={() => setActiveTab(z.id)}
+              className={'flex items-center gap-2 pb-2.5 -mb-px border-b-2 text-[15px] font-semibold whitespace-nowrap focus:outline-none ' + (activeTab === z.id ? 'border-safi-600 text-safi-700' : 'border-transparent text-neutral-100 hover:text-safi-600')}
+            >
+              Zone {z.id}
+              <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + (OP_TONE_CHIP[z.tone] || OP_TONE_CHIP.grey)}>{z.bales} / {z.loads}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Bay list */}
+        {activeTab === 'buffer' ? (
+          <div className="bg-white border border-neutral-10 rounded-xl p-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              <h3 className="text-[17px] font-bold text-neutral-100">Line 1 buffer</h3>
+              <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + OP_TONE_CHIP.green}>25 bales</span>
+            </div>
+            <Stepper bayId="__buffer" />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {(zone?.bays || []).map(bay => {
+              const isRec = rec && rec.bay === bay.id;
+              const isNext = nextRec && nextRec.bay === bay.id;
+              return (
+                <div
+                  key={bay.id}
+                  ref={isRec ? recRef : null}
+                  className={'rounded-xl p-5 ' + (isRec ? 'border-2 border-safi-600 bg-safi-50' : 'bg-white border border-neutral-10')}
+                >
+                  {isRec && (
+                    <div className="flex items-center gap-1.5 text-[14px] font-semibold text-safi-700 mb-2.5">
+                      <Icon d={I.star} className="w-4 h-4" />
+                      Best storage for yield optimisation
+                    </div>
+                  )}
+                  {isNext && (
+                    <div className="text-[13px] font-medium text-neutral-60 mb-2.5">Next recommendation</div>
+                  )}
+                  <div className="flex items-center gap-2.5 mb-4">
+                    <h3 className="text-[17px] font-bold text-neutral-100">Bay {bay.id}</h3>
+                    <span className={'px-2 py-0.5 rounded-full border text-[12px] font-semibold ' + (OP_TONE_CHIP[bay.tone] || OP_TONE_CHIP.grey)}>
+                      {bay.bales} {bay.bales === 1 ? 'bale' : 'bales'} / {bay.loads} {bay.loads === 1 ? 'load' : 'loads'}
+                    </span>
+                  </div>
+                  <Stepper bayId={bay.id} />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Sticky footer - autosave note + actions */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-neutral-10 z-30">
+          <div className="max-w-[900px] mx-auto px-4 py-4 flex items-center justify-between gap-4">
+            <div className="text-[13px] text-neutral-60 flex-1 min-w-0">
+              {saveState === 'saved' ? (
+                <span className="inline-flex items-center gap-1.5 font-medium" style={{ color: OP.okFg }}>
+                  <Icon d={I.check} className="w-4 h-4" />
+                  Changes saved automatically
+                </span>
+              ) : saveState === 'pending' ? (
+                'Unsaved changes - autosaving shortly...'
+              ) : (
+                'Allocate bales to a bay - changes will save automatically.'
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onCancel}
+                className="h-14 px-8 rounded-lg border border-neutral-10 bg-white text-[16px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => onDone(total, weight ? Number(weight) : null)}
+                className="h-14 px-8 rounded-lg bg-safi-600 text-white text-[16px] font-semibold hover:bg-safi-700 focus:outline-none focus:ring-2 focus:ring-safi-800"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function OperatorView({ onManager }) {
     const [screen, setScreen] = useState('deliveries');
+    // R84: rows lifted here so the Store workflow can update the deliveries
+    // table (store badge + weight) when the operator finishes.
+    const [rows, setRows] = useState(OP_ROWS);
+    const [storeRow, setStoreRow] = useState(null);
     const isDeliveries = screen === 'deliveries';
+    const isStore = screen === 'store';
+    const finishStore = (bales, weightKg) => {
+      setRows(prev => prev.map(r => {
+        if (r.id !== storeRow.id) return r;
+        const next = { ...r };
+        if (bales > 0) { next.store = { kind: 'ok', label: bales + ' ' + (bales === 1 ? 'bale' : 'bales') }; next.sBtn = ['plus', false]; }
+        if (weightKg && weightKg > 0) {
+          next.weightKg = weightKg;
+          next.weight = { kind: 'ok', label: weightKg.toLocaleString() + ' kg' };
+          next.wBtn = ['edit', false];
+          next.warnRow = next.analysis.kind === 'warn';
+        }
+        return next;
+      }));
+      setScreen('deliveries');
+      setStoreRow(null);
+    };
     return (
       <div className="min-h-screen bg-[#F9F9F9]">
         {/* iPad toolbar: nav toggle left, brand centre, role + account right */}
@@ -7410,7 +7710,11 @@
             <button aria-label="Account" className="p-2 rounded-full hover:bg-neutral-5"><Icon d={I.user} className="w-6 h-6 text-neutral-100" /></button>
           </div>
         </div>
-        {isDeliveries ? <OperatorDeliveries /> : <OperatorPicking />}
+        {isStore
+          ? <OperatorStore row={storeRow} onCancel={() => { setScreen('deliveries'); setStoreRow(null); }} onDone={finishStore} />
+          : (isDeliveries
+            ? <OperatorDeliveries rows={rows} setRows={setRows} onStore={(r) => { setStoreRow(r); setScreen('store'); }} />
+            : <OperatorPicking />)}
       </div>
     );
   }
