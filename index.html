@@ -7458,6 +7458,9 @@
     // next autosave completes the warehouse hides again behind the next
     // recommendation, keeping deviation deliberate and rare.
     const [browseAll, setBrowseAll] = useState(!guided);
+    // R94: Skip opens a two-option chooser (option B) - skip to the next
+    // recommendation, or deliberately leave the guided path.
+    const [skipOpen, setSkipOpen] = useState(false);
     // R85: save model rebuilt around mistake recovery.
     //   alloc   - uncommitted per-bay counts, each with a visible 5s countdown
     //             (timers). Any change resets the countdown; Undo clears it.
@@ -7701,15 +7704,13 @@
                     <SavePending bayId={bay.id} />
                   </div>
                   <Stepper bayId={bay.id} />
-                  {/* R92/R93: Skip - deliberate deviation from the recommendation.
-                      Destructive styling per the Safi UI Kit (outlined, red border
-                      + label), anchored to the card's bottom-right edge. */}
+                  {/* R94: Skip is neutral - it leads to a choice, not a commitment.
+                      The chooser holds the real fork (next rec vs full warehouse). */}
                   {guided && !browseAll && isRec && (
                     <div className="mt-4 flex justify-end">
                       <button
-                        onClick={() => setBrowseAll(true)}
-                        className="h-14 px-6 inline-flex items-center gap-2 rounded-lg border bg-white text-[15px] font-semibold hover:bg-[#FEEBEE] focus:outline-none focus:ring-2 focus:ring-[#F63E3E]"
-                        style={{ borderColor: '#F63E3E', color: '#F63E3E' }}
+                        onClick={() => setSkipOpen(true)}
+                        className="h-14 px-6 inline-flex items-center gap-2 rounded-lg border border-neutral-10 bg-white text-[15px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
                       >
                         <Icon d={I.arrowR} className="w-4 h-4" />
                         Skip
@@ -7805,6 +7806,16 @@
           </div>
         ) : (
           <>
+        {/* R94: one tap back onto the guided path while browsing. */}
+        {guided && rec && (
+          <button
+            onClick={() => setBrowseAll(false)}
+            className="mb-3 h-12 px-4 inline-flex items-center gap-2 rounded-full border border-safi-600 bg-safi-50 text-[14px] font-semibold text-safi-700 hover:bg-safi-100 focus:outline-none focus:ring-2 focus:ring-safi-600"
+          >
+            <Icon d={I.star} className="w-4 h-4" />
+            Back to recommendations
+          </button>
+        )}
         {/* Zone tabs */}
         <div className="flex items-center gap-5 border-b border-neutral-10 mb-4 overflow-x-auto">
           <button
@@ -7848,6 +7859,37 @@
           </>
         )}
           </>
+        )}
+
+        {/* R94: skip chooser - skip one recommendation (neutral) or leave the
+            guided path for this load (destructive). Skipped bays drop out and
+            are logged in production. */}
+        {skipOpen && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setSkipOpen(false)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6" role="dialog" aria-modal="true" aria-label="Skip recommendation" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-[22px] font-bold text-neutral-100">Skip recommendation?</h2>
+                <button onClick={() => setSkipOpen(false)} aria-label="Close" className="w-12 h-12 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                  <Icon d={I.close} className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="space-y-3">
+                <button
+                  onClick={() => { setSkipOpen(false); setRecIndex(i => i + 1); }}
+                  className="w-full h-16 rounded-lg border border-neutral-10 bg-white text-[17px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                >
+                  Show next recommendation
+                </button>
+                <button
+                  onClick={() => { setSkipOpen(false); setBrowseAll(true); }}
+                  className="w-full h-16 rounded-lg border bg-white text-[17px] font-semibold hover:bg-[#FEEBEE] focus:outline-none focus:ring-2 focus:ring-[#F63E3E]"
+                  style={{ borderColor: '#F63E3E', color: '#F63E3E' }}
+                >
+                  Choose a bay myself
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* R88: report a problem - pick problem, pick place, manager notified. */}
