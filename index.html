@@ -7463,14 +7463,17 @@
     const [activeTab, setActiveTab] = useState('1');
     const [recIndex, setRecIndex] = useState(0);
     const [saveState, setSaveState] = useState('idle');
-    // R86: report-a-problem overlay.
+    // R88: report-a-problem - operator picks the problem, then the exact
+    // bay/zone, so the manager knows where to go.
     const [problemOpen, setProblemOpen] = useState(false);
-    const [problemSent, setProblemSent] = useState(false);
+    const [problemType, setProblemType] = useState(null);   // 'bay-blocked' | 'bay-full' | 'zone-full'
+    const [problemTarget, setProblemTarget] = useState(null); // 'Bay 1-E' | 'Zone 3'
+    const closeProblem = () => { setProblemOpen(false); setProblemType(null); setProblemTarget(null); };
     useEffect(() => {
-      if (!problemSent) return;
-      const t = setTimeout(() => { setProblemOpen(false); setProblemSent(false); }, 2500);
+      if (!problemTarget) return;
+      const t = setTimeout(closeProblem, 2500);
       return () => clearTimeout(t);
-    }, [problemSent]);
+    }, [problemTarget]);
     // R86: relative fullness - Safi has no bay-capacity entity, so fullness is
     // shown relative to the fullest zone/bay. A glanceable bar, no numbers to
     // decode; colour shifts green -> amber -> red as it fills.
@@ -7793,40 +7796,88 @@
           </div>
         )}
 
-        {/* R86: report a problem - three big options, one tap, manager notified. */}
+        {/* R88: report a problem - pick problem, pick place, manager notified. */}
         {problemOpen && (
-          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => { setProblemOpen(false); setProblemSent(false); }}>
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={closeProblem}>
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6" role="dialog" aria-modal="true" aria-label="Report a problem" onClick={e => e.stopPropagation()}>
-              {problemSent ? (
+              {problemTarget ? (
                 <div className="text-center py-6">
                   <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: OP.okBg }}>
                     <Icon d={I.check} className="w-8 h-8" style={{ color: OP.okFg }} />
                   </div>
                   <div className="text-[20px] font-bold text-neutral-100 mb-1">Manager on shift notified</div>
-                  <div className="text-[14px] text-neutral-60 mb-6">Keep storing - they'll come to you.</div>
+                  <div className="text-[15px] text-neutral-60 mb-6">
+                    {problemTarget} {problemType === 'bay-blocked' ? 'is blocked' : 'is full'}
+                  </div>
                   <button
-                    onClick={() => { setProblemOpen(false); setProblemSent(false); }}
+                    onClick={closeProblem}
                     className="h-14 px-8 rounded-lg border border-neutral-10 bg-white text-[16px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
                   >
                     Close
                   </button>
                 </div>
+              ) : problemType ? (
+                <>
+                  <div className="flex items-center justify-between mb-5">
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => setProblemType(null)} aria-label="Back" className="w-12 h-12 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                        <Icon d={I.arrowL} className="w-5 h-5" />
+                      </button>
+                      <h2 className="text-[22px] font-bold text-neutral-100">{problemType === 'zone-full' ? 'Which zone?' : 'Which bay?'}</h2>
+                    </div>
+                    <button onClick={closeProblem} aria-label="Close" className="w-12 h-12 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                      <Icon d={I.close} className="w-5 h-5" />
+                    </button>
+                  </div>
+                  {problemType === 'zone-full' ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      {OP_STORE_ZONES.map(z => (
+                        <button
+                          key={z.id}
+                          onClick={() => setProblemTarget('Zone ' + z.id)}
+                          className="h-16 rounded-lg border border-neutral-10 bg-white text-[17px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                        >
+                          Zone {z.id}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-[50vh] overflow-y-auto">
+                      {OP_STORE_ZONES.map(z => (
+                        <div key={z.id}>
+                          <div className="text-[13px] font-medium text-neutral-60 mb-1.5">Zone {z.id}</div>
+                          <div className="flex gap-2 flex-wrap">
+                            {z.bays.map(bay => (
+                              <button
+                                key={bay.id}
+                                onClick={() => setProblemTarget('Bay ' + bay.id)}
+                                className="h-14 px-4 rounded-lg border border-neutral-10 bg-white text-[15px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                              >
+                                {bay.id}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               ) : (
                 <>
                   <div className="flex items-center justify-between mb-5">
                     <h2 className="text-[22px] font-bold text-neutral-100">Report a problem</h2>
-                    <button onClick={() => setProblemOpen(false)} aria-label="Close" className="w-12 h-12 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                    <button onClick={closeProblem} aria-label="Close" className="w-12 h-12 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
                       <Icon d={I.close} className="w-5 h-5" />
                     </button>
                   </div>
                   <div className="space-y-3">
-                    {['Bay is blocked', 'Bay is full', 'Zone is full'].map(opt => (
+                    {[['bay-blocked', 'Bay is blocked'], ['bay-full', 'Bay is full'], ['zone-full', 'Zone is full']].map(([k, label]) => (
                       <button
-                        key={opt}
-                        onClick={() => setProblemSent(true)}
+                        key={k}
+                        onClick={() => setProblemType(k)}
                         className="w-full h-16 rounded-lg border border-neutral-10 bg-white text-[17px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
                       >
-                        {opt}
+                        {label}
                       </button>
                     ))}
                   </div>
