@@ -7472,7 +7472,10 @@
     // resets it; when it expires everything pending commits at once. The
     // snackbar is the single source of save status.
     const [pendingSave, setPendingSave] = useState(null); // { left: 5 } | null
-    const [savedFlash, setSavedFlash] = useState(null);   // { total, label } | null
+    const [savedFlash, setSavedFlash] = useState(null);   // { total, label } | { text } | null
+    // R96: snapshot of history before the first +/- edit in a save window,
+    // so UNDO can restore it. Cleared on commit.
+    const histSnapRef = useRef(null);
     const [history, setHistory] = useState([]);
     const [histOpen, setHistOpen] = useState(false);
     const [moveEntry, setMoveEntry] = useState(null); // history entry being moved
@@ -7530,8 +7533,14 @@
 
     // R95: commit ALL pending stacks (called when the shared countdown expires).
     const commitAll = () => {
+      const hadHistEdits = !!histSnapRef.current;
+      histSnapRef.current = null;
       setAlloc(prev => {
         const entries = Object.entries(prev).filter(([, v]) => v > 0);
+        if (entries.length === 0 && hadHistEdits) {
+          setSaveState('saved');
+          setSavedFlash({ text: 'Changes saved' });
+        }
         if (entries.length > 0) {
           const now = Date.now();
           setHistory(h => [
@@ -7599,16 +7608,29 @@
     };
     const undoAll = () => {
       setAlloc({});
+      if (histSnapRef.current) {
+        setHistory(histSnapRef.current);
+        histSnapRef.current = null;
+      }
       setPendingSave(null);
       setSaveState('idle');
     };
     const bump = (bayId, delta) => touch(bayId, Math.max(0, (alloc[bayId] || 0) + delta));
     const setDirect = (bayId, raw) => touch(bayId, Math.max(0, parseInt(raw.replace(/[^0-9]/g, ''), 10) || 0));
 
-    // History edits.
-    const adjustEntry = (id, delta) => setHistory(prev => prev
-      .map(e => e.id === id ? { ...e, bales: Math.max(0, e.bales + delta) } : e)
-      .filter(e => e.bales > 0));
+    // R96: history +/- edits trigger the shared autosave - every press
+    // restarts the 5s window (snackbar + UNDO), commit finalises.
+    const adjustEntry = (id, delta) => {
+      setHistory(prev => {
+        if (!histSnapRef.current) histSnapRef.current = prev;
+        return prev
+          .map(e => e.id === id ? { ...e, bales: Math.max(0, e.bales + delta) } : e)
+          .filter(e => e.bales > 0);
+      });
+      setPendingSave({ left: 5 });
+      setSaveState('pending');
+      setSavedFlash(null);
+    };
     // Blocked = newer bales already sit on top of the source bay.
     const isBlocked = (entry) => (alloc[entry.bayId] || 0) > 0 ||
       history.some(e => e.bayId === entry.bayId && e.id !== entry.id && e.at > entry.at);
@@ -7639,7 +7661,9 @@
           {pendingSave ? (
             <div className="relative bg-neutral-100 rounded-xl shadow-xl overflow-hidden pl-6 pr-4 py-4 flex items-center justify-between gap-4">
               <span className="text-[18px] font-medium text-white truncate">
-                Saving {totalPending} {totalPending === 1 ? 'bale' : 'bales'} to {pendingLabel}
+                {totalPending > 0
+                  ? `Saving ${totalPending} ${totalPending === 1 ? 'bale' : 'bales'} to ${pendingLabel}`
+                  : 'Saving changes'}
               </span>
               <button
                 onClick={undoAll}
@@ -7655,7 +7679,7 @@
             <div className="bg-neutral-100 rounded-xl shadow-xl pl-6 pr-6 py-5 flex items-center gap-3">
               <Icon d={I.checkCircle} className="w-6 h-6 shrink-0 text-success-200" />
               <span className="text-[18px] font-medium text-white truncate">
-                Saved {savedFlash.total} {savedFlash.total === 1 ? 'bale' : 'bales'} to {savedFlash.label}
+                {savedFlash.text || `Saved ${savedFlash.total} ${savedFlash.total === 1 ? 'bale' : 'bales'} to ${savedFlash.label}`}
               </span>
             </div>
           )}
