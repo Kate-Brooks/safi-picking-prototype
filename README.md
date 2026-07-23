@@ -13,6 +13,10 @@ open index.html      # macOS — just opens in the default browser
 
 It's a single HTML file. React, ReactDOM, Tailwind, and Babel load from CDN — no install, no build step.
 
+## Storage pattern simulation
+
+[`storage-pattern-simulation.html`](https://kate-brooks.github.io/safi-picking-prototype/storage-pattern-simulation.html) — standalone simulation of the FO storage logic: each stack of 3 bales goes to the leftmost bay with the fewest stacks (tiered level-fill). Two scenarios, including the two-sided corridor safety case.
+
 ## What's in it
 
 Two roles, one page (Production Management), switched via the **View as Shift Leader / View as Forklift Operator** toggle in the top bar.
