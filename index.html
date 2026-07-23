@@ -9269,6 +9269,8 @@
     const tEN = (en, es) => lang === 'es' ? es : en;
 
     // Static seed for demo: Line 1 running with a Thermoforms target, Line 2 idle.
+    // R102: operators-on-shift card hidden behind a toggle (it's tall).
+    const [showOps, setShowOps] = useState(false);
     const [lineState, setLineState] = useState({
       'Line 1': {
         active: true,
@@ -9914,8 +9916,20 @@
           </div>
         </div>
 
-        {/* R100: live AI queue + Safi explainer removed; operators on shift stays. */}
-        {anyLineActive && <OperatorsOnShiftCard />}
+        {/* R100/R102: operators on shift behind a Show/Hide toggle. */}
+        {anyLineActive && (
+          <div className="mb-6">
+            <button
+              onClick={() => setShowOps(o => !o)}
+              aria-expanded={showOps}
+              className="h-11 px-4 inline-flex items-center gap-2 rounded-lg border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+            >
+              <Icon d={I.user} className="w-4 h-4" />
+              {showOps ? 'Hide operators on shift' : 'Show operators on shift'}
+            </button>
+            {showOps && <div className="mt-3"><OperatorsOnShiftCard /></div>}
+          </div>
+        )}
 
         <div>
           <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
@@ -9955,16 +9969,17 @@
     'Line 2': {
       color: '#2FB554',
       day: {
-        material: 'Clear PET Bales', target: 'PET ~90.0%', actual: 'PET 89.4%', inSpec: false,
+        // R102: Line 2 only processes Green PET Bales.
+        material: 'Green PET Bales', target: 'Green PET ~85.0%', actual: 'Green PET 89.4%', inSpec: true,
         elapsed: '07:38:12', bales: 38, weightKg: 24310, weightHr: 3190, throughput: 6000, oee: 77.0,
         thermoHr: 19.1, thermoOk: true, contamHr: 2.3, contamOk: false,
         charts: [
-          { title: 'Thermoform input this shift', targetLabel: 'target \u2264 20%', target: 20, yMin: 10, yMax: 25, base: 16.2, amp: 1.4, endVal: 15.6 },
-          { title: 'Clear PET input this shift', targetLabel: 'target \u2265 90%', target: 90, yMin: 82, yMax: 96, base: 89.2, amp: 1.4, endVal: 90.6 },
+          { title: 'Thermoform input this shift', targetLabel: 'target \u2264 25%', target: 25, yMin: 10, yMax: 30, base: 16.2, amp: 1.4, endVal: 15.6 },
+          { title: 'Green PET input this shift', targetLabel: 'target \u2265 85%', target: 85, yMin: 78, yMax: 94, base: 88.6, amp: 1.4, endVal: 90.2 },
           { title: 'Contaminant input this shift (incl. metals)', targetLabel: 'target \u2264 2%', target: 2, yMin: 0, yMax: 4, base: 2.3, amp: 0.4, endVal: 1.9 }
         ]
       },
-      night: { notStarted: true, material: 'Clear PET Bales', target: 'PET ~90.0%', elapsed: '00:00:00', bales: 0, weightKg: 0, weightHr: 0, throughput: 6000 }
+      night: { notStarted: true, material: 'Green PET Bales', target: 'Green PET ~85.0%', elapsed: '00:00:00', bales: 0, weightKg: 0, weightHr: 0, throughput: 6000 }
     }
   };
 
@@ -10008,6 +10023,8 @@
 
   function DashShiftCard({ line, shiftName, hours, data, color }) {
     const muted = !!data.notStarted;
+    // R102: one chart at a time - defaults to the PET chart (index 1).
+    const [chartIdx, setChartIdx] = useState(1);
     const Small = ({ label, children }) => (
       <div>
         <div className="text-[13px] text-neutral-60 mb-0.5">{label}</div>
@@ -10077,17 +10094,34 @@
             <RateStat label="Thermoforms / hr" value={data.thermoHr} ok={data.thermoOk} targetLabel="target < 20%" />
             <RateStat label="Contaminants / hr" value={data.contamHr} ok={data.contamOk} targetLabel="target < 2%" />
           </div>
-          {/* R100: shift charts with the picking-recommendation prediction. */}
+          {/* R100/R102: one shift chart at a time, stepped with chevrons. */}
           {data.charts && (
             <div className="mt-5 pt-4 border-t border-neutral-10">
-              <div className="flex items-center gap-4 text-[12px] text-neutral-60 mb-3 flex-wrap">
-                <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 h-0.5 bg-safi-600" aria-hidden="true" />Actual</span>
-                <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-safi-300" aria-hidden="true" />Predicted from picking recommendations</span>
-                <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-success-200" aria-hidden="true" />Target</span>
+              <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                <div className="flex items-center gap-4 text-[12px] text-neutral-60 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 h-0.5 bg-safi-600" aria-hidden="true" />Actual</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-safi-300" aria-hidden="true" />Predicted</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-success-200" aria-hidden="true" />Target</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setChartIdx(i => (i + data.charts.length - 1) % data.charts.length)}
+                    aria-label="Previous chart"
+                    className="w-10 h-10 rounded-lg border border-neutral-10 bg-white flex items-center justify-center hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                  >
+                    <Icon d={I.chevronR} className="w-4 h-4 rotate-180" />
+                  </button>
+                  <span className="text-[12px] text-neutral-60 w-8 text-center">{chartIdx + 1} / {data.charts.length}</span>
+                  <button
+                    onClick={() => setChartIdx(i => (i + 1) % data.charts.length)}
+                    aria-label="Next chart"
+                    className="w-10 h-10 rounded-lg border border-neutral-10 bg-white flex items-center justify-center hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                  >
+                    <Icon d={I.chevronR} className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <div className="space-y-4">
-                {data.charts.map(c => <DashShiftChart key={c.title} {...c} />)}
-              </div>
+              <DashShiftChart key={data.charts[chartIdx].title} {...data.charts[chartIdx]} />
             </div>
           )}
         </div>
@@ -10176,7 +10210,7 @@
               <tr className="text-left">
                 <th className="w-10 px-2 py-3" aria-label="Expand" />
                 <th className="px-4 py-3 font-medium text-neutral-60">Shift</th>
-                <th className="px-4 py-3 font-medium text-neutral-60">Target inputs</th>
+                <th className="px-4 py-3 font-medium text-neutral-60">Actual inputs</th>
                 <th className="px-4 py-3 font-medium text-neutral-60 text-right">Bales</th>
                 <th className="px-4 py-3 font-medium text-neutral-60 text-right">Weight</th>
                 <th className="px-4 py-3 font-medium text-neutral-60 text-right">OEE</th>
@@ -10201,8 +10235,21 @@
                         <div className="text-neutral-60 mt-0.5">{row.shift} shift · {row.shift === 'Day' ? '7:00 - 19:00' : '19:00 - 7:00'}</div>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="text-neutral-100">L1 · Clear PET &ge; 75%</div>
-                        <div className="text-neutral-100 mt-0.5">L2 · Green PET &ge; 85%</div>
+                        {/* R102: per-line actual inputs, spec-coloured. */}
+                        {['Line 1', 'Line 2'].map(line => {
+                          const d = row.lines[line];
+                          const lt = SHIFT_LINE_TARGETS[line];
+                          const thermoOk = d.thermo <= lt.thermoTarget;
+                          const petOk = d.pet >= lt.petTarget;
+                          return (
+                            <div key={line} className={line === 'Line 2' ? 'mt-0.5' : ''}>
+                              <span className="text-neutral-60">{line === 'Line 1' ? 'L1' : 'L2'} · Thermoform </span>
+                              <span className={'font-semibold ' + (thermoOk ? 'text-success-300' : 'text-rose-900')}>{Math.round(d.thermo)}%</span>
+                              <span className="text-neutral-60"> · {lt.petLabel} </span>
+                              <span className={'font-semibold ' + (petOk ? 'text-success-300' : 'text-rose-900')}>{Math.round(d.pet)}%</span>
+                            </div>
+                          );
+                        })}
                       </td>
                       <td className="px-4 py-3 text-right text-neutral-100">{t.bales}</td>
                       <td className="px-4 py-3 text-right text-neutral-100">{fmtKgs(t.weightKg)}</td>
