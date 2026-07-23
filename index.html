@@ -9919,10 +9919,11 @@
 
         <div>
           <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
-            {tEN('History', 'Historial')}
+            {tEN('Shift history', 'Historial de turnos')}
           </div>
-          {/* R71: full History surface embedded inline (replaces the compact recent-windows list). */}
-          <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} yard={yard} />
+          {/* R101: shift-centric history - one row per shift, expandable into
+              per-line actual inputs, drawer shows the chronological bale log. */}
+          <ShiftHistorySection />
         </div>
       </Fragment>
     );
@@ -10090,6 +10091,219 @@
             </div>
           )}
         </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // R101: SHIFT HISTORY - shift-centric replacement for the line-tabbed
+  // production-day table. One row per shift (newest first) with target
+  // inputs, bales, weight and OEE; expanding shows per-line actual inputs.
+  // Line 1 only processes Clear PET Bales, Line 2 only Green PET Bales, so
+  // target inputs differ per line. Clicking a line opens the drawer with the
+  // chronological bale log for that shift.
+  // ============================================================================
+  const SHIFT_LINE_TARGETS = {
+    'Line 1': { material: 'Clear PET Bales', color: '#0288D1', petLabel: 'Clear PET', petTarget: 75, thermoTarget: 20, contamTarget: 2 },
+    'Line 2': { material: 'Green PET Bales', color: '#2FB554', petLabel: 'Green PET', petTarget: 85, thermoTarget: 25, contamTarget: 2 }
+  };
+  const SHIFT_HIST = (() => {
+    const days = ['Wed 22 Jul 2026', 'Tue 21 Jul 2026', 'Mon 20 Jul 2026', 'Sun 19 Jul 2026', 'Sat 18 Jul 2026'];
+    const rows = [];
+    days.forEach((date, di) => {
+      ['Day', 'Night'].forEach((shift, si) => {
+        const seed = di * 2 + si;
+        const mkLine = (lineName, li) => {
+          const t = SHIFT_LINE_TARGETS[lineName];
+          const bales = 88 + ((seed * 37 + li * 53) % 110);
+          const weightKg = bales * (615 + ((seed * 13 + li * 7) % 55));
+          const thermo = +((t.thermoTarget - 4) + ((seed * 7 + li * 3) % 60) / 10).toFixed(1);
+          const pet = +((t.petTarget - 2) + ((seed * 11 + li * 5) % 70) / 10).toFixed(1);
+          const contam = +(1.2 + ((seed * 5 + li * 9) % 16) / 10).toFixed(1);
+          const oee = +(55 + ((seed * 17 + li * 29) % 350) / 10).toFixed(1);
+          return { bales, weightKg, thermo, pet, contam, oee };
+        };
+        rows.push({ id: 'sh' + seed, seed, date, shift, lines: { 'Line 1': mkLine('Line 1', 0), 'Line 2': mkLine('Line 2', 1) } });
+      });
+    });
+    return rows;
+  })();
+
+  function ShiftHistorySection() {
+    const [openShift, setOpenShift] = useState(null);
+    const [drawer, setDrawer] = useState(null); // { row, line } | null
+    const fmtKgs = (v) => v.toLocaleString() + 'kg';
+    const SpecChip = ({ val, lte, target }) => {
+      const ok = lte ? val <= target : val >= target;
+      return (
+        <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-medium ' + (ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
+          <Icon d={ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
+          {val.toFixed(1)}%
+        </span>
+      );
+    };
+    const totals = (row) => {
+      const l1 = row.lines['Line 1'], l2 = row.lines['Line 2'];
+      return { bales: l1.bales + l2.bales, weightKg: l1.weightKg + l2.weightKg, oee: (l1.oee + l2.oee) / 2 };
+    };
+    // Chronological bale log for the drawer - deterministic demo data.
+    const baleLog = (row, line) => {
+      const d = row.lines[line];
+      const startH = row.shift === 'Day' ? 7 : 19;
+      const who = line === 'Line 1' ? ['Marcus Bell', 'Bhautik R. Dalal'] : ['Priya Nair', 'Bhautik R. Dalal'];
+      const refs = line === 'Line 1' ? ['4500291130-10', '4500291402-20', '4500290877-30'] : ['4500291207-10', '4500290955-20', '4500291318-30'];
+      const sups = line === 'Line 1' ? ['GFL 124 Arrowhead', 'TOMRA Schenectady', 'WM Napanee'] : ['Peel Region MRF', 'Circular Fibres'];
+      const bays = line === 'Line 1' ? ['A-E', 'A-G', 'B-B'] : ['C-C', 'C-D', 'B-D'];
+      const n = Math.min(20, d.bales);
+      return Array.from({ length: n }, (_, i) => {
+        const mins = Math.floor(i * (720 / d.bales));
+        const h = (startH + Math.floor(mins / 60)) % 24;
+        return {
+          time: String(h).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0'),
+          ref: refs[(i + row.seed) % refs.length],
+          supplier: sups[(i * 7 + row.seed) % sups.length],
+          bay: bays[(i * 5 + 1) % bays.length],
+          weight: 600 + ((i * 37 + row.seed * 11) % 80),
+          who: who[(i % 7 === 3) ? 1 : 0]
+        };
+      });
+    };
+    return (
+      <div className="bg-white border border-neutral-10 rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-[13px]">
+            <thead className="bg-white border-b border-neutral-10">
+              <tr className="text-left">
+                <th className="w-10 px-2 py-3" aria-label="Expand" />
+                <th className="px-4 py-3 font-medium text-neutral-60">Shift</th>
+                <th className="px-4 py-3 font-medium text-neutral-60">Target inputs</th>
+                <th className="px-4 py-3 font-medium text-neutral-60 text-right">Bales</th>
+                <th className="px-4 py-3 font-medium text-neutral-60 text-right">Weight</th>
+                <th className="px-4 py-3 font-medium text-neutral-60 text-right">OEE</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-10">
+              {SHIFT_HIST.map(row => {
+                const t = totals(row);
+                const open = openShift === row.id;
+                return (
+                  <Fragment key={row.id}>
+                    <tr
+                      onClick={() => setOpenShift(open ? null : row.id)}
+                      className="hover:bg-neutral-5/50 cursor-pointer"
+                      aria-expanded={open}
+                    >
+                      <td className="px-2 py-3 text-center">
+                        <Icon d={I.chevron} className={'w-4 h-4 inline-block text-neutral-60 transition-transform ' + (open ? '' : '-rotate-90')} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-neutral-100">{row.date}</div>
+                        <div className="text-neutral-60 mt-0.5">{row.shift} shift · {row.shift === 'Day' ? '7:00 - 19:00' : '19:00 - 7:00'}</div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="text-neutral-100">L1 · Clear PET &ge; 75%</div>
+                        <div className="text-neutral-100 mt-0.5">L2 · Green PET &ge; 85%</div>
+                      </td>
+                      <td className="px-4 py-3 text-right text-neutral-100">{t.bales}</td>
+                      <td className="px-4 py-3 text-right text-neutral-100">{fmtKgs(t.weightKg)}</td>
+                      <td className="px-4 py-3 text-right text-neutral-100">{t.oee.toFixed(1)}%</td>
+                    </tr>
+                    {open && (
+                      <tr>
+                        <td colSpan={6} className="bg-neutral-5/50 px-4 py-3">
+                          <div className="space-y-2.5">
+                            {['Line 1', 'Line 2'].map(line => {
+                              const d = row.lines[line];
+                              const lt = SHIFT_LINE_TARGETS[line];
+                              return (
+                                <button
+                                  key={line}
+                                  onClick={() => setDrawer({ row, line })}
+                                  className="w-full bg-white border border-neutral-10 rounded-lg px-4 py-3 flex items-center justify-between gap-4 flex-wrap text-left hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
+                                  style={{ boxShadow: 'inset 4px 0 0 ' + lt.color }}
+                                >
+                                  <div className="min-w-[190px]">
+                                    <div className="font-bold text-neutral-100">{line} · {lt.material}</div>
+                                    <div className="text-[12px] text-neutral-60 mt-0.5">{d.bales} bales · {fmtKgs(d.weightKg)} · OEE {d.oee.toFixed(1)}%</div>
+                                  </div>
+                                  <div className="flex items-center gap-5 flex-wrap">
+                                    <div>
+                                      <div className="text-[12px] text-neutral-60 mb-0.5">Thermoforms <span className="text-safi-600">&le; {lt.thermoTarget}%</span></div>
+                                      <SpecChip val={d.thermo} lte target={lt.thermoTarget} />
+                                    </div>
+                                    <div>
+                                      <div className="text-[12px] text-neutral-60 mb-0.5">{lt.petLabel} <span className="text-safi-600">&ge; {lt.petTarget}%</span></div>
+                                      <SpecChip val={d.pet} lte={false} target={lt.petTarget} />
+                                    </div>
+                                    <div>
+                                      <div className="text-[12px] text-neutral-60 mb-0.5">Contaminants <span className="text-safi-600">&le; {lt.contamTarget}%</span></div>
+                                      <SpecChip val={d.contam} lte target={lt.contamTarget} />
+                                    </div>
+                                  </div>
+                                  <Icon d={I.chevronR} className="w-4 h-4 text-neutral-60 shrink-0" />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* R101: bale-log drawer - chronological list for the picked line + shift. */}
+        {drawer && (() => {
+          const d = drawer.row.lines[drawer.line];
+          const log = baleLog(drawer.row, drawer.line);
+          return (
+            <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={() => setDrawer(null)}>
+              <div className="w-full max-w-2xl bg-white h-full overflow-y-auto shadow-xl" role="dialog" aria-modal="true" aria-label="Processed bales" onClick={e => e.stopPropagation()}>
+                <div className="sticky top-0 bg-white border-b border-neutral-10 px-6 py-4 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[17px] font-bold text-neutral-100">{drawer.line} · {drawer.row.date} · {drawer.row.shift} shift</div>
+                    <div className="text-[13px] text-neutral-60 mt-0.5">{d.bales} bales processed · {SHIFT_LINE_TARGETS[drawer.line].material}</div>
+                  </div>
+                  <button onClick={() => setDrawer(null)} aria-label="Close" className="w-11 h-11 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                    <Icon d={I.close} className="w-5 h-5" />
+                  </button>
+                </div>
+                <table className="w-full text-[13px]">
+                  <thead className="border-b border-neutral-10">
+                    <tr className="text-left">
+                      <th className="px-6 py-2.5 font-medium text-neutral-60">Time</th>
+                      <th className="px-3 py-2.5 font-medium text-neutral-60">Order ref</th>
+                      <th className="px-3 py-2.5 font-medium text-neutral-60">Supplier</th>
+                      <th className="px-3 py-2.5 font-medium text-neutral-60">Source bay</th>
+                      <th className="px-3 py-2.5 font-medium text-neutral-60 text-right">Weight</th>
+                      <th className="px-6 py-2.5 font-medium text-neutral-60">Processed by</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-10">
+                    {log.map((b, i) => (
+                      <tr key={i} className="hover:bg-neutral-5/50">
+                        <td className="px-6 py-2.5 text-neutral-100">{b.time}</td>
+                        <td className="px-3 py-2.5 text-safi-600 font-medium">{b.ref}</td>
+                        <td className="px-3 py-2.5 text-neutral-100">{b.supplier}</td>
+                        <td className="px-3 py-2.5 text-neutral-100">Bay {b.bay}</td>
+                        <td className="px-3 py-2.5 text-right text-neutral-100">{b.weight}kg</td>
+                        <td className="px-6 py-2.5 text-neutral-100">{b.who}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {d.bales > log.length && (
+                  <div className="px-6 py-3 text-[13px] text-neutral-60 border-t border-neutral-10">
+                    Showing {log.length} of {d.bales} bales
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
