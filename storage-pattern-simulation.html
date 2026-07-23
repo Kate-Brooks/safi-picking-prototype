@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Safi — Storage Pattern Simulations</title>
+<style>
+  :root {
+    --safi-purple: #5B4FCF;
+    --safi-purple-dark: #4a40b0;
+    --safi-surface: #fafafa;
+    --safi-card: #ffffff;
+    --safi-divider: #e0e0e0;
+    --safi-text: rgba(0,0,0,0.87);
+    --safi-text-2: rgba(0,0,0,0.60);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Roboto', -apple-system, 'Segoe UI', sans-serif;
+    background: var(--safi-surface);
+    color: var(--safi-text);
+    padding: 24px;
+  }
+  .page { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: var(--safi-text-2); font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
+  .card {
+    background: var(--safi-card);
+    border: 1px solid var(--safi-divider);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 28px;
+  }
+  .zone-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; flex-wrap: wrap; gap: 8px; }
+  .zone-title { font-size: 17px; font-weight: 700; }
+  .zone-meta { font-size: 13px; color: var(--safi-text-2); }
+  .zone-desc { font-size: 13px; color: var(--safi-text-2); margin-bottom: 14px; }
+
+  .bay-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .bay-label { width: 20px; font-weight: 700; font-size: 14px; text-align: right; flex-shrink: 0; }
+  .bay-track {
+    display: flex; gap: 3px; flex: 1;
+    background: #f0f0f2;
+    border: 1px solid var(--safi-divider);
+    border-radius: 6px;
+    padding: 4px;
+    min-height: 40px;
+    align-items: center;
+  }
+  .bay-track.active { outline: 2px solid var(--safi-purple); outline-offset: 1px; }
+  .slot {
+    flex: 1; aspect-ratio: 1/1; max-width: 38px;
+    border-radius: 4px;
+    border: 1px dashed #d5d5da;
+    transition: background .15s ease;
+  }
+  .slot.filled { border: none; box-shadow: inset 0 -2px 0 rgba(0,0,0,0.12); }
+  .bay-count { width: 50px; font-size: 12px; color: var(--safi-text-2); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0 10px; }
+  button {
+    font-family: inherit; font-size: 14px; font-weight: 600;
+    padding: 9px 16px; border-radius: 8px; border: none; cursor: pointer; min-height: 38px;
+  }
+  button:focus-visible { outline: 3px solid var(--safi-purple); outline-offset: 2px; }
+  .btn-primary { background: var(--safi-purple); color: #fff; }
+  .btn-primary:hover { background: var(--safi-purple-dark); }
+  .btn-secondary { background: #fff; color: var(--safi-purple); border: 1.5px solid var(--safi-purple); }
+  .speed-label { font-size: 13px; color: var(--safi-text-2); margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+  .status { font-size: 13px; color: var(--safi-text-2); margin-bottom: 8px; min-height: 20px; }
+  .status .chip { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--safi-text); }
+  .dot { width: 13px; height: 13px; border-radius: 4px; display: inline-block; flex-shrink: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; font-size: 12px; color: var(--safi-text-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .log { font-size: 12px; color: var(--safi-text-2); max-height: 130px; overflow-y: auto; line-height: 1.7; border-top: 1px solid var(--safi-divider); padding-top: 8px; }
+  .log strong { color: var(--safi-text); }
+  .footnote { font-size: 12px; color: var(--safi-text-2); margin-top: 4px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Storage pattern simulations</h1>
+  <p class="subtitle">
+    Forklift storage logic — each square is a stack of 3 bales, each bay holds 12 stacks.<br>
+    <strong>Rule:</strong> every stack goes to the leftmost bay with the fewest stacks. This produces tiered level-filling: the shallowest bays are raised to match the next tier, always sweeping left-to-right. Press Start — loads then arrive automatically until the zone is full.
+  </p>
+
+  <div class="card" id="sim1"></div>
+  <div class="card" id="sim2"></div>
+
+  <p class="footnote">
+    Simulation 2 starts with an empty bay D between C and a full E — note the rule sends the forklift into that two-sided corridor first, which is the operator-safety scenario raised in the storage logic thread (scenario 4).
+  </p>
+</div>
+
+<script>
+function createSim(rootId, opts) {
+  const root = document.getElementById(rootId);
+  const DEPTH = 12;
+  const NAMES = opts.names;
+  const BAYS = NAMES.length;
+  const PRESET = opts.preset;
+  const COLORS = ['#5B4FCF','#27AE60','#F5A623','#E74C3C','#2D9CDB','#9B51E0','#219653','#F2994A','#56CCF2','#BB6BD9'];
+  const CAP = BAYS * DEPTH;
+
+  root.innerHTML =
+    '<div class="zone-header"><span class="zone-title">' + opts.title + '</span><span class="zone-meta" data-el="meta"></span></div>' +
+    '<div class="zone-desc">' + opts.desc + '</div>' +
+    '<div data-el="bays"></div>' +
+    '<div class="controls">' +
+      '<button class="btn-primary" data-el="play">▶ Start</button>' +
+      '<button class="btn-secondary" data-el="reset">↻ Restart</button>' +
+      '<label class="speed-label">Speed <input type="range" data-el="speed" min="1" max="10" step="1" value="4" style="width:120px"></label>' +
+    '</div>' +
+    '<div class="status" data-el="status"></div>' +
+    '<div class="legend" data-el="legend"></div>' +
+    '<div class="log" data-el="log" style="margin-top:12px"></div>';
+
+  const el = {};
+  root.querySelectorAll('[data-el]').forEach(n => el[n.getAttribute('data-el')] = n);
+
+  let bays, loads, current, timer = null;
+  const interval = () => Math.round(650 - parseInt(el.speed.value, 10) * 60);
+
+  function reset() {
+    loads = [{ id: 0, size: PRESET.reduce((a,b)=>a+b,0), color: '#9e9ea4', name: 'Existing stock', preset: true }];
+    bays = PRESET.map(c => Array(c).fill(0));
+    current = null;
+    el.log.innerHTML = '';
+    log('Zone reset to starting state: ' + PRESET.map((c,i)=>NAMES[i]+' '+c).join(' · '));
+    el.status.textContent = 'Press Start to run the simulation.';
+    render();
+  }
+  const totalFree = () => bays.reduce((s,b)=>s+(DEPTH-b.length),0);
+
+  function newLoad() {
+    const free = totalFree();
+    if (free === 0) return;
+    const size = Math.min(free, 4 + Math.floor(Math.random()*9));
+    const n = loads.filter(l=>!l.preset).length + 1;
+    const load = { id: loads.length, size, color: COLORS[(n-1)%COLORS.length], name: 'Load ' + n };
+    loads.push(load);
+    current = { load, remaining: size };
+    log('🚚 <strong>' + load.name + '</strong> arrived: ' + size + ' stacks (' + size*3 + ' bales)');
+    render();
+  }
+
+  function placeOne() {
+    if (!current || current.remaining === 0) return;
+    const open = bays.map((b,i)=>i).filter(i => bays[i].length < DEPTH);
+    if (open.length === 0) { finish(true); return; }
+    const t = open.reduce((best,i)=> bays[i].length < bays[best].length ? i : best, open[0]);
+    bays[t].push(current.load.id);
+    current.remaining--;
+    current.lastBay = t;
+    render();
+    if (current.remaining === 0) finish(false);
+  }
+
+  function finish(cut) {
+    const l = current.load;
+    const used = bays.map((b,i)=>i).filter(i => bays[i].includes(l.id));
+    log('✅ <strong>' + l.name + '</strong> stored' + (cut ? ' (zone filled early)' : '') + ' across ' + used.map(i=>NAMES[i]).join(', '));
+    current = null;
+    if (totalFree() === 0) {
+      stopPlay(true);
+      log('<strong>Zone full</strong> — ' + CAP + ' stacks (' + CAP*3 + ' bales) stored');
+      el.status.textContent = 'Zone full. Press restart to watch again.';
+    }
+  }
+
+  function tick() {
+    if (totalFree() === 0 && !current) { stopPlay(true); return; }
+    if (!current) { newLoad(); return; }
+    placeOne();
+  }
+  function startPlay() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(tick, interval());
+    el.play.textContent = '⏸ Pause';
+  }
+  function stopPlay(done) {
+    if (timer) { clearInterval(timer); timer = null; }
+    el.play.textContent = done ? '✓ Done' : '▶ Resume';
+  }
+
+  function render() {
+    el.bays.innerHTML = '';
+    let stacks = 0;
+    bays.forEach((bay, bi) => {
+      stacks += bay.length;
+      const row = document.createElement('div');
+      row.className = 'bay-row';
+      const lab = document.createElement('div');
+      lab.className = 'bay-label'; lab.textContent = NAMES[bi];
+      const track = document.createElement('div');
+      track.className = 'bay-track' + (current && current.lastBay === bi && current.remaining > 0 ? ' active' : '');
+      track.setAttribute('role','img');
+      track.setAttribute('aria-label', NAMES[bi] + ': ' + bay.length + ' of ' + DEPTH + ' stacks');
+      for (let s = 0; s < DEPTH; s++) {
+        const slot = document.createElement('div');
+        slot.className = 'slot' + (s < bay.length ? ' filled' : '');
+        if (s < bay.length) slot.style.background = loads[bay[s]].color;
+        track.appendChild(slot);
+      }
+      const cnt = document.createElement('div');
+      cnt.className = 'bay-count';
+      cnt.textContent = bay.length + ' / ' + DEPTH;
+      row.append(lab, track, cnt);
+      el.bays.appendChild(row);
+    });
+    el.meta.textContent = stacks + ' / ' + CAP + ' stacks · ' + stacks*3 + ' bales · ' + loads.filter(l=>!l.preset).length + ' loads delivered';
+    el.legend.innerHTML = loads.map(l =>
+      '<span><span class="dot" style="background:'+l.color+'"></span>'+l.name+' ('+l.size*3+' bales)</span>').join('');
+    if (current) {
+      el.status.innerHTML = '<span class="chip"><span class="dot" style="background:'+current.load.color+'"></span>'+current.load.name+'</span> — '+current.remaining+' of '+current.load.size+' stacks left to store';
+    }
+  }
+
+  function log(m) { el.log.innerHTML = '<div>' + m + '</div>' + el.log.innerHTML; }
+
+  el.play.addEventListener('click', () => {
+    if (timer) stopPlay(false);
+    else if (totalFree() > 0 || current) startPlay();
+  });
+  el.reset.addEventListener('click', () => { reset(); startPlay(); });
+  el.speed.addEventListener('input', () => { if (timer) startPlay(); });
+
+  reset();
+}
+
+createSim('sim1', {
+  title: 'Simulation 1 — Zone A (very high PET), 7 bays',
+  desc: 'Start: A 12 · B 4 · C 1 · D–G empty. Shallow bays rise to match C, then C–G rise to match B, then B–G rise toward A.',
+  names: ['A','B','C','D','E','F','G'],
+  preset: [12,4,1,0,0,0,0]
+});
+createSim('sim2', {
+  title: 'Simulation 2 — one-sided wall, 5 bays',
+  desc: 'Start: A 12 · B 4 · C 1 · D 0 · E 12. The empty bay D sits between C and a full E — the rule fills this two-sided corridor first.',
+  names: ['A','B','C','D','E'],
+  preset: [12,4,1,0,12]
+});
+</script>
+</body>
+</html>
