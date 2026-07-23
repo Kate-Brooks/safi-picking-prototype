@@ -24,6 +24,8 @@
   .page { max-width: 860px; margin: 0 auto; }
   h1 { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
   .subtitle { color: var(--safi-text-2); font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
+  .group-title { font-size: 18px; font-weight: 700; margin: 28px 0 4px; }
+  .group-desc { color: var(--safi-text-2); font-size: 13px; line-height: 1.5; margin-bottom: 14px; }
   .card {
     background: var(--safi-card);
     border: 1px solid var(--safi-divider);
@@ -82,12 +84,16 @@
 <div class="page">
   <h1>Storage pattern simulations</h1>
   <p class="subtitle">
-    Forklift storage logic — each square is a stack of 3 bales, each bay holds 12 stacks.<br>
-    Simulations 1 and 2 use <strong>tiered level-fill</strong>: every stack goes to the leftmost bay with the fewest stacks, so the shallowest bays are raised to match the next tier, sweeping left-to-right. Simulation 3 uses <strong>bay-priority fill</strong>: complete the current bay before starting the next. Press Start — loads then arrive automatically until the zone is full.
+    Forklift storage logic — each square is a stack of 3 bales, each bay holds 12 stacks. Press Start — loads then arrive automatically until the zone is full.
   </p>
 
+  <h2 class="group-title">Tiered level-fill — keep bays even</h2>
+  <p class="group-desc">Every stack goes to the leftmost bay with the fewest stacks. The shallowest bays rise to match the next tier, sweeping left-to-right, so the whole zone fills evenly (scenario 3 in the storage logic thread).</p>
   <div class="card" id="sim1"></div>
   <div class="card" id="sim2"></div>
+
+  <h2 class="group-title">Bay-priority fill — complete one bay at a time</h2>
+  <p class="group-desc">Every stack goes to the leftmost bay with space, completing the current bay before starting the next (scenario 1 in the storage logic thread).</p>
   <div class="card" id="sim3"></div>
 
   <p class="footnote">
