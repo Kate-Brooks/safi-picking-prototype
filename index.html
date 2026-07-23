@@ -8583,7 +8583,7 @@
                   planner + Dashboard + History tabs. Line-centric layout: active windows
                   side-by-side at top with live stats + input-quality chart, planning inline
                   when a line is idle, full historical windows embedded at the bottom. */}
-              <Tab id="line-management" label={lang === 'es' ? 'Listas de picking' : 'Picking lists'} tab={tab} setTab={setTab} />
+              <Tab id="line-management" label={lang === 'es' ? 'Panel' : 'Dashboard'} tab={tab} setTab={setTab} />
               {/* R29/R71: standalone History tab removed — historical data now lives inline
                   in the Line management & performance tab. */}
             </div>
@@ -9898,13 +9898,18 @@
 
     return (
       <Fragment>
-        <div className="mb-5">
-          <div className="text-2xl font-bold text-neutral-100">{tEN('Picking lists', 'Listas de picking')}</div>
-          <div className="text-[13px] text-neutral-60 mt-1">
-            {tEN(
-              'Plan windows per line, watch Safi build live picking lists for each operator, and review historical performance.',
-              'Planifica ventanas por línea, ve cómo Safi crea listas de picking en vivo para cada operador y revisa el rendimiento histórico.'
-            )}
+        {/* R98: current operational day, split by line and shift (input stats only). */}
+        <div className="mb-8">
+          <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
+            {tEN('Current operational day by line and shift', 'Día operativo actual por línea y turno')}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {['Line 1', 'Line 2'].map(line => (
+              <div key={line} className="space-y-4">
+                <DashShiftCard line={line} shiftName="Day" hours="7:00 - 19:00" data={DASH_SHIFT_DATA[line].day} color={DASH_SHIFT_DATA[line].color} />
+                <DashShiftCard line={line} shiftName="Night" hours="19:00 - 7:00" data={DASH_SHIFT_DATA[line].night} color={DASH_SHIFT_DATA[line].color} />
+              </div>
+            ))}
           </div>
         </div>
 
@@ -9950,6 +9955,80 @@
           <HistoryView processed={processed} pickerMode={pickerMode} lang={lang} yard={yard} />
         </div>
       </Fragment>
+    );
+  }
+
+  // ============================================================================
+  // R98: DASHBOARD - current operational day by line and shift.
+  // Replicates BMP's line/shift dashboard with input stats only (no output or
+  // downtime), split Day (7:00-19:00) / Night (19:00-7:00) per line. Line
+  // colours match BMP + the operator picking view: Line 1 blue, Line 2 green.
+  // "Important" stats render large; Material/Target/Elapsed stay secondary.
+  // ============================================================================
+  const DASH_SHIFT_DATA = {
+    'Line 1': {
+      color: '#0288D1',
+      day: { material: 'Clear PET Bales', target: 'Thermoforms ~20.0%', actual: 'Thermoforms 17.1%', inSpec: true, elapsed: '07:41:05', bales: 25, weightKg: 15980, weightHr: 2000, throughput: 6000, oee: 46.5 },
+      night: { notStarted: true, material: 'Clear PET Bales', target: 'Thermoforms ~20.0%', elapsed: '00:00:00', bales: 0, weightKg: 0, weightHr: 0, throughput: 6000 }
+    },
+    'Line 2': {
+      color: '#2FB554',
+      day: { material: 'Clear PET Bales', target: 'PET ~90.0%', actual: 'PET 89.4%', inSpec: false, elapsed: '07:38:12', bales: 38, weightKg: 24310, weightHr: 3190, throughput: 6000, oee: 77.0 },
+      night: { notStarted: true, material: 'Clear PET Bales', target: 'PET ~90.0%', elapsed: '00:00:00', bales: 0, weightKg: 0, weightHr: 0, throughput: 6000 }
+    }
+  };
+
+  function DashShiftCard({ line, shiftName, hours, data, color }) {
+    const muted = !!data.notStarted;
+    const Small = ({ label, children }) => (
+      <div>
+        <div className="text-[13px] text-neutral-60 mb-0.5">{label}</div>
+        <div className={'text-[15px] ' + (muted ? 'text-neutral-40' : 'text-neutral-100')}>{children}</div>
+      </div>
+    );
+    const Big = ({ label, children }) => (
+      <div>
+        <div className="text-[13px] text-neutral-60 mb-0.5">{label}</div>
+        <div className={'text-[22px] font-bold ' + (muted ? 'text-neutral-40' : 'text-neutral-100')}>{children}</div>
+      </div>
+    );
+    return (
+      <div className="bg-white border border-neutral-10 rounded-xl overflow-hidden" style={{ boxShadow: 'inset 4px 0 0 ' + color }}>
+        <div className="px-5 py-3 border-b border-neutral-10 flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-[15px] font-bold text-neutral-100">{line} · {shiftName} shift</div>
+          <div className="flex items-center gap-2">
+            {!muted && (
+              <span className="px-2 py-0.5 rounded bg-safi-100 text-safi-800 text-[12px] font-semibold uppercase tracking-wide">Current</span>
+            )}
+            <span className="text-[13px] text-neutral-60">{hours}</span>
+          </div>
+        </div>
+        <div className="p-5">
+          <div className="grid grid-cols-3 gap-x-6 gap-y-4 mb-4">
+            <Small label="Material">{data.material}</Small>
+            <Small label="Target input">{data.target}</Small>
+            <Small label="Elapsed">{data.elapsed}</Small>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4">
+            <div>
+              <div className="text-[13px] text-neutral-60 mb-1">Actual input</div>
+              {muted ? (
+                <span className="inline-flex items-center px-2 py-0.5 rounded bg-neutral-10 text-neutral-60 text-[13px] font-medium">Not started</span>
+              ) : (
+                <span className={'inline-flex items-center gap-1 px-2 py-1 rounded-full text-[15px] font-bold ' + (data.inSpec ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
+                  <Icon d={data.inSpec ? I.checkCircle : I.errorCircle} className="w-4 h-4" />
+                  {data.actual}
+                </span>
+              )}
+            </div>
+            <Big label="Bales processed">{data.bales}</Big>
+            <Big label="Weight processed">{data.weightKg.toLocaleString()} kg</Big>
+            <Big label="Weight / hour">{data.weightHr.toLocaleString()} kg</Big>
+            <Big label="Throughput target">{data.throughput.toLocaleString()} kg</Big>
+            <Big label="OEE">{data.oee == null ? '-' : data.oee.toFixed(1) + '%'}</Big>
+          </div>
+        </div>
+      </div>
     );
   }
 
