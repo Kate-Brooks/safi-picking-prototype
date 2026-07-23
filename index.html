@@ -9275,15 +9275,16 @@
         material: 'Clear PET Bales',
         specGroup: 'Thermoforms',
         operator: '<=',
-        targetPct: 25,
-        actualPct: 24.6,
+        // R99: numbers aligned with the day-shift dashboard card above.
+        targetPct: 20,
+        actualPct: 17.1,
         deltaPct: -0.4,
         deltaDir: 'down',
-        elapsed: '02:19:51',
-        weightPerHr: 1020,
-        bales: 301,
-        weightKg: 150500,
-        oee: 77,
+        elapsed: '07:41:05',
+        weightPerHr: 2000,
+        bales: 25,
+        weightKg: 15980,
+        oee: 46.5,
         thermoformsPerHr: 19.1,
         thermoformsTarget: 20,
         contaminantsPerHr: 2.3,
@@ -9648,12 +9649,12 @@
     // Recent windows — compact list of past windows per line with yield %.
     // ------------------------------------------------------------------------
     const recentWindows = [
-      { line: 'Line 1', color: '#16A34A', date: 'Wed 24 Jul', material: 'Clear PET Bales', spec: 'Thermoforms ≤ 25%', yield: 91.4, on: true },
-      { line: 'Line 2', color: '#2563EB', date: 'Wed 24 Jul', material: 'Green PET',       spec: 'Bottles/Jars ≥ 85%', yield: 88.2, on: true },
-      { line: 'Line 1', color: '#16A34A', date: 'Tue 23 Jul', material: 'Clear PET Bales', spec: 'Thermoforms ≤ 25%', yield: 89.7, on: true },
-      { line: 'Line 2', color: '#2563EB', date: 'Tue 23 Jul', material: 'Green PET',       spec: 'Bottles/Jars ≥ 85%', yield: 87.1, on: true },
-      { line: 'Line 1', color: '#16A34A', date: 'Mon 22 Jul', material: 'Clear PET Bales', spec: 'Thermoforms ≤ 20%', yield: 82.4, on: false },
-      { line: 'Line 2', color: '#2563EB', date: 'Mon 22 Jul', material: 'Green PET',       spec: 'Bottles/Jars ≥ 85%', yield: 89.5, on: true },
+      { line: 'Line 1', color: '#0288D1', date: 'Wed 24 Jul', material: 'Clear PET Bales', spec: 'Thermoforms ≤ 25%', yield: 91.4, on: true },
+      { line: 'Line 2', color: '#2FB554', date: 'Wed 24 Jul', material: 'Green PET',       spec: 'Bottles/Jars ≥ 85%', yield: 88.2, on: true },
+      { line: 'Line 1', color: '#0288D1', date: 'Tue 23 Jul', material: 'Clear PET Bales', spec: 'Thermoforms ≤ 25%', yield: 89.7, on: true },
+      { line: 'Line 2', color: '#2FB554', date: 'Tue 23 Jul', material: 'Green PET',       spec: 'Bottles/Jars ≥ 85%', yield: 87.1, on: true },
+      { line: 'Line 1', color: '#0288D1', date: 'Mon 22 Jul', material: 'Clear PET Bales', spec: 'Thermoforms ≤ 20%', yield: 82.4, on: false },
+      { line: 'Line 2', color: '#2FB554', date: 'Mon 22 Jul', material: 'Green PET',       spec: 'Bottles/Jars ≥ 85%', yield: 89.5, on: true },
     ];
 
     const RecentWindowsSection = () => (
@@ -9708,7 +9709,7 @@
     };
     const bufferBales = { 'Line 1': 6, 'Line 2': 20 };
     const operators = [
-      { id: 'mb', initials: 'MB', name: 'Marcus Bell', line: 'Line 1', color: '#16A34A' },
+      { id: 'mb', initials: 'MB', name: 'Marcus Bell', line: 'Line 1', color: '#0288D1' },
       { id: 'pn', initials: 'PN', name: 'Priya Nair',  line: 'Line 2', color: '#2563EB' },
     ];
 
@@ -9919,8 +9920,9 @@
           </div>
           {/* R70b: side-by-side layout on lg+ screens (iPad landscape and up); stacked on narrower. */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <LinePanel line="Line 1" color="#16A34A" />
-            <LinePanel line="Line 2" color="#2563EB" />
+            {/* R99: line colours aligned with BMP + operator view - L1 blue, L2 green. */}
+            <LinePanel line="Line 1" color="#0288D1" />
+            <LinePanel line="Line 2" color="#2FB554" />
           </div>
         </div>
 
@@ -9934,7 +9936,7 @@
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {['Line 1', 'Line 2'].map(line => {
                   const cfg = lineState[line];
-                  const color = line === 'Line 1' ? '#16A34A' : '#2563EB';
+                  const color = line === 'Line 1' ? '#0288D1' : '#2FB554';
                   if (!cfg.active) return <IdleQueuePanel key={line} line={line} />;
                   return <QueuePanel key={line} line={line} color={color} />;
                 })}
