@@ -9914,40 +9914,8 @@
           </div>
         </div>
 
-        <div className="mb-8">
-          <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
-            {tEN('Active windows', 'Ventanas activas')}
-          </div>
-          {/* R70b: side-by-side layout on lg+ screens (iPad landscape and up); stacked on narrower. */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* R99: line colours aligned with BMP + operator view - L1 blue, L2 green. */}
-            <LinePanel line="Line 1" color="#0288D1" />
-            <LinePanel line="Line 2" color="#2FB554" />
-          </div>
-        </div>
-
-        {/* R73: Live AI picking queue + Safi explainer + Operators on shift — visible when at least one line is running. */}
-        {anyLineActive && (
-          <Fragment>
-            <div className="mb-6">
-              <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
-                {tEN('Live AI queue per line', 'Cola de IA en vivo por línea')}
-              </div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {['Line 1', 'Line 2'].map(line => {
-                  const cfg = lineState[line];
-                  const color = line === 'Line 1' ? '#0288D1' : '#2FB554';
-                  if (!cfg.active) return <IdleQueuePanel key={line} line={line} />;
-                  return <QueuePanel key={line} line={line} color={color} />;
-                })}
-              </div>
-            </div>
-
-            <SafiExplainerCard />
-
-            <OperatorsOnShiftCard />
-          </Fragment>
-        )}
+        {/* R100: live AI queue + Safi explainer removed; operators on shift stays. */}
+        {anyLineActive && <OperatorsOnShiftCard />}
 
         <div>
           <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide mb-3">
@@ -9961,24 +9929,81 @@
   }
 
   // ============================================================================
-  // R98: DASHBOARD - current operational day by line and shift.
-  // Replicates BMP's line/shift dashboard with input stats only (no output or
-  // downtime), split Day (7:00-19:00) / Night (19:00-7:00) per line. Line
-  // colours match BMP + the operator picking view: Line 1 blue, Line 2 green.
-  // "Important" stats render large; Material/Target/Elapsed stay secondary.
+  // R98/R100: DASHBOARD - current operational day by line and shift.
+  // Input stats only, split Day/Night per line. Day cards carry the Active
+  // shift indicator, thermoforms/contaminants per hour, and three shift
+  // charts (thermoforms / clear PET / contaminants incl. metals) where the
+  // dashed tail is the prediction to end of shift from the picking
+  // recommendations (the picking algorithm).
   // ============================================================================
   const DASH_SHIFT_DATA = {
     'Line 1': {
       color: '#0288D1',
-      day: { material: 'Clear PET Bales', target: 'Thermoforms ~20.0%', actual: 'Thermoforms 17.1%', inSpec: true, elapsed: '07:41:05', bales: 25, weightKg: 15980, weightHr: 2000, throughput: 6000, oee: 46.5 },
+      day: {
+        material: 'Clear PET Bales', target: 'Thermoforms ~20.0%', actual: 'Thermoforms 17.1%', inSpec: true,
+        elapsed: '07:41:05', bales: 25, weightKg: 15980, weightHr: 2000, throughput: 6000, oee: 46.5,
+        thermoHr: 18.9, thermoOk: true, contamHr: 1.6, contamOk: true,
+        charts: [
+          { title: 'Thermoform input this shift', targetLabel: 'target \u2264 20%', target: 20, yMin: 10, yMax: 25, base: 17.5, amp: 1.6, endVal: 16.4 },
+          { title: 'Clear PET input this shift', targetLabel: 'target \u2265 75%', target: 75, yMin: 60, yMax: 90, base: 74, amp: 4, endVal: 76.5 },
+          { title: 'Contaminant input this shift (incl. metals)', targetLabel: 'target \u2264 2%', target: 2, yMin: 0, yMax: 4, base: 1.6, amp: 0.4, endVal: 1.4 }
+        ]
+      },
       night: { notStarted: true, material: 'Clear PET Bales', target: 'Thermoforms ~20.0%', elapsed: '00:00:00', bales: 0, weightKg: 0, weightHr: 0, throughput: 6000 }
     },
     'Line 2': {
       color: '#2FB554',
-      day: { material: 'Clear PET Bales', target: 'PET ~90.0%', actual: 'PET 89.4%', inSpec: false, elapsed: '07:38:12', bales: 38, weightKg: 24310, weightHr: 3190, throughput: 6000, oee: 77.0 },
+      day: {
+        material: 'Clear PET Bales', target: 'PET ~90.0%', actual: 'PET 89.4%', inSpec: false,
+        elapsed: '07:38:12', bales: 38, weightKg: 24310, weightHr: 3190, throughput: 6000, oee: 77.0,
+        thermoHr: 19.1, thermoOk: true, contamHr: 2.3, contamOk: false,
+        charts: [
+          { title: 'Thermoform input this shift', targetLabel: 'target \u2264 20%', target: 20, yMin: 10, yMax: 25, base: 16.2, amp: 1.4, endVal: 15.6 },
+          { title: 'Clear PET input this shift', targetLabel: 'target \u2265 90%', target: 90, yMin: 82, yMax: 96, base: 89.2, amp: 1.4, endVal: 90.6 },
+          { title: 'Contaminant input this shift (incl. metals)', targetLabel: 'target \u2264 2%', target: 2, yMin: 0, yMax: 4, base: 2.3, amp: 0.4, endVal: 1.9 }
+        ]
+      },
       night: { notStarted: true, material: 'Clear PET Bales', target: 'PET ~90.0%', elapsed: '00:00:00', bales: 0, weightKg: 0, weightHr: 0, throughput: 6000 }
     }
   };
+
+  // R100: shift chart - solid purple = actual so far, dashed light purple =
+  // predicted to end of shift from the picking recommendations, dashed green
+  // = target, grey rule = now.
+  function DashShiftChart({ title, targetLabel, target, yMin, yMax, base, amp, endVal }) {
+    const N = 48, nowIdx = 31; // ~64% through the 12h shift
+    const seeded = (i) => base + Math.sin(i / 5) * amp + ((((i * 13 + 7) % 11) - 5) * amp * 0.12);
+    const clamp = (v) => Math.max(yMin, Math.min(yMax, v));
+    const actual = Array.from({ length: nowIdx + 1 }, (_, i) => clamp(seeded(i)));
+    const startP = actual[nowIdx];
+    const predicted = Array.from({ length: N - nowIdx }, (_, k) => {
+      const t = k / (N - 1 - nowIdx);
+      return clamp(startP + (endVal - startP) * t + Math.sin((nowIdx + k) / 4) * amp * 0.15);
+    });
+    const W = 560, H = 110, padL = 36, padR = 8, padT = 8, padB = 18;
+    const x = (i) => padL + (i / (N - 1)) * (W - padL - padR);
+    const y = (v) => padT + (1 - (v - yMin) / (yMax - yMin)) * (H - padT - padB);
+    const path = (arr, off) => arr.map((v, i) => (i === 0 ? 'M ' : 'L ') + x(i + off) + ' ' + y(v)).join(' ');
+    return (
+      <div>
+        <div className="flex items-center justify-between gap-3 mb-1">
+          <div className="text-[13px] font-semibold text-neutral-80">{title}</div>
+          <div className="text-[12px] text-neutral-60">{targetLabel}</div>
+        </div>
+        <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full h-auto" role="img" aria-label={title + ', actual and predicted to end of shift'}>
+          <line x1={padL} y1={y(target)} x2={W - padR} y2={y(target)} stroke="#2FB554" strokeWidth="1.5" strokeDasharray="4 4" />
+          <line x1={x(nowIdx)} y1={padT} x2={x(nowIdx)} y2={H - padB} stroke="#9E9EA5" strokeWidth="1" strokeDasharray="3 3" />
+          <path d={path(actual, 0)} fill="none" stroke="#6347FF" strokeWidth="2" />
+          <path d={path(predicted, nowIdx)} fill="none" stroke="#B0A1FE" strokeWidth="2" strokeDasharray="5 4" />
+          <text x={padL - 6} y={y(yMax) + 4} textAnchor="end" fontSize="11" fill="#6E6D77">{yMax}%</text>
+          <text x={padL - 6} y={y(yMin) + 4} textAnchor="end" fontSize="11" fill="#6E6D77">{yMin}%</text>
+          <text x={padL} y={H - 4} fontSize="11" fill="#6E6D77">7:00</text>
+          <text x={x(nowIdx)} y={H - 4} fontSize="11" fill="#6E6D77" textAnchor="middle">now</text>
+          <text x={W - padR} y={H - 4} fontSize="11" fill="#6E6D77" textAnchor="end">19:00</text>
+        </svg>
+      </div>
+    );
+  }
 
   function DashShiftCard({ line, shiftName, hours, data, color }) {
     const muted = !!data.notStarted;
@@ -9994,13 +10019,32 @@
         <div className={'text-[22px] font-bold ' + (muted ? 'text-neutral-40' : 'text-neutral-100')}>{children}</div>
       </div>
     );
+    const RateStat = ({ label, value, ok, targetLabel }) => (
+      <div>
+        <div className="text-[13px] text-neutral-60 mb-0.5">{label}</div>
+        <div className="text-[22px] font-bold">
+          {value == null ? (
+            <span className="text-neutral-40">-</span>
+          ) : (
+            <Fragment>
+              <span className={ok ? 'text-neutral-100' : 'text-rose-900'}>{value.toFixed(1)}%</span>
+              <span className="ml-1.5 text-[12px] font-medium text-safi-600">{targetLabel}</span>
+            </Fragment>
+          )}
+        </div>
+      </div>
+    );
     return (
       <div className="bg-white border border-neutral-10 rounded-xl overflow-hidden" style={{ boxShadow: 'inset 4px 0 0 ' + color }}>
         <div className="px-5 py-3 border-b border-neutral-10 flex items-center justify-between gap-3 flex-wrap">
           <div className="text-[15px] font-bold text-neutral-100">{line} · {shiftName} shift</div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {/* R100: Active shift indicator (moved from the active window cards). */}
             {!muted && (
-              <span className="px-2 py-0.5 rounded bg-safi-100 text-safi-800 text-[12px] font-semibold uppercase tracking-wide">Current</span>
+              <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-success-300">
+                <span className="w-2.5 h-2.5 rounded-full bg-success-200" aria-hidden="true" />
+                Active shift
+              </span>
             )}
             <span className="text-[13px] text-neutral-60">{hours}</span>
           </div>
@@ -10028,7 +10072,23 @@
             <Big label="Weight / hour">{data.weightHr.toLocaleString()} kg</Big>
             <Big label="Throughput target">{data.throughput.toLocaleString()} kg</Big>
             <Big label="OEE">{data.oee == null ? '-' : data.oee.toFixed(1) + '%'}</Big>
+            {/* R100: per-hour rates moved from the active window cards. */}
+            <RateStat label="Thermoforms / hr" value={data.thermoHr} ok={data.thermoOk} targetLabel="target < 20%" />
+            <RateStat label="Contaminants / hr" value={data.contamHr} ok={data.contamOk} targetLabel="target < 2%" />
           </div>
+          {/* R100: shift charts with the picking-recommendation prediction. */}
+          {data.charts && (
+            <div className="mt-5 pt-4 border-t border-neutral-10">
+              <div className="flex items-center gap-4 text-[12px] text-neutral-60 mb-3 flex-wrap">
+                <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 h-0.5 bg-safi-600" aria-hidden="true" />Actual</span>
+                <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-safi-300" aria-hidden="true" />Predicted from picking recommendations</span>
+                <span className="inline-flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-success-200" aria-hidden="true" />Target</span>
+              </div>
+              <div className="space-y-4">
+                {data.charts.map(c => <DashShiftChart key={c.title} {...c} />)}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
