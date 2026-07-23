@@ -83,14 +83,16 @@
   <h1>Storage pattern simulations</h1>
   <p class="subtitle">
     Forklift storage logic — each square is a stack of 3 bales, each bay holds 12 stacks.<br>
-    <strong>Rule:</strong> every stack goes to the leftmost bay with the fewest stacks. This produces tiered level-filling: the shallowest bays are raised to match the next tier, always sweeping left-to-right. Press Start — loads then arrive automatically until the zone is full.
+    Simulations 1 and 2 use <strong>tiered level-fill</strong>: every stack goes to the leftmost bay with the fewest stacks, so the shallowest bays are raised to match the next tier, sweeping left-to-right. Simulation 3 uses <strong>bay-priority fill</strong>: complete the current bay before starting the next. Press Start — loads then arrive automatically until the zone is full.
   </p>
 
   <div class="card" id="sim1"></div>
   <div class="card" id="sim2"></div>
+  <div class="card" id="sim3"></div>
 
   <p class="footnote">
     Simulation 2 starts with an empty bay D between C and a full E — note the rule sends the forklift into that two-sided corridor first, which is the operator-safety scenario raised in the storage logic thread (scenario 4).
+    Simulation 3 starts from the same state but completes one bay at a time (scenario 1 in the thread) — compare how long the D corridor stays empty and how loads stay contiguous instead of spreading across bays.
   </p>
 </div>
 
@@ -150,7 +152,9 @@ function createSim(rootId, opts) {
     if (!current || current.remaining === 0) return;
     const open = bays.map((b,i)=>i).filter(i => bays[i].length < DEPTH);
     if (open.length === 0) { finish(true); return; }
-    const t = open.reduce((best,i)=> bays[i].length < bays[best].length ? i : best, open[0]);
+    const t = opts.strategy === 'fillBay'
+      ? open[0]
+      : open.reduce((best,i)=> bays[i].length < bays[best].length ? i : best, open[0]);
     bays[t].push(current.load.id);
     current.remaining--;
     current.lastBay = t;
@@ -241,6 +245,13 @@ createSim('sim2', {
   desc: 'Start: A 12 · B 4 · C 1 · D 0 · E 12. The empty bay D sits between C and a full E — the rule fills this two-sided corridor first.',
   names: ['A','B','C','D','E'],
   preset: [12,4,1,0,12]
+});
+createSim('sim3', {
+  title: 'Simulation 3 — Prioritise filling a bay',
+  desc: 'Start: A 12 · B 4 · C 1 · D 0 · E 12. Bay-priority rule: each stack goes to the leftmost bay with space — B is completed first, then C, then D.',
+  names: ['A','B','C','D','E'],
+  preset: [12,4,1,0,12],
+  strategy: 'fillBay'
 });
 </script>
 </body>
