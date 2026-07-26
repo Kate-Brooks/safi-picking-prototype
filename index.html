@@ -10256,9 +10256,104 @@
     return rows;
   })();
 
+  // R104: AI composition breakdown shown under the drawer's bale log.
+  // Hierarchy mirrors the QC analysis report; per-line materials and targets.
+  const DASH_COMPOSITION = {
+    'Line 1': {
+      material: 'Clear PET Bales', loads: 31, cleanliness: 'Dirty',
+      groups: [
+        { name: 'PET', targetChip: true, target: '\u2265 90.0%', value: '90.7%', children: [
+          { name: 'Colored PET', target: '\u2265 0.0%', value: '0.5%', children: [{ name: 'Oil Bottle', value: '0.4%' }] },
+          { name: 'Thermoforms', target: '\u2264 30.0%', value: '17.2%', children: [{ name: 'Clear PET Tray', value: '16.8%' }, { name: 'Clear Contaminated PET Tray', value: '0.3%' }] },
+          { name: 'Green PET', target: '\u2265 0.0%', value: '3.9%', children: [{ name: 'Green', value: '3.9%' }] },
+          { name: 'Bottle/Jars', target: '\u2265 60.0%', value: '69.2%', children: [{ name: 'Clear', value: '58.0%' }, { name: 'Dark Blue', value: '4.9%' }, { name: 'Light Blue', value: '2.9%' }, { name: 'Full Sleeve', value: '1.8%' }, { name: 'Clear, non-food-grade', value: '1.5%' }] }
+        ] },
+        { name: 'Non PET', target: '\u2264 10.0%', value: '8.3%', children: [
+          { name: 'Mixed Plastics 2-7', value: '4.9%', children: [{ name: 'Other Plastic', value: '4.1%' }, { name: 'Film', value: '0.9%' }] },
+          { name: 'Metal/Aluminum', target: '\u2264 5.0%', value: '0.4%', children: [{ name: 'Metal', value: '0.4%' }] },
+          { name: 'Contaminants', value: '2.9%', children: [{ name: 'Non-Plastic', value: '2.9%' }] }
+        ] },
+        { name: 'Ungrouped materials', value: '1.0%', children: [{ name: 'Clear Full Sleeve, non-food-grade', value: '1.0%' }] }
+      ]
+    },
+    'Line 2': {
+      material: 'Green PET Bales', loads: 17, cleanliness: 'Average',
+      groups: [
+        { name: 'PET', targetChip: true, target: '\u2265 85.0%', value: '89.4%', children: [
+          { name: 'Green PET', target: '\u2265 60.0%', value: '69.8%', children: [{ name: 'Green', value: '64.6%' }, { name: 'Green, non-food-grade', value: '5.2%' }] },
+          { name: 'Thermoforms', target: '\u2264 25.0%', value: '16.3%', children: [{ name: 'Green PET Tray', value: '15.4%' }, { name: 'Green Contaminated PET Tray', value: '0.9%' }] },
+          { name: 'Clear PET', target: '\u2265 0.0%', value: '3.3%', children: [{ name: 'Clear', value: '3.3%' }] }
+        ] },
+        { name: 'Non PET', target: '\u2264 10.0%', value: '6.1%', children: [
+          { name: 'Mixed Plastics 2-7', value: '3.9%', children: [{ name: 'Other Plastic', value: '3.3%' }, { name: 'Film', value: '0.6%' }] },
+          { name: 'Metal/Aluminum', target: '\u2264 5.0%', value: '0.3%', children: [{ name: 'Metal', value: '0.3%' }] },
+          { name: 'Contaminants', value: '1.9%', children: [{ name: 'Non-Plastic', value: '1.9%' }] }
+        ] },
+        { name: 'Ungrouped materials', value: '1.1%', children: [{ name: 'Green Full Sleeve, non-food-grade', value: '1.1%' }] }
+      ]
+    }
+  };
+
+  function CompositionRow({ node, depth }) {
+    return (
+      <Fragment>
+        <div className="flex items-center justify-between gap-4 py-2 border-b border-neutral-10" style={{ marginLeft: depth * 24 }}>
+          <div className={'flex items-center gap-2 min-w-0 ' + (depth === 0 ? 'text-[15px] font-bold text-neutral-100' : depth === 1 ? 'text-[14px] font-semibold text-neutral-100' : 'text-[14px] text-neutral-100')}>
+            <span className="truncate">{node.name}</span>
+            {node.targetChip && (
+              <span className="px-2 py-0.5 rounded-full bg-safi-100 text-safi-700 text-[12px] font-semibold shrink-0">Target</span>
+            )}
+          </div>
+          <div className="flex items-center shrink-0">
+            <span className="w-24 text-right text-[14px] font-semibold text-neutral-100">{node.target || ''}</span>
+            <span className={'w-20 text-right text-[14px] ' + (depth <= 1 ? 'font-bold text-neutral-100' : 'text-neutral-100')}>{node.value}</span>
+          </div>
+        </div>
+        {(node.children || []).map(c => <CompositionRow key={c.name} node={c} depth={depth + 1} />)}
+      </Fragment>
+    );
+  }
+
+  function CompositionCard({ line }) {
+    const comp = DASH_COMPOSITION[line];
+    if (!comp) return null;
+    return (
+      <div className="m-6 border border-neutral-10 rounded-xl overflow-hidden">
+        <div className="bg-neutral-5 px-5 py-4 border-b border-neutral-10">
+          <div className="text-[15px] font-bold text-neutral-100 mb-3">AI composition breakdown</div>
+          <div className="flex items-center gap-3">
+            <Icon d={I.qa} className="w-5 h-5 text-neutral-100 shrink-0" />
+            <div>
+              <div className="text-[14px] font-medium text-neutral-100">{comp.material}</div>
+              <div className="text-[13px] text-neutral-60">Weighted across {comp.loads} analysed loads</div>
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-3">
+          {comp.groups.map((g, i) => (
+            <div key={g.name} className={i > 0 ? 'mt-3' : ''}>
+              <CompositionRow node={g} depth={0} />
+            </div>
+          ))}
+          <div className="flex items-center justify-between py-3">
+            <span className="inline-flex items-center gap-1.5 text-[15px] font-bold text-neutral-100">
+              Cleanliness
+              <Icon d={I.errorCircle} className="w-4 h-4 text-neutral-60" />
+            </span>
+            <span className="text-[15px] font-bold text-neutral-100">{comp.cleanliness}</span>
+          </div>
+          <button className="text-[13px] text-neutral-60 pb-2 hover:text-safi-600">
+            Customise the table for <span className="underline">{comp.material}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   function ShiftHistorySection() {
     const [openShift, setOpenShift] = useState(null);
     const [drawer, setDrawer] = useState(null); // { row, line } | null
+    const [drawerPage, setDrawerPage] = useState(1); // R104: 10 bales per page
     const fmtKgs = (v) => v.toLocaleString() + 'kg';
     const SpecChip = ({ val, lte, target }) => {
       const ok = lte ? val <= target : val >= target;
@@ -10281,7 +10376,7 @@
       const refs = line === 'Line 1' ? ['4500291130-10', '4500291402-20', '4500290877-30'] : ['4500291207-10', '4500290955-20', '4500291318-30'];
       const sups = line === 'Line 1' ? ['GFL 124 Arrowhead', 'TOMRA Schenectady', 'WM Napanee'] : ['Peel Region MRF', 'Circular Fibres'];
       const bays = line === 'Line 1' ? ['A-E', 'A-G', 'B-B'] : ['C-C', 'C-D', 'B-D'];
-      const n = Math.min(20, d.bales);
+      const n = d.bales;
       return Array.from({ length: n }, (_, i) => {
         const mins = Math.floor(i * (720 / d.bales));
         const h = (startH + Math.floor(mins / 60)) % 24;
@@ -10293,7 +10388,7 @@
           weight: 600 + ((i * 37 + row.seed * 11) % 80),
           who: who[(i % 7 === 3) ? 1 : 0]
         };
-      });
+      }).reverse(); // R104: last processed first
     };
     return (
       <div className="bg-white border border-neutral-10 rounded-lg overflow-hidden">
@@ -10358,7 +10453,7 @@
                               return (
                                 <button
                                   key={line}
-                                  onClick={() => setDrawer({ row, line })}
+                                  onClick={() => { setDrawer({ row, line }); setDrawerPage(1); }}
                                   className="w-full bg-white border border-neutral-10 rounded-lg px-4 py-3 flex items-center justify-between gap-4 flex-wrap text-left hover:border-safi-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-safi-600"
                                   style={{ boxShadow: 'inset 4px 0 0 ' + lt.color }}
                                 >
@@ -10398,7 +10493,12 @@
         {/* R101: bale-log drawer - chronological list for the picked line + shift. */}
         {drawer && (() => {
           const d = drawer.row.lines[drawer.line];
-          const log = baleLog(drawer.row, drawer.line);
+          const fullLog = baleLog(drawer.row, drawer.line);
+          const perPage = 10;
+          const totalPages = Math.ceil(fullLog.length / perPage);
+          const log = fullLog.slice((drawerPage - 1) * perPage, drawerPage * perPage);
+          const startIdx = (drawerPage - 1) * perPage + 1;
+          const endIdx = Math.min(drawerPage * perPage, fullLog.length);
           return (
             <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={() => setDrawer(null)}>
               <div className="w-full max-w-2xl bg-white h-full overflow-y-auto shadow-xl" role="dialog" aria-modal="true" aria-label="Processed bales" onClick={e => e.stopPropagation()}>
@@ -10435,11 +10535,30 @@
                     ))}
                   </tbody>
                 </table>
-                {d.bales > log.length && (
-                  <div className="px-6 py-3 text-[13px] text-neutral-60 border-t border-neutral-10">
-                    Showing {log.length} of {d.bales} bales
+                {/* R104: pagination - 10 bales per page, last processed first. */}
+                <div className="flex items-center justify-end gap-5 px-6 py-3 text-[13px] text-neutral-60 border-t border-neutral-10">
+                  <span className="text-neutral-100">{startIdx}&ndash;{endIdx} of {fullLog.length}</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setDrawerPage(p => Math.max(1, p - 1))}
+                      disabled={drawerPage === 1}
+                      className="p-1.5 rounded hover:bg-neutral-5 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-safi-600"
+                      aria-label="Previous page"
+                    >
+                      <Icon d={I.chevronR} className="w-4 h-4 rotate-180" />
+                    </button>
+                    <button
+                      onClick={() => setDrawerPage(p => Math.min(totalPages, p + 1))}
+                      disabled={drawerPage === totalPages}
+                      className="p-1.5 rounded hover:bg-neutral-5 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-safi-600"
+                      aria-label="Next page"
+                    >
+                      <Icon d={I.chevronR} className="w-4 h-4" />
+                    </button>
                   </div>
-                )}
+                </div>
+                {/* R104: AI composition breakdown below the bale log. */}
+                <CompositionCard line={drawer.line} />
               </div>
             </div>
           );
