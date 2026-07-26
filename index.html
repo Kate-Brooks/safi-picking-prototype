@@ -83,6 +83,8 @@
   <!-- Pinned to @babel/standalone@7 — v8 (released Jun 2026) broke the env preset for
        inline browser usage and turned the page white. Keep this pinned. -->
   <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <!-- R106: SheetJS for shift-history .xlsx export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <script type="text/babel" data-presets="env,react">
   /* eslint-disable */
@@ -10002,7 +10004,7 @@
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {['Line 1', 'Line 2'].map(line => (
               <div key={line} className="space-y-4">
-                <DashShiftCard line={line} shiftName="Day" hours="7:00 - 19:00" data={DASH_SHIFT_DATA[line].day} color={DASH_SHIFT_DATA[line].color} />
+                <DashShiftCard line={line} shiftName="Day" hours="7:00 - 19:00" data={DASH_SHIFT_DATA[line].day} color={DASH_SHIFT_DATA[line].color} settings={DASH_SHIFT_DATA[line].settings} />
                 <DashShiftCard line={line} shiftName="Night" hours="19:00 - 7:00" data={DASH_SHIFT_DATA[line].night} color={DASH_SHIFT_DATA[line].color} />
               </div>
             ))}
@@ -10047,6 +10049,7 @@
   const DASH_SHIFT_DATA = {
     'Line 1': {
       color: '#0288D1',
+      settings: { material: 'Clear PET Bales', codes: 'IRS (200000382), Standard MRF (100000229)', spec: 'Thermoforms', avg: 20, throughput: 6000 },
       day: {
         material: 'Clear PET Bales', target: 'Thermoforms ~20.0%', actual: 'Thermoforms 17.1%', inSpec: true,
         elapsed: '07:41:05', bales: 25, weightKg: 15980, weightHr: 2000, throughput: 6000, oee: 46.5,
@@ -10061,6 +10064,7 @@
     },
     'Line 2': {
       color: '#2FB554',
+      settings: { material: 'Green PET Bales', codes: 'Standard MRF (100000229)', spec: 'Green PET', avg: 85, throughput: 6000 },
       day: {
         // R102: Line 2 only processes Green PET Bales.
         material: 'Green PET Bales', target: 'Green PET ~85.0%', actual: 'Green PET 89.4%', inSpec: true,
@@ -10114,10 +10118,89 @@
     );
   }
 
-  function DashShiftCard({ line, shiftName, hours, data, color }) {
+  // R105: line settings overlay - opened from the gear on each line's day
+  // card. Mirrors the plan-window form; Save replaces Start window.
+  function LineSettingsModal({ line, initial, onCancel, onSave }) {
+    const [draft, setDraft] = useState({ ...initial });
+    const set = (k) => (e) => setDraft(d => ({ ...d, [k]: e.target.value }));
+    const canSave = draft.spec && String(draft.avg).length > 0 && Number(draft.avg) > 0;
+    const SelectField = ({ label, value, onChange, options, required = false }) => (
+      <div className="relative mb-3">
+        <label className="absolute -top-2 left-3 px-1.5 bg-white text-[12px] text-neutral-60 z-10">{label}{required ? ' *' : ''}</label>
+        <select
+          value={value}
+          onChange={onChange}
+          className="w-full h-14 px-4 pr-10 border border-neutral-10 rounded-lg text-[15px] text-neutral-100 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-safi-600"
+        >
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <Icon d={I.chevron} className="w-4 h-4 absolute right-4 top-1/2 -translate-y-1/2 text-neutral-60 pointer-events-none" />
+      </div>
+    );
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6" role="dialog" aria-modal="true" aria-label={line + ' settings'} onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-[22px] font-bold text-neutral-100">{line}</h2>
+            <button onClick={onCancel} aria-label="Close" className="w-11 h-11 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+              <Icon d={I.close} className="w-5 h-5" />
+            </button>
+          </div>
+          <SelectField label="Material" value={draft.material} onChange={set('material')} options={['Clear PET Bales', 'Green PET Bales', 'Mixed PET Bales']} />
+          <SelectField label="Product codes" value={draft.codes} onChange={set('codes')} options={['IRS (200000382), Standard MRF (100000229)', 'IRS (200000382)', 'Standard MRF (100000229)']} />
+          <SelectField label="Specification" required value={draft.spec} onChange={set('spec')} options={['Thermoforms', 'Clear PET', 'Green PET', 'Contaminants']} />
+          <div className="relative mb-1">
+            <label className="absolute -top-2 left-3 px-1.5 bg-white text-[12px] text-neutral-60 z-10">Average target input *</label>
+            <input
+              inputMode="numeric"
+              value={draft.avg}
+              onChange={e => setDraft(d => ({ ...d, avg: e.target.value.replace(/[^0-9.]/g, '') }))}
+              className="w-full h-14 px-4 pr-10 border border-neutral-10 rounded-lg text-[15px] text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+            />
+            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[14px] text-neutral-60">%</span>
+          </div>
+          <div className="text-[12px] text-neutral-60 mb-3 px-1">The average input quality you're aiming for. Pick recommendations are ranked to move you towards it.</div>
+          <div className="relative mb-1">
+            <label className="absolute -top-2 left-3 px-1.5 bg-white text-[12px] text-neutral-60 z-10">Throughput target</label>
+            <input
+              inputMode="numeric"
+              value={draft.throughput}
+              onChange={e => setDraft(d => ({ ...d, throughput: e.target.value.replace(/[^0-9]/g, '') }))}
+              className="w-full h-14 px-4 pr-10 border border-neutral-10 rounded-lg text-[15px] text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+            />
+            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[14px] text-neutral-60">kg</span>
+          </div>
+          <div className="text-[12px] text-neutral-60 mb-5 px-1">Optional target processing rate per hour. Used to calculate Overall Equipment Effectiveness.</div>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={onCancel}
+              className="h-12 rounded-lg border border-neutral-10 bg-white text-[15px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => canSave && onSave({ ...draft, avg: Number(draft.avg), throughput: draft.throughput ? Number(draft.throughput) : null })}
+              disabled={!canSave}
+              className="h-12 rounded-lg bg-safi-600 text-white text-[15px] font-semibold hover:bg-safi-700 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-safi-800"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function DashShiftCard({ line, shiftName, hours, data, color, settings }) {
     const muted = !!data.notStarted;
     // R102: one chart at a time - defaults to the PET chart (index 1).
     const [chartIdx, setChartIdx] = useState(1);
+    // R105: line settings - saved overrides update the card display.
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [cfg, setCfg] = useState(null);
+    const shownMaterial = (cfg && cfg.material) || data.material;
+    const shownTarget = cfg ? cfg.spec + ' ~' + Number(cfg.avg).toFixed(1) + '%' : data.target;
+    const shownThroughput = cfg && cfg.throughput ? cfg.throughput : data.throughput;
     const Small = ({ label, children }) => (
       <div>
         <div className="text-[13px] text-neutral-60 mb-0.5">{label}</div>
@@ -10158,12 +10241,22 @@
               </span>
             )}
             <span className="text-[13px] text-neutral-60">{hours}</span>
+            {/* R105: line settings gear - day cards only. */}
+            {settings && !muted && (
+              <button
+                onClick={() => setSettingsOpen(true)}
+                aria-label={line + ' settings'}
+                className="w-9 h-9 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600"
+              >
+                <Icon d={I.settings} className="w-4.5 h-4.5 w-[18px] h-[18px]" />
+              </button>
+            )}
           </div>
         </div>
         <div className="p-5">
           <div className="grid grid-cols-3 gap-x-6 gap-y-4 mb-4">
-            <Small label="Material">{data.material}</Small>
-            <Small label="Target input">{data.target}</Small>
+            <Small label="Material">{shownMaterial}</Small>
+            <Small label="Target input">{shownTarget}</Small>
             <Small label="Elapsed">{data.elapsed}</Small>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4">
@@ -10181,12 +10274,21 @@
             <Big label="Bales processed">{data.bales}</Big>
             <Big label="Weight processed">{data.weightKg.toLocaleString()} kg</Big>
             <Big label="Weight / hour">{data.weightHr.toLocaleString()} kg</Big>
-            <Big label="Throughput target">{data.throughput.toLocaleString()} kg</Big>
+            <Big label="Throughput target">{shownThroughput.toLocaleString()} kg</Big>
             <Big label="OEE">{data.oee == null ? '-' : data.oee.toFixed(1) + '%'}</Big>
             {/* R100: per-hour rates moved from the active window cards. */}
             <RateStat label="Thermoforms / hr" value={data.thermoHr} ok={data.thermoOk} targetLabel="target < 20%" />
             <RateStat label="Contaminants / hr" value={data.contamHr} ok={data.contamOk} targetLabel="target < 2%" />
           </div>
+          {/* R105: settings overlay. */}
+          {settingsOpen && (
+            <LineSettingsModal
+              line={line}
+              initial={cfg || settings}
+              onCancel={() => setSettingsOpen(false)}
+              onSave={(next) => { setCfg(next); setSettingsOpen(false); }}
+            />
+          )}
           {/* R100/R102: one shift chart at a time, stepped with chevrons. */}
           {data.charts && (
             <div className="mt-5 pt-4 border-t border-neutral-10">
@@ -10235,9 +10337,14 @@
     'Line 2': { material: 'Green PET Bales', color: '#2FB554', petLabel: 'Green PET', petTarget: 85, thermoTarget: 25, contamTarget: 2 }
   };
   const SHIFT_HIST = (() => {
-    const days = ['Wed 22 Jul 2026', 'Tue 21 Jul 2026', 'Mon 20 Jul 2026', 'Sun 19 Jul 2026', 'Sat 18 Jul 2026'];
+    // R106: 21 days of history (42 shifts) so pagination and the date filter
+    // have something real to do. Newest first.
     const rows = [];
-    days.forEach((date, di) => {
+    const start = new Date(2026, 6, 22);
+    Array.from({ length: 21 }, (_, di) => {
+      const dObj = new Date(start);
+      dObj.setDate(start.getDate() - di);
+      const date = dObj.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).replace(',', '');
       ['Day', 'Night'].forEach((shift, si) => {
         const seed = di * 2 + si;
         const mkLine = (lineName, li) => {
@@ -10250,7 +10357,7 @@
           const oee = +(55 + ((seed * 17 + li * 29) % 350) / 10).toFixed(1);
           return { bales, weightKg, thermo, pet, contam, oee };
         };
-        rows.push({ id: 'sh' + seed, seed, date, shift, lines: { 'Line 1': mkLine('Line 1', 0), 'Line 2': mkLine('Line 2', 1) } });
+        rows.push({ id: 'sh' + seed, seed, date, dateObj: dObj, shift, lines: { 'Line 1': mkLine('Line 1', 0), 'Line 2': mkLine('Line 2', 1) } });
       });
     });
     return rows;
@@ -10354,6 +10461,51 @@
     const [openShift, setOpenShift] = useState(null);
     const [drawer, setDrawer] = useState(null); // { row, line } | null
     const [drawerPage, setDrawerPage] = useState(1); // R104: 10 bales per page
+    // R106: pagination + date filter + xlsx export.
+    const [histPage, setHistPage] = useState(1);
+    const [fromDate, setFromDate] = useState('');
+    const [toDate, setToDate] = useState('');
+    const [selected, setSelected] = useState(new Set());
+    const [exportOpen, setExportOpen] = useState(false);
+    const [exportMode, setExportMode] = useState('all'); // all | range | selected
+    const [expFrom, setExpFrom] = useState('');
+    const [expTo, setExpTo] = useState('');
+    const inRange = (row, from, to) => {
+      if (from && row.dateObj < new Date(from + 'T00:00:00')) return false;
+      if (to && row.dateObj > new Date(to + 'T23:59:59')) return false;
+      return true;
+    };
+    const filtered = SHIFT_HIST.filter(r => inRange(r, fromDate, toDate));
+    const HIST_PER_PAGE = 10;
+    const histPages = Math.max(1, Math.ceil(filtered.length / HIST_PER_PAGE));
+    const pageRows = filtered.slice((histPage - 1) * HIST_PER_PAGE, histPage * HIST_PER_PAGE);
+    const toggleSelected = (id) => setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+    const doExport = () => {
+      let rows = SHIFT_HIST;
+      if (exportMode === 'selected') rows = SHIFT_HIST.filter(r => selected.has(r.id));
+      else if (exportMode === 'range') rows = SHIFT_HIST.filter(r => inRange(r, expFrom, expTo));
+      const data = [];
+      rows.forEach(r => ['Line 1', 'Line 2'].forEach(line => {
+        const d = r.lines[line];
+        const lt = SHIFT_LINE_TARGETS[line];
+        data.push({
+          'Date': r.date, 'Shift': r.shift, 'Line': line, 'Material': lt.material,
+          'Bales': d.bales, 'Weight (kg)': d.weightKg,
+          'Thermoforms (%)': d.thermo, 'PET (%)': d.pet, 'Contaminants (%)': d.contam, 'OEE (%)': d.oee
+        });
+      }));
+      if (window.XLSX && data.length > 0) {
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Shift history');
+        XLSX.writeFile(wb, 'safi-shift-history.xlsx');
+      }
+      setExportOpen(false);
+    };
     const fmtKgs = (v) => v.toLocaleString() + 'kg';
     const SpecChip = ({ val, lte, target }) => {
       const ok = lte ? val <= target : val >= target;
@@ -10391,11 +10543,32 @@
       }).reverse(); // R104: last processed first
     };
     return (
+      <div>
+        {/* R106: date filter + export. */}
+        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-[13px] text-neutral-60">From</label>
+            <input type="date" value={fromDate} onChange={e => { setFromDate(e.target.value); setHistPage(1); }} className="h-10 px-3 border border-neutral-10 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600" />
+            <label className="text-[13px] text-neutral-60">To</label>
+            <input type="date" value={toDate} onChange={e => { setToDate(e.target.value); setHistPage(1); }} className="h-10 px-3 border border-neutral-10 rounded-lg text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-safi-600" />
+            {(fromDate || toDate) && (
+              <button onClick={() => { setFromDate(''); setToDate(''); setHistPage(1); }} className="text-[13px] font-medium text-safi-700 hover:underline">Clear</button>
+            )}
+          </div>
+          <button
+            onClick={() => { setExportMode(selected.size > 0 ? 'selected' : 'all'); setExportOpen(true); }}
+            className="h-10 px-4 inline-flex items-center gap-2 rounded-lg border border-neutral-10 bg-white text-[13px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+          >
+            <Icon d={I.download} className="w-4 h-4" />
+            Export
+          </button>
+        </div>
       <div className="bg-white border border-neutral-10 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-[13px]">
             <thead className="bg-white border-b border-neutral-10">
               <tr className="text-left">
+                <th className="w-10 px-3 py-3" aria-label="Select" />
                 <th className="w-10 px-2 py-3" aria-label="Expand" />
                 <th className="px-4 py-3 font-medium text-neutral-60">Shift</th>
                 <th className="px-4 py-3 font-medium text-neutral-60">Actual inputs</th>
@@ -10405,7 +10578,7 @@
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-10">
-              {SHIFT_HIST.map(row => {
+              {pageRows.map(row => {
                 const t = totals(row);
                 const open = openShift === row.id;
                 return (
@@ -10415,6 +10588,15 @@
                       className="hover:bg-neutral-5/50 cursor-pointer"
                       aria-expanded={open}
                     >
+                      <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(row.id)}
+                          onChange={() => toggleSelected(row.id)}
+                          aria-label={'Select ' + row.date + ' ' + row.shift + ' shift for export'}
+                          className="w-4 h-4 rounded text-safi-600 focus:ring-safi-500"
+                        />
+                      </td>
                       <td className="px-2 py-3 text-center">
                         <Icon d={I.chevron} className={'w-4 h-4 inline-block text-neutral-60 transition-transform ' + (open ? '' : '-rotate-90')} />
                       </td>
@@ -10445,7 +10627,7 @@
                     </tr>
                     {open && (
                       <tr>
-                        <td colSpan={6} className="bg-neutral-5/50 px-4 py-3">
+                        <td colSpan={7} className="bg-neutral-5/50 px-4 py-3">
                           <div className="space-y-2.5">
                             {['Line 1', 'Line 2'].map(line => {
                               const d = row.lines[line];
@@ -10489,6 +10671,64 @@
             </tbody>
           </table>
         </div>
+        {/* R106: shift pagination - 10 per page. */}
+        <div className="flex items-center justify-end gap-5 px-4 py-3 text-[13px] text-neutral-60 border-t border-neutral-10">
+          <span className="text-neutral-100">
+            {filtered.length === 0 ? '0 shifts' : ((histPage - 1) * HIST_PER_PAGE + 1) + '\u2013' + Math.min(histPage * HIST_PER_PAGE, filtered.length) + ' of ' + filtered.length}
+          </span>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setHistPage(p => Math.max(1, p - 1))} disabled={histPage === 1} className="p-1.5 rounded hover:bg-neutral-5 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-safi-600" aria-label="Previous page">
+              <Icon d={I.chevronR} className="w-4 h-4 rotate-180" />
+            </button>
+            <button onClick={() => setHistPage(p => Math.min(histPages, p + 1))} disabled={histPage === histPages} className="p-1.5 rounded hover:bg-neutral-5 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-safi-600" aria-label="Next page">
+              <Icon d={I.chevronR} className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* R106: export overlay. */}
+        {exportOpen && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setExportOpen(false)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6" role="dialog" aria-modal="true" aria-label="Export shift history" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-[20px] font-bold text-neutral-100">Export shift history</h2>
+                <button onClick={() => setExportOpen(false)} aria-label="Close" className="w-10 h-10 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                  <Icon d={I.close} className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-2.5 mb-5">
+                {[['all', 'All shift history to today'], ['range', 'A timeframe'], ['selected', 'Selected shifts (' + selected.size + ')']].map(([k, label]) => (
+                  <label key={k} className={'flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer ' + (exportMode === k ? 'border-safi-600 bg-safi-50' : 'border-neutral-10 hover:bg-neutral-5') + (k === 'selected' && selected.size === 0 ? ' opacity-40 cursor-not-allowed' : '')}>
+                    <input
+                      type="radio"
+                      name="export-mode"
+                      checked={exportMode === k}
+                      disabled={k === 'selected' && selected.size === 0}
+                      onChange={() => setExportMode(k)}
+                      className="text-safi-600 focus:ring-safi-500"
+                    />
+                    <span className="text-[14px] font-medium text-neutral-100">{label}</span>
+                  </label>
+                ))}
+                {exportMode === 'range' && (
+                  <div className="flex items-center gap-2 px-1 pt-1">
+                    <input type="date" value={expFrom} onChange={e => setExpFrom(e.target.value)} aria-label="Export from date" className="h-10 px-3 border border-neutral-10 rounded-lg text-[13px] bg-white flex-1 focus:outline-none focus:ring-2 focus:ring-safi-600" />
+                    <span className="text-[13px] text-neutral-60">to</span>
+                    <input type="date" value={expTo} onChange={e => setExpTo(e.target.value)} aria-label="Export to date" className="h-10 px-3 border border-neutral-10 rounded-lg text-[13px] bg-white flex-1 focus:outline-none focus:ring-2 focus:ring-safi-600" />
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => setExportOpen(false)} className="h-12 rounded-lg border border-neutral-10 bg-white text-[14px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                  Cancel
+                </button>
+                <button onClick={doExport} className="h-12 rounded-lg bg-safi-600 text-white text-[14px] font-semibold hover:bg-safi-700 focus:outline-none focus:ring-2 focus:ring-safi-800">
+                  Export .xlsx
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* R101: bale-log drawer - chronological list for the picked line + shift. */}
         {drawer && (() => {
@@ -10563,6 +10803,7 @@
             </div>
           );
         })()}
+      </div>
       </div>
     );
   }
