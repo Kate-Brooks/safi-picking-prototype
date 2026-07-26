@@ -10768,6 +10768,31 @@
         {drawer && (() => {
           const d = drawer.row.lines[drawer.line];
           const segsD = segmentsFor(drawer.row, drawer.line);
+          // R108: per-settings-segment stats for the cards at the top.
+          const minToTime = (m) => {
+            const sh = drawer.row.shift === 'Day' ? 7 : 19;
+            const h = (sh + Math.floor(m / 60)) % 24;
+            return String(h).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+          };
+          const segEnds = segsD.map((s, i) => i + 1 < segsD.length ? segsD[i + 1].fromMin : 720);
+          const segBales = segsD.map((s, i) => Math.round(d.bales * (segEnds[i] - s.fromMin) / 720));
+          segBales[segBales.length - 1] += d.bales - segBales.reduce((acc, v) => acc + v, 0);
+          const segMeta = segsD.map((seg, i) => {
+            const durMin = segEnds[i] - seg.fromMin;
+            const weight = Math.round(d.weightKg * durMin / 720);
+            return {
+              from: minToTime(seg.fromMin),
+              to: minToTime(segEnds[i]),
+              bales: segBales[i],
+              weight,
+              whr: Math.round(weight / (durMin / 60)),
+              oee: +(d.oee + (i * 1.7 - 1.7)).toFixed(1),
+              avg: segAvg(d, i),
+              dur: Math.floor(durMin / 60) + 'h ' + String(durMin % 60).padStart(2, '0') + 'm',
+              who: ['M. Ellis', 'Bhautik R. Dalal', 'K. Brooks'][(drawer.row.seed + i) % 3]
+            };
+          });
+          const lineSettings = DASH_SHIFT_DATA[drawer.line].settings;
           const fullLog = baleLog(drawer.row, drawer.line);
           const perPage = 10;
           const totalPages = Math.ceil(fullLog.length / perPage);
@@ -10788,6 +10813,78 @@
                     <Icon d={I.close} className="w-5 h-5" />
                   </button>
                 </div>
+
+                {/* R108: production line settings applied - one card per settings
+                    period; changes carry a timestamp and who made them. */}
+                <div className="px-6 py-4 space-y-3 border-b border-neutral-10">
+                  <div className="text-[13px] font-semibold text-neutral-80 uppercase tracking-wide">Settings applied</div>
+                  {segsD.map((seg, i) => {
+                    const m = segMeta[i];
+                    const ok = m.avg <= seg.target;
+                    return (
+                      <div key={i} className="border border-neutral-10 rounded-xl overflow-hidden">
+                        <div className="px-4 py-2.5 bg-neutral-5 border-b border-neutral-10 flex items-center justify-between gap-3 flex-wrap">
+                          <span className="text-[13px] font-semibold text-neutral-100">
+                            {i === 0 ? 'Applied at shift start' : 'Settings changed'}
+                            <span className="text-neutral-60 font-normal"> · {m.from} &ndash; {m.to}</span>
+                          </span>
+                          {i > 0 && (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[12px] font-medium" style={{ background: '#FFF4E5', color: '#C4650B' }}>
+                              <Icon d={I.edit} className="w-3.5 h-3.5" />
+                              Changed {m.from} · {m.who}
+                            </span>
+                          )}
+                        </div>
+                        <div className="p-4">
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-3 mb-3">
+                            <div>
+                              <div className="text-[12px] text-neutral-60 mb-0.5">Material</div>
+                              <div className="text-[14px] text-neutral-100">{lineSettings.material}</div>
+                            </div>
+                            <div>
+                              <div className="text-[12px] text-neutral-60 mb-0.5">Product codes</div>
+                              <div className="text-[14px] text-neutral-100 truncate" title={lineSettings.codes}>{lineSettings.codes}</div>
+                            </div>
+                            <div>
+                              <div className="text-[12px] text-neutral-60 mb-0.5">Target input</div>
+                              <div className="text-[14px] font-semibold text-neutral-100">{seg.spec} ~{seg.target.toFixed(1)}%</div>
+                            </div>
+                          </div>
+                          <div className="pt-3 border-t border-neutral-10 grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-3">
+                            <div>
+                              <div className="text-[12px] text-neutral-60 mb-1">Actual input</div>
+                              <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[14px] font-bold ' + (ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
+                                <Icon d={ok ? I.checkCircle : I.errorCircle} className="w-4 h-4" />
+                                {seg.spec} {m.avg.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div>
+                              <div className="text-[12px] text-neutral-60 mb-0.5">Bales processed</div>
+                              <div className="text-[17px] font-bold text-neutral-100">{m.bales}</div>
+                            </div>
+                            <div>
+                              <div className="text-[12px] text-neutral-60 mb-0.5">Weight processed</div>
+                              <div className="text-[17px] font-bold text-neutral-100">{m.weight.toLocaleString()} kg</div>
+                            </div>
+                            <div>
+                              <div className="text-[12px] text-neutral-60 mb-0.5">Weight / hour</div>
+                              <div className="text-[17px] font-bold text-neutral-100">{m.whr.toLocaleString()} kg</div>
+                            </div>
+                            <div>
+                              <div className="text-[12px] text-neutral-60 mb-0.5">OEE</div>
+                              <div className="text-[17px] font-bold text-neutral-100">{m.oee.toFixed(1)}%</div>
+                            </div>
+                            <div>
+                              <div className="text-[12px] text-neutral-60 mb-0.5">Duration</div>
+                              <div className="text-[17px] font-bold text-neutral-100">{m.dur}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
                 <table className="w-full text-[13px]">
                   <thead className="border-b border-neutral-10">
                     <tr className="text-left">
@@ -10800,48 +10897,16 @@
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-10">
-                    {/* R107: bales grouped by the threshold setting in force,
-                        with the average actual input that setting dictates. */}
-                    {(() => {
-                      const items = [];
-                      log.forEach((b, i) => {
-                        if (i === 0 || log[i - 1].segIdx !== b.segIdx) items.push({ __header: true, segIdx: b.segIdx });
-                        items.push(b);
-                      });
-                      return items.map((it, i) => {
-                        if (it.__header) {
-                          const seg = segsD[it.segIdx];
-                          const avg = segAvg(d, it.segIdx);
-                          const ok = avg <= seg.target;
-                          return (
-                            <tr key={'h' + i} className="bg-neutral-5">
-                              <td colSpan={6} className="px-6 py-2.5">
-                                <div className="flex items-center justify-between gap-3 flex-wrap">
-                                  <span className="text-[13px] font-semibold text-neutral-100">
-                                    Setting: {seg.spec} &le; {seg.target}%
-                                    <span className="text-neutral-60 font-normal"> · applied from {segTime(drawer.row, seg)}</span>
-                                  </span>
-                                  <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium ' + (ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
-                                    <Icon d={ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
-                                    Avg thermoforms {avg.toFixed(1)}%
-                                  </span>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        }
-                        return (
-                          <tr key={i} className="hover:bg-neutral-5/50">
-                            <td className="px-6 py-2.5 text-neutral-100">{it.time}</td>
-                            <td className="px-3 py-2.5 text-safi-600 font-medium">{it.ref}</td>
-                            <td className="px-3 py-2.5 text-neutral-100">{it.supplier}</td>
-                            <td className="px-3 py-2.5 text-neutral-100">Bay {it.bay}</td>
-                            <td className="px-3 py-2.5 text-right text-neutral-100">{it.weight}kg</td>
-                            <td className="px-6 py-2.5 text-neutral-100">{it.who}</td>
-                          </tr>
-                        );
-                      });
-                    })()}
+                    {log.map((b, i) => (
+                      <tr key={i} className="hover:bg-neutral-5/50">
+                        <td className="px-6 py-2.5 text-neutral-100">{b.time}</td>
+                        <td className="px-3 py-2.5 text-safi-600 font-medium">{b.ref}</td>
+                        <td className="px-3 py-2.5 text-neutral-100">{b.supplier}</td>
+                        <td className="px-3 py-2.5 text-neutral-100">Bay {b.bay}</td>
+                        <td className="px-3 py-2.5 text-right text-neutral-100">{b.weight}kg</td>
+                        <td className="px-6 py-2.5 text-neutral-100">{b.who}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
                 {/* R104: pagination - 10 bales per page, last processed first. */}
