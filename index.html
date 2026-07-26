@@ -10520,6 +10520,26 @@
       const l1 = row.lines['Line 1'], l2 = row.lines['Line 2'];
       return { bales: l1.bales + l2.bales, weightKg: l1.weightKg + l2.weightKg, oee: (l1.oee + l2.oee) / 2 };
     };
+    // R107: threshold-setting timeline per shift/line. 0-2 changes per shift,
+    // deterministic. Each segment carries the target in force from a time.
+    const segmentsFor = (row, line) => {
+      const lt = SHIFT_LINE_TARGETS[line];
+      const nChanges = (row.seed + (line === 'Line 1' ? 0 : 1)) % 3; // 0..2
+      const targets = [lt.thermoTarget, lt.thermoTarget - 2, lt.thermoTarget + 1];
+      return Array.from({ length: nChanges + 1 }, (_, k) => ({
+        spec: 'Thermoforms',
+        target: targets[k],
+        fromMin: Math.floor(720 * k / (nChanges + 1))
+      }));
+    };
+    const segTime = (row, seg) => {
+      const startH = row.shift === 'Day' ? 7 : 19;
+      const h = (startH + Math.floor(seg.fromMin / 60)) % 24;
+      return String(h).padStart(2, '0') + ':' + String(seg.fromMin % 60).padStart(2, '0');
+    };
+    // Average actual input for the metric the setting dictates, per segment.
+    const segAvg = (d, segIdx) => +(d.thermo + (segIdx * 0.8 - 0.8)).toFixed(1);
+
     // Chronological bale log for the drawer - deterministic demo data.
     const baleLog = (row, line) => {
       const d = row.lines[line];
@@ -10529,10 +10549,12 @@
       const sups = line === 'Line 1' ? ['GFL 124 Arrowhead', 'TOMRA Schenectady', 'WM Napanee'] : ['Peel Region MRF', 'Circular Fibres'];
       const bays = line === 'Line 1' ? ['A-E', 'A-G', 'B-B'] : ['C-C', 'C-D', 'B-D'];
       const n = d.bales;
+      const segs = segmentsFor(row, line);
       return Array.from({ length: n }, (_, i) => {
         const mins = Math.floor(i * (720 / d.bales));
         const h = (startH + Math.floor(mins / 60)) % 24;
         return {
+          segIdx: segs.filter(s => s.fromMin <= mins).length - 1,
           time: String(h).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0'),
           ref: refs[(i + row.seed) % refs.length],
           supplier: sups[(i * 7 + row.seed) % sups.length],
@@ -10642,6 +10664,18 @@
                                   <div className="min-w-[190px]">
                                     <div className="font-bold text-neutral-100">{line} · {lt.material}</div>
                                     <div className="text-[12px] text-neutral-60 mt-0.5">{d.bales} bales · {fmtKgs(d.weightKg)} · OEE {d.oee.toFixed(1)}%</div>
+                                    {/* R107: threshold-setting changes during this shift. */}
+                                    {(() => {
+                                      const ch = segmentsFor(row, line).length - 1;
+                                      return (
+                                        <span
+                                          className={'mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[12px] font-medium ' + (ch > 0 ? '' : 'bg-neutral-5 text-neutral-60')}
+                                          style={ch > 0 ? { background: '#FFF4E5', color: '#C4650B' } : {}}
+                                        >
+                                          {ch > 0 ? ch + ' setting ' + (ch === 1 ? 'change' : 'changes') : 'No setting changes'}
+                                        </span>
+                                      );
+                                    })()}
                                   </div>
                                   <div className="flex items-center gap-5 flex-wrap">
                                     <div>
@@ -10733,6 +10767,7 @@
         {/* R101: bale-log drawer - chronological list for the picked line + shift. */}
         {drawer && (() => {
           const d = drawer.row.lines[drawer.line];
+          const segsD = segmentsFor(drawer.row, drawer.line);
           const fullLog = baleLog(drawer.row, drawer.line);
           const perPage = 10;
           const totalPages = Math.ceil(fullLog.length / perPage);
@@ -10745,7 +10780,9 @@
                 <div className="sticky top-0 bg-white border-b border-neutral-10 px-6 py-4 flex items-center justify-between gap-3">
                   <div>
                     <div className="text-[17px] font-bold text-neutral-100">{drawer.line} · {drawer.row.date} · {drawer.row.shift} shift</div>
-                    <div className="text-[13px] text-neutral-60 mt-0.5">{d.bales} bales processed · {SHIFT_LINE_TARGETS[drawer.line].material}</div>
+                    <div className="text-[13px] text-neutral-60 mt-0.5">
+                      {d.bales} bales processed · {SHIFT_LINE_TARGETS[drawer.line].material} · {segsD.length - 1 > 0 ? (segsD.length - 1) + ' setting ' + (segsD.length - 1 === 1 ? 'change' : 'changes') : 'no setting changes'}
+                    </div>
                   </div>
                   <button onClick={() => setDrawer(null)} aria-label="Close" className="w-11 h-11 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
                     <Icon d={I.close} className="w-5 h-5" />
@@ -10763,16 +10800,48 @@
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-10">
-                    {log.map((b, i) => (
-                      <tr key={i} className="hover:bg-neutral-5/50">
-                        <td className="px-6 py-2.5 text-neutral-100">{b.time}</td>
-                        <td className="px-3 py-2.5 text-safi-600 font-medium">{b.ref}</td>
-                        <td className="px-3 py-2.5 text-neutral-100">{b.supplier}</td>
-                        <td className="px-3 py-2.5 text-neutral-100">Bay {b.bay}</td>
-                        <td className="px-3 py-2.5 text-right text-neutral-100">{b.weight}kg</td>
-                        <td className="px-6 py-2.5 text-neutral-100">{b.who}</td>
-                      </tr>
-                    ))}
+                    {/* R107: bales grouped by the threshold setting in force,
+                        with the average actual input that setting dictates. */}
+                    {(() => {
+                      const items = [];
+                      log.forEach((b, i) => {
+                        if (i === 0 || log[i - 1].segIdx !== b.segIdx) items.push({ __header: true, segIdx: b.segIdx });
+                        items.push(b);
+                      });
+                      return items.map((it, i) => {
+                        if (it.__header) {
+                          const seg = segsD[it.segIdx];
+                          const avg = segAvg(d, it.segIdx);
+                          const ok = avg <= seg.target;
+                          return (
+                            <tr key={'h' + i} className="bg-neutral-5">
+                              <td colSpan={6} className="px-6 py-2.5">
+                                <div className="flex items-center justify-between gap-3 flex-wrap">
+                                  <span className="text-[13px] font-semibold text-neutral-100">
+                                    Setting: {seg.spec} &le; {seg.target}%
+                                    <span className="text-neutral-60 font-normal"> · applied from {segTime(drawer.row, seg)}</span>
+                                  </span>
+                                  <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium ' + (ok ? 'bg-success-100 text-success-300' : 'bg-rose-100 text-rose-900')}>
+                                    <Icon d={ok ? I.checkCircle : I.errorCircle} className="w-3.5 h-3.5" />
+                                    Avg thermoforms {avg.toFixed(1)}%
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        }
+                        return (
+                          <tr key={i} className="hover:bg-neutral-5/50">
+                            <td className="px-6 py-2.5 text-neutral-100">{it.time}</td>
+                            <td className="px-3 py-2.5 text-safi-600 font-medium">{it.ref}</td>
+                            <td className="px-3 py-2.5 text-neutral-100">{it.supplier}</td>
+                            <td className="px-3 py-2.5 text-neutral-100">Bay {it.bay}</td>
+                            <td className="px-3 py-2.5 text-right text-neutral-100">{it.weight}kg</td>
+                            <td className="px-6 py-2.5 text-neutral-100">{it.who}</td>
+                          </tr>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
                 {/* R104: pagination - 10 bales per page, last processed first. */}
