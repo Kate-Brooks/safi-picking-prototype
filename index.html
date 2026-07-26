@@ -7517,7 +7517,7 @@
     );
   }
 
-  function OperatorStore({ row, guided = false, onCancel, onDone }) {
+  function OperatorStore({ row, guided = false, rows = [], onReassign = () => {}, onCancel, onDone }) {
     // R92: guided experiment (load #450-test-store-flow) - the FO sees ONLY
     // the storage recommendation. Skip opens the full warehouse; after the
     // next autosave completes the warehouse hides again behind the next
@@ -7558,6 +7558,12 @@
     const [problemType, setProblemType] = useState(null);   // 'bay-blocked' | 'bay-full' | 'zone-full'
     const [problemTarget, setProblemTarget] = useState(null); // 'Bay 1-E' | 'Zone 3'
     const closeProblem = () => { setProblemOpen(false); setProblemType(null); setProblemTarget(null); };
+    // R103: wrong-load recovery - reassign this session's storage records to
+    // the correct load. The bales stay exactly where they physically are.
+    const [wrongOpen, setWrongOpen] = useState(false);
+    const [wrongTarget, setWrongTarget] = useState(null);
+    const [wrongQ, setWrongQ] = useState('');
+    const closeWrong = () => { setWrongOpen(false); setWrongTarget(null); setWrongQ(''); };
     useEffect(() => {
       if (!problemTarget) return;
       const t = setTimeout(closeProblem, 2500);
@@ -7858,7 +7864,15 @@
             Report problem
           </button>
         </div>
-        <div className="text-[13px] text-neutral-60 mb-4">{row.supplier} {row.ref} · {row.material}</div>
+        <div className="text-[13px] text-neutral-60 mb-4 flex items-center gap-2.5 flex-wrap">
+          <span>{row.supplier} {row.ref} · {row.material}</span>
+          <button
+            onClick={() => setWrongOpen(true)}
+            className="text-[13px] font-semibold text-safi-700 hover:underline focus:outline-none focus:ring-2 focus:ring-safi-600 rounded px-1"
+          >
+            Wrong load?
+          </button>
+        </div>
 
         {/* R90: running total only - operators add bales as they store, so the
             system never knows the load's bale count upfront. History lives here. */}
@@ -8030,7 +8044,9 @@
                   </div>
                   <div className="text-[20px] font-bold text-neutral-100 mb-1">Manager on shift notified</div>
                   <div className="text-[15px] text-neutral-60 mb-6">
-                    {problemTarget} {problemType === 'bay-blocked' ? 'is blocked' : 'is full'}
+                    {problemType === 'wrong-load'
+                      ? 'Wrong load recorded for ' + problemTarget
+                      : problemTarget + (problemType === 'bay-blocked' ? ' is blocked' : ' is full')}
                   </div>
                   <button
                     onClick={closeProblem}
@@ -8097,10 +8113,10 @@
                     </button>
                   </div>
                   <div className="space-y-3">
-                    {[['bay-blocked', 'Bay is blocked'], ['bay-full', 'Bay is full'], ['zone-full', 'Zone is full']].map(([k, label]) => (
+                    {[['bay-blocked', 'Bay is blocked'], ['bay-full', 'Bay is full'], ['zone-full', 'Zone is full'], ['wrong-load', 'Stored the wrong load']].map(([k, label]) => (
                       <button
                         key={k}
-                        onClick={() => setProblemType(k)}
+                        onClick={() => { setProblemType(k); if (k === 'wrong-load') setProblemTarget(row.supplier + ' ' + row.ref); }}
                         className="w-full h-16 rounded-lg border border-neutral-10 bg-white text-[17px] font-semibold text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
                       >
                         {label}
@@ -8215,6 +8231,86 @@
           </div>
         )}
 
+        {/* R103: wrong load - pick the correct load, confirm, records move. */}
+        {wrongOpen && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 pt-24" onClick={closeWrong}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6" role="dialog" aria-modal="true" aria-label="Move storage to another load" onClick={e => e.stopPropagation()}>
+              {wrongTarget ? (
+                <>
+                  <h2 className="text-[24px] font-bold text-neutral-100 mb-4">Move storage records?</h2>
+                  <div className="rounded-lg bg-neutral-5 px-4 py-3.5 mb-4 text-[15px]">
+                    <div className="text-neutral-60">{row.supplier} <span className="font-medium">{row.ref}</span></div>
+                    <div className="my-1 text-neutral-40" aria-hidden="true">&darr;</div>
+                    <div className="font-semibold text-neutral-100">{wrongTarget.supplier} <span className="text-neutral-60 font-normal">{wrongTarget.ref}</span></div>
+                  </div>
+                  <div className="text-[15px] text-neutral-100 mb-6">
+                    {total > 0 ? total + ' ' + (total === 1 ? 'bale' : 'bales') + ' recorded here move to that load.' : 'Anything you store next records against that load.'} Bays, counts and times stay the same.
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      onClick={() => setWrongTarget(null)}
+                      className="h-16 rounded-lg border border-neutral-10 bg-white text-[18px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={() => {
+                        onReassign(wrongTarget);
+                        setSavedFlash({ text: 'Storage records moved to ' + wrongTarget.supplier + ' ' + wrongTarget.ref });
+                        closeWrong();
+                      }}
+                      className="h-16 rounded-lg bg-safi-600 text-white text-[18px] font-semibold hover:bg-safi-700 focus:outline-none focus:ring-2 focus:ring-safi-800"
+                    >
+                      Move records
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-[24px] font-bold text-neutral-100">Which load were you storing?</h2>
+                    <button onClick={closeWrong} aria-label="Close" className="w-12 h-12 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                      <Icon d={I.close} className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <div className="relative mb-4">
+                    <Icon d={I.search} className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-neutral-60" />
+                    <input
+                      autoFocus
+                      value={wrongQ}
+                      onChange={e => setWrongQ(e.target.value)}
+                      placeholder="Order reference or supplier name"
+                      aria-label="Search today's loads"
+                      className="w-full h-16 pl-12 pr-4 border border-neutral-10 rounded-lg text-[18px] text-neutral-100 bg-white focus:outline-none focus:ring-2 focus:ring-safi-600"
+                    />
+                  </div>
+                  <div className="divide-y divide-neutral-10 border border-neutral-10 rounded-lg overflow-hidden max-h-[45vh] overflow-y-auto">
+                    {rows
+                      .filter(r2 => r2.id !== row.id)
+                      .filter(r2 => {
+                        const q = wrongQ.trim().toLowerCase();
+                        return q.length === 0 || r2.supplier.toLowerCase().includes(q) || r2.ref.toLowerCase().includes(q);
+                      })
+                      .map(r2 => (
+                        <button
+                          key={r2.id}
+                          onClick={() => setWrongTarget(r2)}
+                          className="w-full flex items-center justify-between gap-3 px-4 py-4 text-left hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-safi-600"
+                        >
+                          <div>
+                            <div className="text-[16px] font-semibold text-neutral-100">{r2.supplier} <span className="text-neutral-60 font-normal">{r2.ref}</span></div>
+                            <div className="text-[14px] text-neutral-60 mt-0.5">{r2.material}</div>
+                          </div>
+                          <Icon d={I.chevronR} className="w-5 h-5 text-neutral-60 shrink-0" />
+                        </button>
+                      ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* R97: process-bale overlay. */}
         {processOpen && (
           <OpProcessModal
@@ -8242,13 +8338,10 @@
                 'Add bales to a bay - saves automatically.'
               )}
             </div>
+            {/* R103: Cancel removed - autosave means there is nothing honest to
+                cancel. Done is the single exit; mistakes are fixed via UNDO,
+                history, Wrong load?, or Report problem. */}
             <div className="flex items-center gap-3">
-              <button
-                onClick={onCancel}
-                className="h-14 px-8 rounded-lg border border-neutral-10 bg-white text-[16px] font-medium text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:ring-2 focus:ring-safi-600"
-              >
-                Cancel
-              </button>
               <button
                 onClick={() => onDone(total, null)}
                 className="h-14 px-8 rounded-lg bg-safi-600 text-white text-[16px] font-semibold hover:bg-safi-700 focus:outline-none focus:ring-2 focus:ring-safi-800"
@@ -8312,7 +8405,7 @@
           </div>
         </div>
         {isStore
-          ? <OperatorStore row={storeRow} guided={!!storeRow.guidedStore} onCancel={() => { setScreen('deliveries'); setStoreRow(null); }} onDone={finishStore} />
+          ? <OperatorStore row={storeRow} guided={!!storeRow.guidedStore} rows={rows} onReassign={(target) => setStoreRow(target)} onCancel={() => { setScreen('deliveries'); setStoreRow(null); }} onDone={finishStore} />
           : (isDeliveries
             ? <OperatorDeliveries rows={rows} setRows={setRows} onStore={(r) => { setStoreRow(r); setScreen('store'); }} />
             : <OperatorPicking />)}
