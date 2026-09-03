@@ -9396,9 +9396,85 @@
   );
   const ctrlFmtKg = (v) => (v === '' || v == null) ? '-' : Number(v).toLocaleString() + 'kg';
 
-  function ControlsLineCard({ line, L, patch, onStart, onStop, lang = 'en', yard = [], onAddCadence = () => {}, onRemoveCadence = () => {} }) {
+  // R114: line settings overlay - gear on the running line card, edits the run
+  // configuration in place without stopping the run.
+  function ControlsLineSettingsModal({ line, initial, onCancel, onSave, lang = 'en' }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const [draft, setDraft] = useState({ material: initial.material, codes: [...initial.codes], spec: initial.spec, target: initial.target, throughput: initial.throughput });
+    const set = (k) => (v) => setDraft(d => ({ ...d, [k]: v }));
+    const canSave = draft.material && draft.spec && draft.target !== '' && !isNaN(Number(draft.target)) && Number(draft.target) > 0;
+    const fieldCls = 'w-full text-[15px] text-neutral-100 bg-transparent focus:outline-none h-9';
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6" role="dialog" aria-modal="true" aria-label={line + ' settings'} onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-[22px] font-bold text-neutral-100">{line} {tEN('settings', 'ajustes')}</h2>
+            <button onClick={onCancel} aria-label={tEN('Close', 'Cerrar')} className="w-11 h-11 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+              <Icon d={I.close} className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="space-y-5">
+            <CtrlField label="Material">
+              <select className={fieldCls} value={draft.material} onChange={e => set('material')(e.target.value)}>
+                {CTRL_MATERIALS.map(m => <option key={m}>{m}</option>)}
+              </select>
+            </CtrlField>
+            <CtrlField label={tEN('Product codes', 'Códigos de producto')}>
+              <div className="flex flex-wrap items-center gap-2 min-h-[34px]">
+                {draft.codes.map(c => (
+                  <span key={c} className="inline-flex items-center gap-1.5 bg-neutral-5 text-neutral-100 text-[13px] rounded-full pl-3 pr-1.5 py-1">
+                    {c}
+                    <button onClick={() => set('codes')(draft.codes.filter(x => x !== c))} aria-label={tEN('Remove ' + c, 'Quitar ' + c)}
+                            className="w-5 h-5 rounded-full bg-neutral-40 text-white text-[11px] leading-none flex items-center justify-center hover:bg-neutral-60">✕</button>
+                  </span>
+                ))}
+                <select className="flex-1 min-w-[140px] text-[15px] text-neutral-40 bg-transparent focus:outline-none h-9"
+                        value="" onChange={e => { if (e.target.value) set('codes')([...draft.codes, e.target.value]); }}>
+                  <option value="">{tEN('All product codes', 'Todos los códigos')}</option>
+                  {CTRL_CODES.filter(c => !draft.codes.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            </CtrlField>
+            <CtrlField label={tEN('Specification', 'Especificación')} required>
+              <select className={fieldCls} value={draft.spec} onChange={e => set('spec')(e.target.value)}>
+                {CTRL_SPECS.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </CtrlField>
+            <div>
+              <CtrlField label={tEN('Average target input', 'Entrada media objetivo')} required>
+                <div className="flex items-center">
+                  <input type="number" step="0.5" min="0" max="100" className={fieldCls} value={draft.target} onChange={e => set('target')(e.target.value)} />
+                  <span className="text-[15px] text-neutral-60 pl-2">%</span>
+                </div>
+              </CtrlField>
+              <p className="text-[12px] text-neutral-60 mt-1.5">{tEN("The average input quality you're aiming for. Pick recommendations are ranked to move you towards it.", 'La calidad media de entrada objetivo. Las recomendaciones se ordenan para acercarte a ella.')}</p>
+            </div>
+            <div>
+              <CtrlField label={tEN('Throughput target', 'Objetivo de rendimiento')}>
+                <div className="flex items-center">
+                  <input type="number" step="100" min="0" className={fieldCls} value={draft.throughput} onChange={e => set('throughput')(e.target.value)} />
+                  <span className="text-[15px] text-neutral-60 pl-2">kg</span>
+                </div>
+              </CtrlField>
+              <p className="text-[12px] text-neutral-60 mt-1.5">{tEN('Optional target processing rate per hour. Used to calculate Overall Equipment Effectiveness.', 'Tasa objetivo por hora (opcional). Se usa para calcular la OEE.')}</p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2.5 mt-6">
+            <button onClick={onCancel} className="h-11 px-5 rounded-lg border border-neutral-10 bg-white text-[13.5px] font-semibold text-neutral-100 hover:bg-neutral-5">{tEN('Cancel', 'Cancelar')}</button>
+            <button onClick={() => canSave && onSave(draft)} aria-disabled={!canSave}
+                    className={'h-11 px-5 rounded-lg text-[13.5px] font-semibold focus:outline-none focus:ring-2 focus:ring-safi-600 ' + (canSave ? 'bg-safi-600 text-white hover:bg-safi-700' : 'bg-neutral-10 text-neutral-40 cursor-default')}>
+              {tEN('Save', 'Guardar')}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function ControlsLineCard({ line, L, patch, onStart, onStop, lang = 'en', yard = [], onAddCadence = () => {}, onRemoveCadence = () => {}, onSettingsSaved = () => {} }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
     const [open, setOpen] = useState(true);
+    const [settingsOpen, setSettingsOpen] = useState(false); // R114
     const inCls = 'w-full text-[15px] text-neutral-100 bg-transparent focus:outline-none h-8';
     const addCode = (c) => { if (c && !L.codes.includes(c)) patch({ codes: [...L.codes, c] }); };
     const removeCode = (c) => patch({ codes: L.codes.filter(x => x !== c) });
@@ -9406,11 +9482,25 @@
       <div className="bg-white border border-neutral-10 rounded-xl p-5">
         <div className="flex items-start justify-between">
           <div className="text-[17px] font-bold text-neutral-100">{line}</div>
-          <button onClick={() => setOpen(o => !o)} aria-expanded={open} aria-label={tEN('Toggle ' + line + ' card', 'Alternar tarjeta ' + line)}
-                  className="text-neutral-60 hover:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-safi-600 rounded">
-            <CtrlChevron open={open} />
-          </button>
+          <div className="flex items-center gap-1">
+            {/* R114: settings gear restored - edits the run config without stopping the run. */}
+            {L.running && (
+              <button onClick={() => setSettingsOpen(true)} aria-label={line + ' ' + tEN('settings', 'ajustes')}
+                      className="w-9 h-9 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 focus:outline-none focus:ring-2 focus:ring-safi-600">
+                <Icon d={I.settings} className="w-[18px] h-[18px]" />
+              </button>
+            )}
+            <button onClick={() => setOpen(o => !o)} aria-expanded={open} aria-label={tEN('Toggle ' + line + ' card', 'Alternar tarjeta ' + line)}
+                    className="w-9 h-9 rounded-lg hover:bg-neutral-5 flex items-center justify-center text-neutral-60 hover:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-safi-600">
+              <CtrlChevron open={open} />
+            </button>
+          </div>
         </div>
+        {settingsOpen && (
+          <ControlsLineSettingsModal line={line} initial={L} lang={lang}
+                                     onCancel={() => setSettingsOpen(false)}
+                                     onSave={(draft) => { patch(draft); setSettingsOpen(false); onSettingsSaved(); }} />
+        )}
         {open && (L.running ? (
           <Fragment>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-7 mt-5">
@@ -9918,7 +10008,8 @@
           <div key={line} className="space-y-5">
             <ControlsLineCard line={line} L={lines[line]} patch={patchLine(line)}
                               onStart={() => startRun(line)} onStop={() => stopRun(line)} lang={lang}
-                              yard={yard} onAddCadence={addCadence(line)} onRemoveCadence={removeCadence(line)} />
+                              yard={yard} onAddCadence={addCadence(line)} onRemoveCadence={removeCadence(line)}
+                              onSettingsSaved={() => setToast?.({ message: tEN(line + ' settings updated', line + ' ajustes actualizados'), kind: 'success' })} />
             <ControlsShiftCard L={lines[line]} lang={lang} />
             {/* R112: standalone Feed cadence card removed - cadence lives inside the
                 line run form so rules are configured per run/shift. Component retained.
