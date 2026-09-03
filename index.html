@@ -9541,47 +9541,174 @@
 
   // R111: FEED CADENCE - per-line rules controlling how often a material,
   // a threshold-matched set of loads, or one specific load is fed to the line.
+  // R113: cadence editor - multi-select materials (BMP spec list), threshold
+  // rules, and multi-select loads with a quick search plus a full load browser
+  // overlay (search + filters + multi-select).
+  function CadenceLoadBrowser({ loads = [], initial = [], onCancel, onConfirm, lang = 'en' }) {
+    const tEN = (en, es) => lang === 'es' ? es : en;
+    const [q, setQ] = useState('');
+    const [mat, setMat] = useState('All');
+    const [status, setStatus] = useState('All');
+    const [sel, setSel] = useState(() => new Set(initial.map(l => l.lot)));
+    const mats = ['All', ...Array.from(new Set(loads.map(l => l.material).filter(Boolean)))];
+    const ql = q.trim().toLowerCase();
+    const visible = loads.filter(l => {
+      if (ql && !(l.lot.toLowerCase().includes(ql) || (l.supplier || '').toLowerCase().includes(ql))) return false;
+      if (mat !== 'All' && l.material !== mat) return false;
+      if (status === 'Analysed' && !l.results) return false;
+      if (status === 'Not analysed' && l.results) return false;
+      return true;
+    });
+    const toggle = (lot) => setSel(prev => { const n = new Set(prev); n.has(lot) ? n.delete(lot) : n.add(lot); return n; });
+    const allVisibleSel = visible.length > 0 && visible.every(l => sel.has(l.lot));
+    const toggleAll = () => setSel(prev => {
+      const n = new Set(prev);
+      visible.forEach(l => allVisibleSel ? n.delete(l.lot) : n.add(l.lot));
+      return n;
+    });
+    const fieldWrap = 'relative border border-neutral-40 rounded-lg px-3 py-1.5 bg-white';
+    const fieldLbl = 'absolute -top-2 left-2.5 bg-white px-1 text-[11px] text-neutral-60';
+    const fieldIn = 'w-full text-[13.5px] text-neutral-100 bg-transparent focus:outline-none h-8';
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[82vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-neutral-10">
+            <div className="text-[17px] font-bold text-neutral-100">{tEN('Select loads for feed cadence', 'Seleccionar cargas para la cadencia')}</div>
+            <button onClick={onCancel} aria-label={tEN('Close', 'Cerrar')} className="text-neutral-60 hover:text-neutral-100 text-[17px] leading-none px-1">✕</button>
+          </div>
+          <div className="px-6 py-4 flex flex-wrap gap-3">
+            <div className={fieldWrap + ' flex-1 min-w-[200px]'}>
+              <span className={fieldLbl}>{tEN('Search loads', 'Buscar cargas')}</span>
+              <input className={fieldIn} placeholder={tEN('Load number or supplier', 'Número de carga o proveedor')} value={q} onChange={e => setQ(e.target.value)} />
+            </div>
+            <div className={fieldWrap + ' w-44'}>
+              <span className={fieldLbl}>Material</span>
+              <select className={fieldIn} value={mat} onChange={e => setMat(e.target.value)}>
+                {mats.map(m => <option key={m}>{m}</option>)}
+              </select>
+            </div>
+            <div className={fieldWrap + ' w-44'}>
+              <span className={fieldLbl}>{tEN('Analysis status', 'Estado de análisis')}</span>
+              <select className={fieldIn} value={status} onChange={e => setStatus(e.target.value)}>
+                <option>All</option>
+                <option>Analysed</option>
+                <option>Not analysed</option>
+              </select>
+            </div>
+          </div>
+          <div className="overflow-y-auto px-6 flex-1">
+            <table className="w-full text-[13px] text-neutral-100">
+              <thead>
+                <tr className="text-left text-neutral-60 border-b border-neutral-10">
+                  <th className="py-2 pr-2 font-medium w-9">
+                    <input type="checkbox" className="w-4 h-4 accent-safi-600 cursor-pointer" checked={allVisibleSel} onChange={toggleAll}
+                           aria-label={tEN('Select all visible loads', 'Seleccionar todas las cargas visibles')} />
+                  </th>
+                  <th className="py-2 pr-3 font-medium">{tEN('Load no', 'Nº de carga')}</th>
+                  <th className="py-2 pr-3 font-medium">{tEN('Supplier', 'Proveedor')}</th>
+                  <th className="py-2 pr-3 font-medium">Material</th>
+                  <th className="py-2 pr-3 font-medium text-right">{tEN('Bales', 'Pacas')}</th>
+                  <th className="py-2 pr-3 font-medium text-right">{tEN('Weight', 'Peso')}</th>
+                  <th className="py-2 font-medium">{tEN('Average AI results', 'Resultados IA')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map(l => (
+                  <tr key={l.lot} className="border-b border-neutral-10 hover:bg-neutral-5 cursor-pointer" onClick={() => toggle(l.lot)}>
+                    <td className="py-2.5 pr-2">
+                      <input type="checkbox" className="w-4 h-4 accent-safi-600 cursor-pointer" checked={sel.has(l.lot)} onChange={() => toggle(l.lot)}
+                             onClick={e => e.stopPropagation()} aria-label={tEN('Select ' + l.lot, 'Seleccionar ' + l.lot)} />
+                    </td>
+                    <td className="py-2.5 pr-3 font-semibold">{l.lot}</td>
+                    <td className="py-2.5 pr-3">{l.supplier}</td>
+                    <td className="py-2.5 pr-3">{l.material || '-'}</td>
+                    <td className="py-2.5 pr-3 text-right">{l.bales}</td>
+                    <td className="py-2.5 pr-3 text-right">{(l.weight || 0).toLocaleString()}kg</td>
+                    <td className="py-2.5">
+                      {l.results
+                        ? <span className="inline-flex items-center gap-1 bg-success-100 text-success-300 text-[12px] rounded-full px-2 py-0.5">✓ {l.results.transparentPET.toFixed(1)}% Transparent PET</span>
+                        : <span className="text-neutral-60">{tEN('Analysis required', 'Análisis requerido')}</span>}
+                    </td>
+                  </tr>
+                ))}
+                {visible.length === 0 && (
+                  <tr><td colSpan="7" className="py-6 text-center text-neutral-60">{tEN('No loads match the filters.', 'Ninguna carga coincide con los filtros.')}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between px-6 py-4 border-t border-neutral-10">
+            <span className="text-[13px] text-neutral-60">{sel.size} {tEN('selected', 'seleccionadas')}</span>
+            <div className="flex gap-2.5">
+              <button onClick={onCancel} className="h-10 px-4 rounded-lg border border-neutral-10 bg-white text-[13px] font-semibold text-neutral-100 hover:bg-neutral-5">{tEN('Cancel', 'Cancelar')}</button>
+              <button onClick={() => onConfirm(loads.filter(l => sel.has(l.lot)))}
+                      className="h-10 px-4 rounded-lg bg-safi-600 text-white text-[13px] font-semibold hover:bg-safi-700">
+                {tEN('Add', 'Añadir')} {sel.size > 0 ? sel.size : ''} {tEN('loads', 'cargas')}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function CadenceRulesEditor({ line, rules, onAdd, onRemove, yard = [], lang = 'en' }) {
     const tEN = (en, es) => lang === 'es' ? es : en;
     const [adding, setAdding] = useState(false);
     const [type, setType] = useState('material'); // material | threshold | load
-    const [material, setMaterial] = useState('DRS material');
+    const [materials, setMaterials] = useState(['DRS material']);
     const [metric, setMetric] = useState('Metal content');
     const [threshold, setThreshold] = useState('10');
     const [query, setQuery] = useState('');
-    const [pickedLoad, setPickedLoad] = useState(null);
+    const [pickedLoads, setPickedLoads] = useState([]);
+    const [browserOpen, setBrowserOpen] = useState(false);
     const [every, setEvery] = useState('20');
     const [err, setErr] = useState('');
 
-    const CAD_MATERIALS = ['DRS material', 'Clear PET Bales', 'Green PET Bales', 'Thermoforms', 'Mixed film'];
+    // R113: material list based on BMP's material specs, grouped by category.
+    const CAD_MATERIAL_GROUPS = [
+      { group: tEN('General', 'General'), items: ['DRS material', 'Dirty Bottles'] },
+      { group: tEN('Colored PET', 'PET de color'), items: ['Brown', 'Opaque White', 'Oil Bottle', 'Other Colour', 'Opaque Colour', 'Turquoise'] },
+      { group: tEN('Thermoforms', 'Termoformados'), items: ['Clear Contaminated PET Tray', 'Clear PET Tray'] },
+      { group: tEN('Green PET', 'PET verde'), items: ['Green'] },
+      { group: tEN('Bottle/Jars', 'Botellas/Tarros'), items: ['Clear', 'Light Blue', 'Full Sleeve', 'Clear, non-food-grade', 'Dark Blue'] },
+    ];
     const CAD_METRICS = [
       { id: 'Metal content', es: 'Contenido de metal' },
       { id: 'Contamination', es: 'Contaminación' },
       { id: 'Moisture', es: 'Humedad' },
     ];
 
-    // Flatten the yard into searchable loads (lot + supplier).
+    // Flatten the yard into searchable loads.
     const allLoads = [];
     yard.forEach(z => (z.bays || []).forEach(b => (b.loads || []).forEach(l => {
-      if (l && l.lot) allLoads.push({ lot: l.lot, supplier: l.supplier || '-' });
+      if (l && l.lot) allLoads.push(l);
     })));
     const q = query.trim().toLowerCase();
     const matches = q.length >= 2
-      ? allLoads.filter(l => l.lot.toLowerCase().includes(q) || (l.supplier || '').toLowerCase().includes(q)).slice(0, 5)
+      ? allLoads.filter(l => !pickedLoads.some(p => p.lot === l.lot) &&
+          (l.lot.toLowerCase().includes(q) || (l.supplier || '').toLowerCase().includes(q))).slice(0, 5)
       : [];
 
-    const reset = () => { setAdding(false); setErr(''); setQuery(''); setPickedLoad(null); setEvery('20'); setThreshold('10'); };
+    const addMaterial = (m) => { if (m && !materials.includes(m)) { setMaterials([...materials, m]); setErr(''); } };
+    const removeMaterial = (m) => setMaterials(materials.filter(x => x !== m));
+    const addLoad = (l) => { if (!pickedLoads.some(p => p.lot === l.lot)) setPickedLoads([...pickedLoads, l]); setQuery(''); setErr(''); };
+    const removeLoad = (lot) => setPickedLoads(pickedLoads.filter(l => l.lot !== lot));
+
+    const reset = () => { setAdding(false); setErr(''); setQuery(''); setPickedLoads([]); setMaterials(['DRS material']); setEvery('20'); setThreshold('10'); setBrowserOpen(false); };
     const submit = () => {
       const n = parseInt(every, 10);
       if (!n || n < 1) { setErr(tEN('Enter a cadence of at least 1 bale', 'Introduce una cadencia de al menos 1 paca')); return; }
+      if (type === 'material' && materials.length === 0) { setErr(tEN('Select at least one material', 'Selecciona al menos un material')); return; }
       if (type === 'threshold' && (threshold === '' || isNaN(Number(threshold)))) { setErr(tEN('Enter a threshold %', 'Introduce un umbral %')); return; }
-      if (type === 'load' && !pickedLoad) { setErr(tEN('Search and select a load first', 'Busca y selecciona una carga primero')); return; }
+      if (type === 'load' && pickedLoads.length === 0) { setErr(tEN('Search and select at least one load', 'Busca y selecciona al menos una carga')); return; }
       let label;
-      if (type === 'material') label = material;
+      if (type === 'material') label = materials.join(', ');
       else if (type === 'threshold') label = tEN(
         `Loads with ${metric.toLowerCase()} > ${Number(threshold)}%`,
         `Cargas con ${(CAD_METRICS.find(m => m.id === metric) || {}).es || metric} > ${Number(threshold)}%`);
-      else label = `${pickedLoad.lot} · ${pickedLoad.supplier}`;
+      else if (pickedLoads.length === 1) label = `${pickedLoads[0].lot} · ${pickedLoads[0].supplier}`;
+      else label = tEN(`${pickedLoads.length} loads: `, `${pickedLoads.length} cargas: `) + pickedLoads.slice(0, 3).map(l => l.lot).join(', ') + (pickedLoads.length > 3 ? '…' : '');
       onAdd({ id: Date.now(), type, label, every: n });
       reset();
     };
@@ -9594,6 +9721,13 @@
       </button>
     );
     const fieldCls = 'w-full text-[14px] text-neutral-100 bg-transparent focus:outline-none h-8';
+    const Pill = ({ children, onRemovePill, label }) => (
+      <span className="inline-flex items-center gap-1.5 bg-neutral-5 text-neutral-100 text-[13px] rounded-full pl-3 pr-1.5 py-1">
+        {children}
+        <button onClick={onRemovePill} aria-label={label}
+                className="w-5 h-5 rounded-full bg-neutral-40 text-white text-[11px] leading-none flex items-center justify-center hover:bg-neutral-60">✕</button>
+      </span>
+    );
 
     return (
       <div>
@@ -9626,14 +9760,25 @@
                 <div className="flex flex-wrap gap-2 mb-3.5">
                   <TypeBtn id="material">{tEN('Material', 'Material')}</TypeBtn>
                   <TypeBtn id="threshold">{tEN('Material property', 'Propiedad del material')}</TypeBtn>
-                  <TypeBtn id="load">{tEN('Specific load', 'Carga específica')}</TypeBtn>
+                  <TypeBtn id="load">{tEN('Specific loads', 'Cargas específicas')}</TypeBtn>
                 </div>
 
                 {type === 'material' && (
-                  <CtrlField label="Material">
-                    <select className={fieldCls} value={material} onChange={e => setMaterial(e.target.value)}>
-                      {CAD_MATERIALS.map(m => <option key={m}>{m}</option>)}
-                    </select>
+                  <CtrlField label={tEN('Materials', 'Materiales')}>
+                    <div className="flex flex-wrap items-center gap-2 min-h-[32px]">
+                      {materials.map(m => (
+                        <Pill key={m} onRemovePill={() => removeMaterial(m)} label={tEN('Remove ' + m, 'Quitar ' + m)}>{m}</Pill>
+                      ))}
+                      <select className="flex-1 min-w-[150px] text-[14px] text-neutral-40 bg-transparent focus:outline-none h-8"
+                              value="" onChange={e => addMaterial(e.target.value)}>
+                        <option value="">{tEN('Add material…', 'Añadir material…')}</option>
+                        {CAD_MATERIAL_GROUPS.map(g => (
+                          <optgroup key={g.group} label={g.group}>
+                            {g.items.filter(m => !materials.includes(m)).map(m => <option key={m} value={m}>{m}</option>)}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
                   </CtrlField>
                 )}
 
@@ -9655,34 +9800,41 @@
 
                 {type === 'load' && (
                   <div>
-                    {pickedLoad ? (
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 bg-neutral-5 text-neutral-100 text-[13px] rounded-full pl-3 pr-1.5 py-1.5">
-                          {pickedLoad.lot} · {pickedLoad.supplier}
-                          <button onClick={() => setPickedLoad(null)} aria-label={tEN('Clear selected load', 'Quitar carga seleccionada')}
-                                  className="w-5 h-5 rounded-full bg-neutral-40 text-white text-[11px] leading-none flex items-center justify-center hover:bg-neutral-60">✕</button>
-                        </span>
+                    {pickedLoads.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-2.5">
+                        {pickedLoads.map(l => (
+                          <Pill key={l.lot} onRemovePill={() => removeLoad(l.lot)} label={tEN('Remove ' + l.lot, 'Quitar ' + l.lot)}>
+                            {l.lot} · {l.supplier}
+                          </Pill>
+                        ))}
                       </div>
-                    ) : (
-                      <div>
-                        <CtrlField label={tEN('Search loads', 'Buscar cargas')}>
-                          <input className={fieldCls} value={query} placeholder={tEN('Load number or supplier name', 'Número de carga o proveedor')}
-                                 onChange={e => setQuery(e.target.value)} />
-                        </CtrlField>
-                        {matches.length > 0 && (
-                          <div className="border border-neutral-10 rounded-lg mt-1.5 divide-y divide-neutral-10 overflow-hidden">
-                            {matches.map(m => (
-                              <button key={m.lot} onClick={() => { setPickedLoad(m); setErr(''); }}
-                                      className="w-full text-left px-3 py-2 text-[13px] text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:bg-neutral-5">
-                                <b className="font-semibold">{m.lot}</b> <span className="text-neutral-60">· {m.supplier}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {q.length >= 2 && matches.length === 0 && (
-                          <p className="text-[12.5px] text-neutral-60 mt-1.5">{tEN('No loads match that search.', 'Ninguna carga coincide con esa búsqueda.')}</p>
-                        )}
+                    )}
+                    <CtrlField label={tEN('Search loads', 'Buscar cargas')}>
+                      <input className={fieldCls} value={query} placeholder={tEN('Load number or supplier name', 'Número de carga o proveedor')}
+                             onChange={e => setQuery(e.target.value)} />
+                    </CtrlField>
+                    {matches.length > 0 && (
+                      <div className="border border-neutral-10 rounded-lg mt-1.5 divide-y divide-neutral-10 overflow-hidden">
+                        {matches.map(m => (
+                          <button key={m.lot} onClick={() => addLoad(m)}
+                                  className="w-full text-left px-3 py-2 text-[13px] text-neutral-100 hover:bg-neutral-5 focus:outline-none focus:bg-neutral-5">
+                            <b className="font-semibold">{m.lot}</b> <span className="text-neutral-60">· {m.supplier}</span>
+                          </button>
+                        ))}
                       </div>
+                    )}
+                    {q.length >= 2 && matches.length === 0 && (
+                      <p className="text-[12.5px] text-neutral-60 mt-1.5">{tEN('No loads match that search.', 'Ninguna carga coincide con esa búsqueda.')}</p>
+                    )}
+                    {/* R113: full load browser with filters + multi-select. */}
+                    <button onClick={() => setBrowserOpen(true)}
+                            className="mt-2 text-[12.5px] font-semibold text-safi-700 hover:underline focus:outline-none focus:ring-2 focus:ring-safi-600 rounded">
+                      {tEN('Search more loads', 'Buscar más cargas')} →
+                    </button>
+                    {browserOpen && (
+                      <CadenceLoadBrowser loads={allLoads} initial={pickedLoads} lang={lang}
+                                          onCancel={() => setBrowserOpen(false)}
+                                          onConfirm={(sel) => { setPickedLoads(sel); setBrowserOpen(false); setErr(''); }} />
                     )}
                   </div>
                 )}
